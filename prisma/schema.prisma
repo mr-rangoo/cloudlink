@@ -1,0 +1,306 @@
+// Cloudlink database schema.
+// Conventions:
+// - Every tenant-owned model carries organizationId and is queried through tenant-scoped services.
+// - Money uses Decimal(14,2) with an explicit currency column.
+// - Timestamps are stored in UTC (timestamptz). Business schedules use Africa/Nairobi.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── Organization & identity ─────────────────────────
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum UserKind {
+  STAFF
+  CUSTOMER
+}
+
+model Organization {
+  id        String             @id @default(uuid(7)) @db.Uuid
+  name      String
+  slug      String             @unique
+  currency  String             @default("KES") @db.Char(3)
+  timezone  String             @default("Africa/Nairobi")
+  status    OrganizationStatus @default(ACTIVE)
+  createdAt DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime           @updatedAt @db.Timestamptz(6)
+
+  branches     Branch[]
+  memberships  Membership[]
+  roles        Role[]
+  auditLogs    AuditLog[]
+  integrations IntegrationConfiguration[]
+  sessions     Session[]
+}
+
+model Branch {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  code           String
+  address        String?
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  memberships  MembershipBranch[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+}
+
+model User {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  kind         UserKind   @default(STAFF)
+  name         String
+  email        String     @unique // stored normalised (lower-case, trimmed)
+  phone        String?
+  passwordHash String
+  status       UserStatus @default(ACTIVE)
+  lastLoginAt  DateTime?  @db.Timestamptz(6)
+  failedLogins Int        @default(0)
+  lockedUntil  DateTime?  @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+
+  memberships Membership[]
+  sessions    Session[]
+}
+
+// Access of one user to one organization. Roles and branch scope hang off the membership.
+model Membership {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  userId         String       @db.Uuid
+  status         RecordStatus @default(ACTIVE)
+  // When true the member can access every branch; otherwise only the branches listed in MembershipBranch.
+  allBranches    Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  user         User               @relation(fields: [userId], references: [id])
+  roles        MembershipRole[]
+  branches     MembershipBranch[]
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model MembershipBranch {
+  membershipId String @db.Uuid
+  branchId     String @db.Uuid
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  branch     Branch     @relation(fields: [branchId], references: [id])
+
+  @@id([membershipId, branchId])
+}
+
+model Permission {
+  key         String @id
+  description String
+
+  roles RolePermission[]
+}
+
+model Role {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  key            String // e.g. owner, accountant
+  name           String
+  description    String?
+  isSystem       Boolean  @default(false)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  permissions  RolePermission[]
+  memberships  MembershipRole[]
+
+  @@unique([organizationId, key])
+}
+
+model RolePermission {
+  roleId        String @db.Uuid
+  permissionKey String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key])
+
+  @@id([roleId, permissionKey])
+}
+
+model MembershipRole {
+  membershipId String @db.Uuid
+  roleId       String @db.Uuid
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  role       Role       @relation(fields: [roleId], references: [id])
+
+  @@id([membershipId, roleId])
+}
+
+// Server-side session. The browser only holds a random token; the database stores its SHA-256 hash.
+model Session {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  tokenHash      String    @unique
+  userId         String    @db.Uuid
+  organizationId String?   @db.Uuid
+  activeBranchId String?   @db.Uuid
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  lastSeenAt     DateTime  @default(now()) @db.Timestamptz(6)
+  expiresAt      DateTime  @db.Timestamptz(6)
+  revokedAt      DateTime? @db.Timestamptz(6)
+
+  user         User          @relation(fields: [userId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+// Fixed-window rate limiter stored in PostgreSQL so it works without Redis and across instances.
+model RateLimitBucket {
+  key         String   @id
+  windowStart DateTime @db.Timestamptz(6)
+  count       Int
+
+  @@index([windowStart])
+}
+
+// ───────────────────────── Operations & audit ─────────────────────────
+
+model AuditLog {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String?  @db.Uuid
+  actorUserId    String?  @db.Uuid
+  actorType      String // user | system | customer | webhook
+  action         String // e.g. auth.login, subscriber.create
+  entityType     String?
+  entityId       String?
+  metadata       Json? // safe, redacted details
+  ipAddress      String?
+  userAgent      String?
+  correlationId  String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, actorUserId, createdAt])
+  @@index([action, createdAt])
+}
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+model IdempotencyRecord {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  organizationId String?           @db.Uuid
+  scope          String // e.g. org:<id>:payments.manual
+  key            String
+  requestHash    String
+  status         IdempotencyStatus @default(IN_PROGRESS)
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  expiresAt      DateTime          @db.Timestamptz(6)
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+}
+
+enum BackgroundOperationStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  DEAD
+}
+
+// Durable record for every background job. Redis/BullMQ only dispatches; this row is the source of truth.
+model BackgroundOperation {
+  id             String                    @id @default(uuid(7)) @db.Uuid
+  organizationId String?                   @db.Uuid
+  type           String
+  dedupeKey      String?                   @unique
+  status         BackgroundOperationStatus @default(PENDING)
+  payload        Json
+  attempts       Int                       @default(0)
+  maxAttempts    Int                       @default(5)
+  lastError      String? // safe, redacted error code/message
+  correlationId  String?
+  runAfter       DateTime                  @default(now()) @db.Timestamptz(6)
+  startedAt      DateTime?                 @db.Timestamptz(6)
+  finishedAt     DateTime?                 @db.Timestamptz(6)
+  createdAt      DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime                  @updatedAt @db.Timestamptz(6)
+
+  @@index([status, runAfter])
+  @@index([organizationId, type, createdAt])
+}
+
+model WorkerHeartbeat {
+  workerId  String   @id
+  hostname  String
+  startedAt DateTime @db.Timestamptz(6)
+  seenAt    DateTime @db.Timestamptz(6)
+  queues    String[]
+}
+
+enum IntegrationStatus {
+  NOT_CONFIGURED
+  MOCK
+  SANDBOX_TESTED
+  PRODUCTION_VERIFIED
+  ERROR
+}
+
+model IntegrationConfiguration {
+  id              String            @id @default(uuid(7)) @db.Uuid
+  organizationId  String            @db.Uuid
+  provider        String // mpesa_daraja, mikrotik_routeros, radius, smtp, sms, s3
+  status          IntegrationStatus @default(NOT_CONFIGURED)
+  safeConfig      Json? // non-secret settings only
+  encryptedSecret String? // AES-256-GCM envelope, never returned to clients
+  lastCheckedAt   DateTime?         @db.Timestamptz(6)
+  lastError       String?
+  createdAt       DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, provider])
+}
