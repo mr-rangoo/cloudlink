@@ -19,6 +19,7 @@ async function main() {
   const { createRedisConnection } = await import("@/server/jobs/redis");
   const { OPERATIONS_QUEUE, runOperation, findDueOperations, closeQueue } = await import("@/server/jobs/operations");
   const { operationHandlers } = await import("@/server/jobs/handlers");
+  const { scheduleRecurringJobs } = await import("@/server/jobs/scheduler");
 
   env(); // fail fast on invalid configuration
   const workerId = `${os.hostname()}:${process.pid}`;
@@ -63,6 +64,7 @@ async function main() {
     while (!stopping) {
       try {
         await heartbeat();
+        await scheduleRecurringJobs();
         await sweep();
       } catch (err) {
         logger.error({ err: (err as Error).message }, "worker sweep failed");

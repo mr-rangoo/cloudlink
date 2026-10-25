@@ -31,13 +31,14 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Lint, typecheck, tests and build pass (evidence below).
 - [x] OpenAPI foundation — `GET /api/v1/openapi.json` generated from Zod schemas.
 
-## Phase 2 — CRM, catalogue and subscribers
-- [ ] Leads and activity timeline.
-- [ ] Packages and pricing.
-- [ ] Subscribers and contacts.
-- [ ] Subscription lifecycle.
-- [ ] CSV import preview and validation.
-- [ ] Database-backed dashboard.
+## Phase 2 — CRM, catalogue and subscribers ✅
+- [x] Leads and activity timeline — stages, sources, owner assignment, call/note/meeting/survey log, auto-advance NEW→CONTACTED, LOST requires reason; atomic conversion (row lock) to subscriber + optional subscription, history preserved and cross-linked. UI: /leads, /leads/[id].
+- [x] Packages and pricing — decimal price + tax rate + interval (hour…year × N), speeds/quota/devices, archive guard, unique name per org, DB CHECK constraints. UI: /packages.
+- [x] Subscribers and contacts — per-org sequential account numbers (A000001), Kenyan phone normalisation, duplicate phone/email detection with audited override, branch scoping, addresses, notes, timeline. UI: /subscribers, /subscribers/new, /subscribers/[id].
+- [x] Subscription lifecycle — commercial snapshot, state machine, timezone-aware periods (month-end/leap-year safe), idempotent renewals (unique event key), suspend/reactivate/cancel, hourly expiry job via worker scheduler. UI: actions on subscriber page, /subscriptions list.
+- [x] CSV import preview and validation — row-level errors, duplicates in file and DB, all-or-nothing commit in one transaction, double-commit protection. UI: /subscribers/import.
+- [x] Database-backed dashboard — KPIs with written definitions (docs/BILLING.md), permission-aware, unavailable metrics labelled.
+- [x] Request idempotency (`Idempotency-Key`) for all mutating staff endpoints; validation failures release the key.
 
 ## Phase 3 — Billing and finance
 - [ ] Invoice engine and immutable line snapshots.
@@ -124,7 +125,30 @@ Coding agent: update this file continuously. Do not mark items complete without 
 
 **Still mocked / blocked**: payments, network, messaging adapters are not implemented yet (configured as `mock` in dev). Business KPIs on the dashboard await Phase 2+ modules.
 
-**Exact next task**: Phase 2 — add Prisma models + migration for Package, Subscriber (contacts/addresses/activity), Subscription (+events), Lead (+activity); implement services with tenant scoping, API routes, and UI (packages → subscribers → subscriptions → leads), then CSV import preview and DB-backed dashboard KPIs.
+**Next task at the time**: Phase 2 (completed below).
+
+### 2026-10-25 — Phase 2 (CRM, catalogue, subscribers, subscriptions)
+**Schema**: migration `20261025092149_crm_catalogue_subscribers` (OrganizationCounter, Package, Subscriber + contacts/addresses/activity, Subscription + events, Lead + activity, ImportJob) and `20261025100000_domain_check_constraints` (CHECK constraints on prices, tax rates, counts, period order, currency format).
+
+**Defects found and fixed during the phase**
+- Optional-field schemas converted an absent field to `null`, so a PATCH sending one field would have cleared the others. Fixed (absent stays absent) and covered by tests asserting untouched fields.
+- A validation failure (e.g. suspension without a reason) was stored under the idempotency key, so the corrected resubmission was rejected as a key conflict. Fixed server-side (validation errors release the key) and client-side (key rotates after any server answer; reused only after network failures). Covered by an integration test and the e2e suspend flow.
+- Prisma 7 `migrate dev` no longer runs `generate`; `npm run db:migrate` now runs both.
+- The CHECK-constraint migration failed on the *test* database because tests had backdated period ends without moving period starts (data real flows cannot produce). Test DB data cleared, migration marked rolled back and re-applied, tests corrected. Lesson: future data-constraining migrations will wrap statements in an explicit transaction.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` | exit 0 |
+| `npm run typecheck` | exit 0 |
+| `npm run test` | 6 files, 53 tests passed |
+| `npm run test:integration` | 9 files, 62 tests passed |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 10 passed (adds: package → subscriber → suspend/reactivate; duplicate warning + override; lead → subscriber with history; CSV import errors then commit; cashier denied create/import) |
+
+**Still mocked / blocked**: network provisioning is shown as "Not provisioned" (phase 7); invoices/payments (phase 3).
+
+**Exact next task**: Phase 3 — billing and finance: Invoice/InvoiceLine/CreditNote/Payment/PaymentAllocation/Ledger models (transactional, decimal, idempotent), invoice engine using subscription snapshots (unique per subscription + period), recurring billing job, manual cash/bank payments with allocation, ledger/reconciliation views, credit notes/refunds/reversals, PDF invoices and receipts.
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

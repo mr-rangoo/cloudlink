@@ -18,7 +18,7 @@
     "test:e2e": "playwright test",
     "test:all": "npm run test && npm run test:integration",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "prisma migrate dev && prisma generate",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:local:start": "node scripts/local-db.mjs start",

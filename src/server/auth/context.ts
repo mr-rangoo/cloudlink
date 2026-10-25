@@ -114,6 +114,22 @@ export function tenantWhere(ctx: ActorContext): { organizationId: string; branch
   return { organizationId: ctx.organizationId };
 }
 
+/**
+ * `tenantWhere` plus the user's active branch filter (the branch selector in the top bar).
+ * Use for list views; use `tenantWhere` for direct record access by id.
+ */
+export function listWhere(ctx: ActorContext): { organizationId: string; branchId?: string | { in: string[] } } {
+  if (ctx.kind === "staff" && ctx.activeBranchId) return { organizationId: ctx.organizationId, branchId: ctx.activeBranchId };
+  return tenantWhere(ctx);
+}
+
+/** Resolve the branch for a new record: explicit choice, else the active branch filter; validated against scope. */
+export async function resolveBranchForCreate(ctx: ActorContext, branchId: string | null | undefined): Promise<string | null> {
+  const chosen = branchId ?? (ctx.kind === "staff" ? ctx.activeBranchId : null) ?? null;
+  await assertBranchAccess(ctx, chosen);
+  return chosen;
+}
+
 /** Assert that a branch belongs to the caller's organization and is within their branch scope. */
 export async function assertBranchAccess(ctx: ActorContext, branchId: string | null | undefined): Promise<void> {
   if (!branchId) {

@@ -304,3 +304,314 @@ model IntegrationConfiguration {
 
   @@unique([organizationId, provider])
 }
+
+// ───────────────────────── Sequences ─────────────────────────
+
+// Per-organization counters (account numbers, invoice numbers, receipts).
+model OrganizationCounter {
+  organizationId String @db.Uuid
+  key            String
+  value          Int    @default(0)
+
+  @@id([organizationId, key])
+}
+
+// ───────────────────────── Catalogue ─────────────────────────
+
+enum ServiceType {
+  PPPOE
+  HOTSPOT
+  STATIC_IP
+  OTHER
+}
+
+enum BillingUnit {
+  HOUR
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+model Package {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  description    String?
+  serviceType    ServiceType
+  price          Decimal      @db.Decimal(14, 2)
+  currency       String       @db.Char(3)
+  taxRate        Decimal      @default(0) @db.Decimal(5, 2) // percent, e.g. 16.00 for VAT
+  billingUnit    BillingUnit  @default(MONTH)
+  billingCount   Int          @default(1)
+  downloadKbps   Int?
+  uploadKbps     Int?
+  dataQuotaMb    Int?
+  deviceLimit    Int?
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  subscriptions Subscription[]
+  leads         Lead[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+}
+
+// ───────────────────────── Subscribers ─────────────────────────
+
+enum SubscriberType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+enum SubscriberStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+model Subscriber {
+  id              String           @id @default(uuid(7)) @db.Uuid
+  organizationId  String           @db.Uuid
+  branchId        String?          @db.Uuid
+  accountNumber   String
+  type            SubscriberType   @default(INDIVIDUAL)
+  displayName     String
+  firstName       String?
+  lastName        String?
+  companyName     String?
+  email           String?
+  emailNormalized String?
+  phone           String // E.164 digits without plus, e.g. 254712345678
+  altPhone        String?
+  idNumber        String? // national ID or KRA PIN
+  status          SubscriberStatus @default(ACTIVE)
+  notes           String?
+  createdById     String?          @db.Uuid
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
+
+  contacts      SubscriberContact[]
+  addresses     SubscriberAddress[]
+  activities    SubscriberActivity[]
+  subscriptions Subscription[]
+  lead          Lead?
+
+  @@unique([organizationId, accountNumber])
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, phone])
+  @@index([organizationId, emailNormalized])
+  @@index([organizationId, branchId])
+}
+
+model SubscriberContact {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  subscriberId   String   @db.Uuid
+  name           String
+  phone          String?
+  email          String?
+  relationship   String?
+  isPrimary      Boolean  @default(false)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@index([subscriberId])
+}
+
+model SubscriberAddress {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  subscriberId   String   @db.Uuid
+  label          String   @default("Installation")
+  line1          String
+  area           String?
+  town           String?
+  county         String?
+  latitude       Decimal? @db.Decimal(9, 6)
+  longitude      Decimal? @db.Decimal(9, 6)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@index([subscriberId])
+}
+
+model SubscriberActivity {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  subscriberId   String   @db.Uuid
+  actorUserId    String?  @db.Uuid
+  type           String // created, updated, note, subscription.*, lead.converted, import
+  message        String
+  metadata       Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@index([subscriberId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+// ───────────────────────── Subscriptions ─────────────────────────
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  CANCELLED
+}
+
+model Subscription {
+  id                 String             @id @default(uuid(7)) @db.Uuid
+  organizationId     String             @db.Uuid
+  branchId           String?            @db.Uuid
+  subscriberId       String             @db.Uuid
+  packageId          String             @db.Uuid
+  status             SubscriptionStatus @default(PENDING)
+  // Commercial snapshot taken when the subscription is created or the package changes.
+  packageName        String
+  serviceType        ServiceType
+  price              Decimal            @db.Decimal(14, 2)
+  currency           String             @db.Char(3)
+  taxRate            Decimal            @db.Decimal(5, 2)
+  billingUnit        BillingUnit
+  billingCount       Int
+  // Lifecycle. Period boundaries are computed from billingAnchorAt + periodIndex to avoid month-end drift.
+  billingAnchorAt    DateTime?          @db.Timestamptz(6)
+  periodIndex        Int                @default(0)
+  currentPeriodStart DateTime?          @db.Timestamptz(6)
+  currentPeriodEnd   DateTime?          @db.Timestamptz(6)
+  nextBillingAt      DateTime?          @db.Timestamptz(6)
+  graceDays          Int                @default(0)
+  autoRenew          Boolean            @default(true)
+  activatedAt        DateTime?          @db.Timestamptz(6)
+  suspendedAt        DateTime?          @db.Timestamptz(6)
+  cancelledAt        DateTime?          @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @db.Timestamptz(6)
+
+  subscriber Subscriber          @relation(fields: [subscriberId], references: [id])
+  package    Package             @relation(fields: [packageId], references: [id])
+  events     SubscriptionEvent[]
+
+  @@index([organizationId, status, nextBillingAt])
+  @@index([organizationId, status, currentPeriodEnd])
+  @@index([subscriberId])
+}
+
+model SubscriptionEvent {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  organizationId String              @db.Uuid
+  subscriptionId String              @db.Uuid
+  type           String // created, activated, renewed, suspended, reactivated, cancelled, expired, package_changed
+  fromStatus     SubscriptionStatus?
+  toStatus       SubscriptionStatus?
+  actorUserId    String?             @db.Uuid
+  actorType      String
+  metadata       Json?
+  // Makes renewals and other retried actions idempotent (e.g. renew:payment:<id>).
+  idempotencyKey String?
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, idempotencyKey])
+  @@index([organizationId, createdAt])
+}
+
+// ───────────────────────── CRM ─────────────────────────
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  SITE_SURVEY
+  PROPOSAL
+  WON
+  LOST
+}
+
+enum LeadSource {
+  WALK_IN
+  REFERRAL
+  WEBSITE
+  SOCIAL_MEDIA
+  PHONE_CALL
+  FIELD_AGENT
+  OTHER
+}
+
+model Lead {
+  id                    String     @id @default(uuid(7)) @db.Uuid
+  organizationId        String     @db.Uuid
+  branchId              String?    @db.Uuid
+  name                  String
+  phone                 String
+  email                 String?
+  emailNormalized       String?
+  source                LeadSource @default(OTHER)
+  stage                 LeadStage  @default(NEW)
+  ownerId               String?    @db.Uuid
+  interestedPackageId   String?    @db.Uuid
+  location              String?
+  notes                 String?
+  lostReason            String?
+  convertedSubscriberId String?    @unique @db.Uuid
+  convertedAt           DateTime?  @db.Timestamptz(6)
+  createdAt             DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime   @updatedAt @db.Timestamptz(6)
+
+  interestedPackage   Package?       @relation(fields: [interestedPackageId], references: [id])
+  convertedSubscriber Subscriber?    @relation(fields: [convertedSubscriberId], references: [id])
+  activities          LeadActivity[]
+
+  @@index([organizationId, stage, createdAt])
+  @@index([organizationId, phone])
+  @@index([organizationId, ownerId])
+}
+
+model LeadActivity {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  leadId         String   @db.Uuid
+  actorUserId    String?  @db.Uuid
+  type           String // created, note, call, stage_changed, assigned, updated, converted
+  message        String
+  metadata       Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt])
+}
+
+// ───────────────────────── Imports ─────────────────────────
+
+enum ImportJobStatus {
+  PREVIEWED
+  COMMITTED
+  FAILED
+}
+
+model ImportJob {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  organizationId String          @db.Uuid
+  type           String // subscribers
+  status         ImportJobStatus @default(PREVIEWED)
+  fileName       String
+  totalRows      Int
+  validRows      Int
+  errorRows      Int
+  errors         Json // [{ row, field, message }]
+  normalizedRows Json? // validated rows awaiting commit (cleared after commit)
+  createdById    String?         @db.Uuid
+  createdAt      DateTime        @default(now()) @db.Timestamptz(6)
+  committedAt    DateTime?       @db.Timestamptz(6)
+
+  @@index([organizationId, createdAt])
+}

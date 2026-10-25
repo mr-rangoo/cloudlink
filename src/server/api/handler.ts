@@ -7,6 +7,7 @@ import { resolveSession, SESSION_COOKIE } from "@/server/auth/session";
 import { loadStaffContext, requirePermission, type RequestMeta, type StaffContext } from "@/server/auth/context";
 import type { PermissionKey } from "@/server/auth/permissions";
 import { Prisma } from "@/generated/prisma/client";
+import { withIdempotency } from "@/server/api/idempotency";
 
 const CORRELATION_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 const MAX_BODY_BYTES = 1_000_000;
@@ -140,7 +141,25 @@ export function staffRoute<B extends ZodType = ZodType<undefined>, Q extends Zod
       if (opts.requireIdempotencyKey && !rawKey) throw new AppError("VALIDATION_ERROR", "An Idempotency-Key header is required for this operation.");
 
       const { params, query, body } = await parseInputs(req, routeCtx, opts);
-      return toResponse(await fn({ req, meta, ctx, params, query, body, idempotencyKey: rawKey }), meta.correlationId);
+      const run = () => fn({ req, meta, ctx, params, query, body, idempotencyKey: rawKey });
+      if (!rawKey || !UNSAFE_METHODS.has(req.method)) return toResponse(await run(), meta.correlationId);
+
+      // Idempotent execution: the same key + same body replays the stored response.
+      const scope = `org:${ctx.organizationId}:${req.method}:${req.nextUrl.pathname}`;
+      const outcome = await withIdempotency(scope, rawKey, `${ctx.userId}|${JSON.stringify(body ?? null)}`, ctx.organizationId, async () => {
+        const res = toResponse(await run(), meta.correlationId);
+        const text = await res.clone().text();
+        return { status: res.status, body: text ? JSON.parse(text) : null };
+      });
+      const payload =
+        outcome.status >= 400 && outcome.body && typeof outcome.body === "object" && "error" in outcome.body
+          ? { error: { ...(outcome.body as { error: object }).error, correlationId: meta.correlationId } }
+          : outcome.body;
+      const res = NextResponse.json(payload, { status: outcome.status });
+      res.headers.set("x-correlation-id", meta.correlationId);
+      res.headers.set("cache-control", "no-store");
+      if (outcome.replayed) res.headers.set("idempotent-replayed", "true");
+      return res;
     } catch (err) {
       return errorResponse(err, meta.correlationId);
     }

@@ -1,0 +1,4 @@
+import { staffRoute } from "@/server/api/handler";
+import { dashboardActivity } from "@/server/services/dashboard";
+
+export const GET = staffRoute({ permission: "dashboard.view" }, async ({ ctx }) => ({ data: await dashboardActivity(ctx) }));

@@ -50,3 +50,11 @@ export function fieldErrors(err: unknown): Record<string, string> {
   if (!(err instanceof ApiError) || !err.fields) return {};
   return Object.fromEntries(err.fields.map((f) => [f.path, f.message]));
 }
+
+/**
+ * After the server answered with an error, the next submission is a new request and needs a new key.
+ * After a network failure (status 0) the outcome is unknown, so the same key must be reused for the retry.
+ */
+export function rotateOnServerError(err: unknown, rotate: () => void): void {
+  if (err instanceof ApiError && err.status !== 0) rotate();
+}

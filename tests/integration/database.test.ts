@@ -13,4 +13,14 @@ describe("database conventions", () => {
       SELECT EXTRACT(EPOCH FROM ("runAfter" - now()))::float AS diff FROM "BackgroundOperation" WHERE id = ${op.id}::uuid`;
     expect(Math.abs(cmp!.diff)).toBeLessThan(5);
   });
+
+  it("rejects invalid catalogue values at the database level", async () => {
+    const org = await db.organization.create({ data: { name: "Check Org", slug: `check-${Date.now()}` } });
+    const base = { organizationId: org.id, name: "Bad", serviceType: "PPPOE" as const, currency: "KES" };
+    await expect(db.package.create({ data: { ...base, price: "-1" } })).rejects.toThrow();
+    await expect(db.package.create({ data: { ...base, price: "1", taxRate: "101" } })).rejects.toThrow();
+    await expect(db.package.create({ data: { ...base, price: "1", billingCount: 0 } })).rejects.toThrow();
+    await expect(db.package.create({ data: { ...base, price: "1", currency: "kes" } })).rejects.toThrow();
+    await expect(db.package.create({ data: { ...base, price: "1" } })).resolves.toBeTruthy();
+  });
 });

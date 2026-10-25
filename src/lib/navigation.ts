@@ -18,10 +18,10 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { slug: "dashboard", href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", permission: "dashboard.view", group: "Overview", available: true, phase: 1, description: "Key metrics and alerts" },
-  { slug: "leads", href: "/leads", label: "CRM / Leads", icon: "UserPlus", permission: "leads.read", group: "Customers", available: false, phase: 2, description: "Sales pipeline and lead conversion" },
-  { slug: "subscribers", href: "/subscribers", label: "Subscribers", icon: "Users", permission: "subscribers.read", group: "Customers", available: false, phase: 2, description: "Subscriber accounts and contacts" },
-  { slug: "packages", href: "/packages", label: "Packages", icon: "Package", permission: "packages.read", group: "Customers", available: false, phase: 2, description: "Service plans and pricing" },
-  { slug: "subscriptions", href: "/subscriptions", label: "Subscriptions", icon: "Repeat", permission: "subscriptions.read", group: "Customers", available: false, phase: 2, description: "Subscription lifecycle" },
+  { slug: "leads", href: "/leads", label: "CRM / Leads", icon: "UserPlus", permission: "leads.read", group: "Customers", available: true, phase: 2, description: "Sales pipeline and lead conversion" },
+  { slug: "subscribers", href: "/subscribers", label: "Subscribers", icon: "Users", permission: "subscribers.read", group: "Customers", available: true, phase: 2, description: "Subscriber accounts and contacts" },
+  { slug: "packages", href: "/packages", label: "Packages", icon: "Package", permission: "packages.read", group: "Customers", available: true, phase: 2, description: "Service plans and pricing" },
+  { slug: "subscriptions", href: "/subscriptions", label: "Subscriptions", icon: "Repeat", permission: "subscriptions.read", group: "Customers", available: true, phase: 2, description: "Subscription lifecycle" },
   { slug: "invoices", href: "/invoices", label: "Invoices", icon: "FileText", permission: "invoices.read", group: "Billing", available: false, phase: 3, description: "Invoices and billing schedules" },
   { slug: "payments", href: "/payments", label: "Payments", icon: "Wallet", permission: "payments.read", group: "Billing", available: false, phase: 3, description: "Payments and allocations" },
   { slug: "reconciliation", href: "/reconciliation", label: "Reconciliation", icon: "Scale", permission: "payments.reconcile", group: "Billing", available: false, phase: 3, description: "Unmatched payments and ledger review" },
