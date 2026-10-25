@@ -40,14 +40,15 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Database-backed dashboard — KPIs with written definitions (docs/BILLING.md), permission-aware, unavailable metrics labelled.
 - [x] Request idempotency (`Idempotency-Key`) for all mutating staff endpoints; validation failures release the key.
 
-## Phase 3 — Billing and finance
-- [ ] Invoice engine and immutable line snapshots.
-- [ ] Recurring billing job and deduplication.
-- [ ] Partial/full payment allocations.
-- [ ] Manual cash and bank payments.
-- [ ] Ledger/reconciliation.
-- [ ] Credit notes, refunds and reversals.
-- [ ] PDF invoices and receipts.
+## Phase 3 — Billing and finance ✅
+- [x] Invoice engine and immutable line snapshots — decimal per-line rounding, discounts, tax; DRAFT→OPEN issue with gapless numbers; DB triggers freeze issued lines/amounts and forbid deletion; void with reversing entry. UI: /invoices, /invoices/new, /invoices/[id].
+- [x] Recurring billing job and deduplication — hourly `billing.run_recurring`; unique generation key per subscription period + row lock (tested with concurrent runs); activation invoices; renew-on-paid with `invoice:<id>` key.
+- [x] Partial/full payment allocations — limits (unallocated, invoice balance, same subscriber/currency), oldest-first auto-allocation, lock ordering, concurrency test.
+- [x] Manual cash and bank payments — confirmed on entry, gapless receipt numbers, unique references, mandatory Idempotency-Key. UI: /payments, /payments/new, /payments/[id].
+- [x] Ledger/reconciliation — double-entry with deferred balance trigger and append-only rows; trial balance; balance checks recomputing every cache; unidentified receipts + matching. UI: /reconciliation.
+- [x] Credit notes, refunds and reversals — credit notes split invoice/customer credit; refunds ≤ unallocated; payment reversal undoes allocations; allocation reversal; expenses (+reversal) and withdrawals/bank deposits. UI: /expenses, /collections.
+- [x] PDF invoices and receipts — PDFKit, rendered on demand from persisted records, permission-checked.
+- [x] Dashboard billing KPIs — receivables, overdue, collected this month, payment exceptions (definitions in docs/BILLING.md).
 
 ## Phase 4 — Customer portal and support
 - [ ] Customer authentication and ownership checks.
@@ -148,7 +149,28 @@ Coding agent: update this file continuously. Do not mark items complete without 
 
 **Still mocked / blocked**: network provisioning is shown as "Not provisioned" (phase 7); invoices/payments (phase 3).
 
-**Exact next task**: Phase 3 — billing and finance: Invoice/InvoiceLine/CreditNote/Payment/PaymentAllocation/Ledger models (transactional, decimal, idempotent), invoice engine using subscription snapshots (unique per subscription + period), recurring billing job, manual cash/bank payments with allocation, ledger/reconciliation views, credit notes/refunds/reversals, PDF invoices and receipts.
+**Next task at the time**: Phase 3 (completed below).
+
+### 2026-10-25 — Phase 3 (Billing and finance)
+**Schema**: migration `20261025100500_billing_finance` (BillingSettings, Invoice/InvoiceLine, CreditNote(+lines), Payment, PaymentAllocation, Refund, LedgerAccount/Transaction/Entry, ExpenseCategory, Expense, Withdrawal, ReconciliationRecord; Subscription.invoicedThrough). Wrapped in BEGIN/COMMIT, with triggers: ledger balance (deferred constraint trigger), append-only ledger/refunds/credit notes, issued-invoice immutability; CHECK constraints for amounts and cache consistency.
+
+**Defects found and fixed during the phase**
+- With zero payment terms the due date was the issue instant, so invoices showed as overdue seconds after issue. Due dates are now the end of the local day (organization timezone). Unit + integration assertions added.
+- Prisma generated the billing migration with a timestamp earlier than the hand-written constraint migration; renamed so migrations apply in order.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` | exit 0 |
+| `npm run typecheck` | exit 0 |
+| `npm run test` | 7 files, 61 tests passed (adds invoice math: rounding, discounts, allocation order, credit split) |
+| `npm run test:integration` | 10 files, 82 tests passed (adds 20 billing tests: ledger triggers, gapless numbers, recurring billing ×3 concurrent, partial/full payments + renewal once, late payment restart, overpayment credit, allocation limits + concurrency, HTTP idempotency, credit notes, refunds, reversals, unmatched matching, tamper detection, tenant isolation, PDFs) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 13 passed (adds: activation invoice → partial → full payment with receipt/invoice PDFs; accountant matches unidentified bank receipt and balance checks pass; cashier refund blocked in UI and API 403) |
+
+**Still mocked / blocked**: M-Pesa (phase 8) — manual M-Pesa entries only; payment gateway callbacks not yet implemented. Object storage not needed yet (PDFs rendered on demand).
+
+**Exact next task**: Phase 4 — customer portal and support: customer accounts (User kind CUSTOMER linked to Subscriber) with separate session handling and ownership checks; portal pages for invoices/payments/receipts/profile; support tickets (staff + customer) with comments and timeline; email/SMS adapters (mock + SMTP) with notification records and preferences; notifications on invoice issue/payment receipt.
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

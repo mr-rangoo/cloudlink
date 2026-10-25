@@ -6,6 +6,9 @@ import { noteInput, subscriberInput, subscriberListQuery, subscriberUpdate } fro
 import { subscriptionActionInput, subscriptionCreateInput, subscriptionListQuery } from "@/server/services/subscriptions";
 import { leadActivityInput, leadConvertInput, leadInput, leadListQuery, leadUpdate } from "@/server/services/leads";
 import { importPreviewInput } from "@/server/services/imports";
+import { creditNoteInput, invoiceCreateInput, invoiceListQuery, voidInput } from "@/server/services/invoices";
+import { allocateInput, manualPaymentInput, paymentListQuery, reconcileInput, refundInput, reverseInput } from "@/server/services/payments";
+import { categoryInput, expenseInput, financeListQuery, reverseExpenseInput, withdrawalInput } from "@/server/services/finance";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -92,6 +95,37 @@ export const operations: Operation[] = [
   { method: "patch", path: "/leads/:id", summary: "Update lead / stage / owner", tag: "CRM", auth: "session", permission: "leads.write", body: leadUpdate },
   { method: "post", path: "/leads/:id/activities", summary: "Log a call, note, meeting or survey", tag: "CRM", auth: "session", permission: "leads.write", body: leadActivityInput },
   { method: "post", path: "/leads/:id/convert", summary: "Convert lead to subscriber atomically", tag: "CRM", auth: "session", permission: "leads.write + subscribers.write", body: leadConvertInput, responses: { "409": "Already converted or duplicate contact" } },
+  { method: "get", path: "/invoices", summary: "List invoices (filters: UNPAID, OVERDUE, …) with outstanding total", tag: "Invoices", auth: "session", permission: "invoices.read", query: invoiceListQuery },
+  { method: "post", path: "/invoices", summary: "Create a manual invoice (draft or issued)", tag: "Invoices", auth: "session", permission: "invoices.write (+ invoices.issue to issue)", body: invoiceCreateInput },
+  { method: "get", path: "/invoices/:id", summary: "Invoice with lines, allocations and credit notes", tag: "Invoices", auth: "session", permission: "invoices.read" },
+  { method: "delete", path: "/invoices/:id", summary: "Delete a draft invoice", tag: "Invoices", auth: "session", permission: "invoices.write" },
+  { method: "post", path: "/invoices/:id/issue", summary: "Issue a draft (assigns number, posts ledger, applies credit)", tag: "Invoices", auth: "session", permission: "invoices.issue" },
+  { method: "post", path: "/invoices/:id/void", summary: "Void an unpaid issued invoice (reversing ledger entry)", tag: "Invoices", auth: "session", permission: "invoices.issue", body: voidInput },
+  { method: "post", path: "/invoices/:id/credit-notes", summary: "Issue a credit note (gross amount)", tag: "Invoices", auth: "session", permission: "credit_notes.create", body: creditNoteInput, idempotent: true },
+  { method: "get", path: "/invoices/:id/pdf", summary: "Invoice PDF (from persisted data)", tag: "Invoices", auth: "session", permission: "invoices.read" },
+  { method: "post", path: "/billing/run", summary: "Run recurring billing now (idempotent per period)", tag: "Invoices", auth: "session", permission: "invoices.issue" },
+  { method: "get", path: "/payments", summary: "List payments", tag: "Payments", auth: "session", permission: "payments.read", query: paymentListQuery },
+  { method: "post", path: "/payments/manual", summary: "Record a confirmed cash/bank/cheque/manual M-Pesa payment", tag: "Payments", auth: "session", permission: "payments.record", body: manualPaymentInput, idempotent: true, responses: { "409": "Duplicate reference" } },
+  { method: "get", path: "/payments/unmatched", summary: "Confirmed payments not matched to a subscriber", tag: "Payments", auth: "session", permission: "payments.reconcile" },
+  { method: "get", path: "/payments/:id", summary: "Payment with allocations and refunds", tag: "Payments", auth: "session", permission: "payments.read" },
+  { method: "get", path: "/payments/:id/status", summary: "Server-side payment status", tag: "Payments", auth: "session", permission: "payments.read" },
+  { method: "post", path: "/payments/:id/allocate", summary: "Allocate to invoices", tag: "Payments", auth: "session", permission: "payments.allocate", body: allocateInput, idempotent: true },
+  { method: "post", path: "/payments/:id/allocations/:allocationId/reverse", summary: "Reverse an allocation", tag: "Payments", auth: "session", permission: "payments.reconcile", body: reverseInput },
+  { method: "post", path: "/payments/:id/refunds", summary: "Refund unallocated money", tag: "Payments", auth: "session", permission: "payments.refund", body: refundInput, idempotent: true },
+  { method: "post", path: "/payments/:id/reverse", summary: "Reverse a payment (bounced / entered in error)", tag: "Payments", auth: "session", permission: "payments.refund", body: reverseInput },
+  { method: "post", path: "/payments/:id/reconcile", summary: "Match an unidentified payment to a subscriber", tag: "Payments", auth: "session", permission: "payments.reconcile", body: reconcileInput },
+  { method: "get", path: "/payments/:id/receipt", summary: "Receipt PDF", tag: "Payments", auth: "session", permission: "payments.read" },
+  { method: "get", path: "/ledger/entries", summary: "Ledger entries (double entry)", tag: "Ledger", auth: "session", permission: "ledger.read" },
+  { method: "get", path: "/ledger/trial-balance", summary: "Trial balance by account", tag: "Ledger", auth: "session", permission: "ledger.read" },
+  { method: "post", path: "/reconciliation/checks", summary: "Recompute cached balances and verify the ledger", tag: "Ledger", auth: "session", permission: "payments.reconcile" },
+  { method: "get", path: "/expenses", summary: "List expenses", tag: "Finance", auth: "session", permission: "expenses.read", query: financeListQuery },
+  { method: "post", path: "/expenses", summary: "Record an expense", tag: "Finance", auth: "session", permission: "expenses.write", body: expenseInput, idempotent: true },
+  { method: "post", path: "/expenses/:id/reverse", summary: "Reverse an expense", tag: "Finance", auth: "session", permission: "expenses.write", body: reverseExpenseInput },
+  { method: "get", path: "/expenses/categories", summary: "Expense categories", tag: "Finance", auth: "session", permission: "expenses.read" },
+  { method: "post", path: "/expenses/categories", summary: "Create expense category", tag: "Finance", auth: "session", permission: "expenses.write", body: categoryInput },
+  { method: "get", path: "/withdrawals", summary: "Owner drawings and bank deposits", tag: "Finance", auth: "session", permission: "expenses.read", query: financeListQuery },
+  { method: "post", path: "/withdrawals", summary: "Record an owner drawing or bank deposit", tag: "Finance", auth: "session", permission: "expenses.write", body: withdrawalInput, idempotent: true },
+  { method: "get", path: "/collections/summary", summary: "Monthly collections, refunds, expenses and ledger balances", tag: "Finance", auth: "session", permission: "expenses.read" },
 ];
 
 /** Register additional operations (called by feature modules at import time). */

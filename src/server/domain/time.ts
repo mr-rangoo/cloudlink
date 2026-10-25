@@ -87,3 +87,8 @@ export function localDateKey(date: Date, tz: string): string {
   const w = toWallTime(date, tz);
   return `${w.year}-${String(w.month).padStart(2, "0")}-${String(w.day).padStart(2, "0")}`;
 }
+
+/** Last millisecond of the local calendar day in `tz` containing the instant (due dates are whole days). */
+export function endOfLocalDay(date: Date, tz: string): Date {
+  return new Date(addLocalDays(startOfLocalDay(date, tz), 1, tz).getTime() - 1);
+}

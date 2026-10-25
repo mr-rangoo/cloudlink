@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CalendarClock, Database, Repeat, Server, TrendingUp, UserPlus, Users } from "lucide-react";
+import { AlertTriangle, CalendarClock, Database, FileText, Repeat, Server, TrendingUp, UserPlus, Users, Wallet } from "lucide-react";
 import { getStaffContextWith } from "@/server/auth/page";
 import { checkDatabase, workerStatus } from "@/server/observability/health";
 import { pingRedis } from "@/server/jobs/redis";
@@ -49,6 +49,13 @@ export default async function DashboardPage() {
           hint="Active subscription prices, monthly equivalent, excl. tax"
         />
         <Kpi icon={CalendarClock} label="Expiring in 7 days" value={subs ? String(subs.expiringIn7Days) : null} hint="Active, paid period ends within 7 days" href="/subscriptions?expiring=7d" />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Kpi icon={FileText} label="Receivables" value={summary.billing ? formatMoney(summary.billing.receivables, ctx.organization.currency) : null} hint={summary.billing ? `${summary.billing.openInvoices} open invoice(s)` : undefined} href="/invoices?status=UNPAID" />
+        <Kpi icon={AlertTriangle} label="Overdue" value={summary.billing ? formatMoney(summary.billing.overdue, ctx.organization.currency) : null} hint={summary.billing ? `${summary.billing.overdueInvoices} invoice(s) past due` : undefined} href="/invoices?status=OVERDUE" />
+        <Kpi icon={Wallet} label="Collected this month" value={summary.collections ? formatMoney(summary.collections.thisMonth, ctx.organization.currency) : null} hint={summary.collections ? `${summary.collections.payments} confirmed payment(s)` : undefined} href="/payments?status=CONFIRMED" />
+        <Kpi icon={AlertTriangle} label="Payment exceptions" value={summary.collections ? String(summary.collections.unmatchedPayments) : null} hint="Confirmed payments not matched to a subscriber" href="/payments?unmatched=1" />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -158,7 +165,7 @@ export default async function DashboardPage() {
               <CardDescription>Shown once their modules are built — never estimated</CardDescription>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              Invoices, payments, receivables and collections (billing, phase 3); support workload (phase 4); router status and network operations (phase 7).
+              Support workload (phase 4); router status and network operations (phase 7).
             </CardContent>
           </Card>
         </div>

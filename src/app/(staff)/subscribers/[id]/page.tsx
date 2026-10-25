@@ -16,6 +16,7 @@ import { RecordStatusBadge, SERVICE_LABEL, SubscriptionStatusBadge, formatInterv
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
 import { AddSubscriptionDialog, EditSubscriberDialog, NoteForm, SubscriptionActions } from "./client";
+import { BillingCard } from "./billing-card";
 
 export const metadata: Metadata = { title: "Subscriber" };
 
@@ -160,12 +161,14 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
                     {s.cancelledAt ? ` · cancelled ${formatDate(s.cancelledAt, tz)}` : ""}
                   </p>
                 </div>
-                {canSubscribe ? <SubscriptionActions subscriptionId={s.id} packageName={s.packageName} actions={allowedActions(s.status)} /> : null}
+                {canSubscribe ? <SubscriptionActions subscriptionId={s.id} packageName={s.packageName} actions={allowedActions(s.status)} canInvoice={ctx.permissions.has("invoices.issue")} /> : null}
               </li>
             ))}
           </ul>
         )}
       </Card>
+
+      {ctx.permissions.has("invoices.read") || ctx.permissions.has("payments.read") ? <BillingCard ctx={ctx} subscriberId={subscriber.id} /> : null}
 
       <Card>
         <CardHeader>

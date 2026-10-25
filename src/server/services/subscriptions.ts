@@ -13,12 +13,16 @@ export const subscriptionCreateInput = z.object({
   subscriberId: z.uuid(),
   packageId: z.uuid(),
   activate: z.boolean().default(true),
+  /** Invoice the first period on activation (defaults to the organization billing setting). */
+  invoice: z.boolean().optional(),
   graceDays: z.coerce.number().int().min(0).max(60).default(0),
   autoRenew: z.boolean().default(true),
 });
 
 export const subscriptionActionInput = z.object({
   reason: z.string().trim().max(500).optional(),
+  /** For activate/renew: create the invoice for the new period (activate defaults to the org setting; renew defaults to true). */
+  invoice: z.boolean().optional(),
 });
 
 export const subscriptionListQuery = z.object({
@@ -94,7 +98,7 @@ export async function createSubscriptionTx(tx: Tx, ctx: ActorContext, input: z.i
   await tx.subscriberActivity.create({
     data: { organizationId: ctx.organizationId, subscriberId: subscriber.id, actorUserId: actorUserId(ctx), type: "subscription.created", message: `Subscription to ${pkg.name} created`, metadata: { subscriptionId: sub.id } },
   });
-  if (input.activate) return applyActionTx(tx, ctx, sub.id, "activate", {});
+  if (input.activate) return applyActionTx(tx, ctx, sub.id, "activate", { invoice: input.invoice });
   return sub;
 }
 
@@ -123,7 +127,7 @@ export async function applyActionTx(
   ctx: ActorContext,
   id: string,
   action: SubscriptionAction,
-  opts: { reason?: string; idempotencyKey?: string; now?: Date },
+  opts: { reason?: string; idempotencyKey?: string; now?: Date; invoice?: boolean },
 ): Promise<Subscription> {
   const existing = await tx.subscription.findFirst({ where: { id, ...tenantWhere(ctx) }, select: { id: true } });
   if (!existing) throw notFound("subscription");
@@ -204,17 +208,31 @@ export async function applyActionTx(
       metadata: { subscriptionId: id },
     },
   });
+  if ((action === "activate" || action === "renew") && updated.currentPeriodStart && updated.currentPeriodEnd) {
+    let invoice = opts.invoice;
+    if (invoice === undefined && action === "activate") {
+      const settings = await tx.billingSettings.findUnique({ where: { organizationId: sub.organizationId } });
+      invoice = settings?.invoiceOnActivation ?? true;
+    }
+    if (invoice) {
+      // Imported lazily: invoices → settlement → subscriptions would otherwise form an import cycle.
+      const { createPeriodInvoiceTx } = await import("@/server/services/invoices");
+      await createPeriodInvoiceTx(tx, ctx, updated, { start: updated.currentPeriodStart, end: updated.currentPeriodEnd }, action === "activate" ? "activation" : "renewal");
+      return tx.subscription.findUniqueOrThrow({ where: { id } });
+    }
+  }
   return updated;
 }
 
 const ACTION_PERMISSION = "subscriptions.write" as const;
 
-export async function applySubscriptionAction(ctx: ActorContext, id: string, action: Exclude<SubscriptionAction, "expire">, opts: { reason?: string; idempotencyKey?: string } = {}) {
+export async function applySubscriptionAction(ctx: ActorContext, id: string, action: Exclude<SubscriptionAction, "expire">, opts: { reason?: string; idempotencyKey?: string; invoice?: boolean } = {}) {
   requirePermission(ctx, ACTION_PERMISSION);
+  if (opts.invoice) requirePermission(ctx, "invoices.issue");
   const before = await db.subscription.findFirst({ where: { id, ...tenantWhere(ctx) }, select: { status: true } });
   if (!before) throw notFound("subscription");
   const sub = await db.$transaction((tx) => applyActionTx(tx, ctx, id, action, opts));
-  await audit(ctx, { action: `subscription.${action}`, entityType: "subscription", entityId: id, metadata: { from: before.status, to: sub.status, reason: opts.reason } });
+  await audit(ctx, { action: `subscription.${action}`, entityType: "subscription", entityId: id, metadata: { from: before.status, to: sub.status, reason: opts.reason, invoice: opts.invoice } });
   return sub;
 }
 

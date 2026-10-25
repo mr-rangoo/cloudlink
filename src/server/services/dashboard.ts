@@ -13,6 +13,9 @@ import type { BillingUnit } from "@/server/domain/billing-period";
  * - Recurring revenue (MRR): sum of ACTIVE subscription snapshot prices normalised to one month
  *   (yearly ÷ 12, weekly × 52 ÷ 12, daily × 365 ÷ 12, hourly × 24 × 365 ÷ 12), excluding tax. Grouped by currency.
  * - New this month / leads won this month: calendar month in the organization timezone.
+ * - Receivables: sum of balanceDue on OPEN and PARTIALLY_PAID invoices. Overdue: those past dueAt.
+ * - Collected this month: CONFIRMED payments received since the start of the month (incl. later-refunded ones).
+ * - Payment exceptions: confirmed payments not matched to a subscriber.
  */
 export function monthlyEquivalent(price: DecimalValue, unit: BillingUnit, count: number): DecimalValue {
   const perUnit = price.div(count);
@@ -43,6 +46,16 @@ export async function dashboardSummary(ctx: ActorContext & { organization: { tim
   const canSubs = ctx.kind === "system" || ctx.permissions.has("subscribers.read");
   const canSubscriptions = ctx.kind === "system" || ctx.permissions.has("subscriptions.read");
   const canLeads = ctx.kind === "system" || ctx.permissions.has("leads.read");
+  const canInvoices = ctx.kind === "system" || ctx.permissions.has("invoices.read");
+  const canPayments = ctx.kind === "system" || ctx.permissions.has("payments.read");
+
+  const open = { in: ["OPEN", "PARTIALLY_PAID"] as Array<"OPEN" | "PARTIALLY_PAID"> };
+  const [receivables, overdue, collected, unmatched] = await Promise.all([
+    canInvoices ? db.invoice.aggregate({ where: { ...scope, status: open }, _sum: { balanceDue: true }, _count: { _all: true } }) : null,
+    canInvoices ? db.invoice.aggregate({ where: { ...scope, status: open, dueAt: { lt: now } }, _sum: { balanceDue: true }, _count: { _all: true } }) : null,
+    canPayments ? db.payment.aggregate({ where: { ...scope, status: "CONFIRMED", receivedAt: { gte: monthStart } }, _sum: { amount: true }, _count: { _all: true } }) : null,
+    canPayments ? db.payment.count({ where: { organizationId: ctx.organizationId, status: "CONFIRMED", subscriberId: null } }) : null,
+  ]);
 
   const [subscriberCount, newSubscribers, statusGroups, expiringSoon, activeForMrr, openLeads, wonThisMonth] = await Promise.all([
     canSubs ? db.subscriber.count({ where: { ...scope, status: { not: "ARCHIVED" } } }) : null,
@@ -76,8 +89,15 @@ export async function dashboardSummary(ctx: ActorContext & { organization: { tim
         },
     recurringRevenue: activeForMrr === null ? null : [...mrr.entries()].map(([currency, amount]) => ({ currency, monthly: amount.toFixed(2) })),
     leads: openLeads === null ? null : { open: openLeads, wonThisMonth: wonThisMonth ?? 0 },
-    // Not yet available: these modules ship in Phase 3 (billing) and Phase 7 (network).
-    unavailable: ["invoices", "payments", "receivables", "collections", "expenses", "routers", "networkOperations", "supportTickets"],
+    billing: receivables === null ? null : {
+      receivables: (receivables._sum.balanceDue ?? 0).toString(),
+      openInvoices: receivables._count._all,
+      overdue: (overdue?._sum.balanceDue ?? 0).toString(),
+      overdueInvoices: overdue?._count._all ?? 0,
+    },
+    collections: collected === null ? null : { thisMonth: (collected._sum.amount ?? 0).toString(), payments: collected._count._all, unmatchedPayments: unmatched ?? 0 },
+    // Not yet available: these modules ship in Phase 4 (support) and Phase 7 (network).
+    unavailable: ["routers", "networkOperations", "supportTickets"],
   };
 }
 

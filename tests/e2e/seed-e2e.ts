@@ -34,6 +34,9 @@ async function main() {
   const m = await db.membership.create({ data: { organizationId: alpha.organization.id, userId: cashier.id, allBranches: false } });
   await db.membershipRole.create({ data: { membershipId: m.id, roleId: roles.cashier! } });
   await db.membershipBranch.create({ data: { membershipId: m.id, branchId: east.id } });
+  const accountant = await db.user.create({ data: { name: "Abel Accountant", email: E2E_USERS.accountant, passwordHash } });
+  const am = await db.membership.create({ data: { organizationId: alpha.organization.id, userId: accountant.id } });
+  await db.membershipRole.create({ data: { membershipId: am.id, roleId: roles.accountant! } });
 
   await disconnectDb();
   console.log("e2e fixtures ready");

@@ -486,7 +486,8 @@ model Subscription {
   periodIndex        Int                @default(0)
   currentPeriodStart DateTime?          @db.Timestamptz(6)
   currentPeriodEnd   DateTime?          @db.Timestamptz(6)
-  nextBillingAt      DateTime?          @db.Timestamptz(6)
+  nextBillingAt      DateTime?          @db.Timestamptz(6) // when the next invoice will be generated
+  invoicedThrough    DateTime?          @db.Timestamptz(6) // end of the latest period that has an invoice
   graceDays          Int                @default(0)
   autoRenew          Boolean            @default(true)
   activatedAt        DateTime?          @db.Timestamptz(6)
@@ -614,4 +615,355 @@ model ImportJob {
   committedAt    DateTime?       @db.Timestamptz(6)
 
   @@index([organizationId, createdAt])
+}
+
+// ───────────────────────── Billing settings ─────────────────────────
+
+model BillingSettings {
+  organizationId      String   @id @db.Uuid
+  invoicePrefix       String   @default("INV")
+  receiptPrefix       String   @default("RCT")
+  creditNotePrefix    String   @default("CRN")
+  invoiceLeadDays     Int      @default(3) // generate the next invoice this many days before the period ends
+  paymentTermsDays    Int      @default(0) // due date = period start (or issue date) + terms
+  invoiceOnActivation Boolean  @default(true)
+  taxLabel            String   @default("VAT")
+  taxPin              String?
+  legalName           String?
+  address             String?
+  phone               String?
+  email               String?
+  invoiceFooter       String?
+  updatedAt           DateTime @updatedAt @db.Timestamptz(6)
+}
+
+// ───────────────────────── Invoices ─────────────────────────
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+model Invoice {
+  id                 String        @id @default(uuid(7)) @db.Uuid
+  organizationId     String        @db.Uuid
+  branchId           String?       @db.Uuid
+  subscriberId       String        @db.Uuid
+  subscriptionId     String?       @db.Uuid
+  invoiceNumber      String? // assigned on issue (gapless per organization)
+  status             InvoiceStatus @default(DRAFT)
+  currency           String        @db.Char(3)
+  subtotal           Decimal       @default(0) @db.Decimal(14, 2)
+  discountTotal      Decimal       @default(0) @db.Decimal(14, 2)
+  taxTotal           Decimal       @default(0) @db.Decimal(14, 2)
+  total              Decimal       @default(0) @db.Decimal(14, 2)
+  // Cached settlement figures, maintained transactionally and verified by reconciliation checks.
+  amountPaid         Decimal       @default(0) @db.Decimal(14, 2)
+  amountCredited     Decimal       @default(0) @db.Decimal(14, 2)
+  balanceDue         Decimal       @default(0) @db.Decimal(14, 2)
+  issuedAt           DateTime?     @db.Timestamptz(6)
+  dueAt              DateTime?     @db.Timestamptz(6)
+  paidAt             DateTime?     @db.Timestamptz(6)
+  voidedAt           DateTime?     @db.Timestamptz(6)
+  voidReason         String?
+  billingPeriodStart DateTime?     @db.Timestamptz(6)
+  billingPeriodEnd   DateTime?     @db.Timestamptz(6)
+  // Unique generation key, e.g. "sub:<subscriptionId>:<periodStartISO>", making recurring billing idempotent.
+  generationKey      String?
+  source             String        @default("manual") // manual | recurring | activation
+  notes              String?
+  createdById        String?       @db.Uuid
+  createdAt          DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @db.Timestamptz(6)
+
+  lines       InvoiceLine[]
+  allocations PaymentAllocation[]
+  creditNotes CreditNote[]
+
+  @@unique([organizationId, invoiceNumber])
+  @@unique([organizationId, generationKey])
+  @@index([organizationId, status, dueAt])
+  @@index([organizationId, subscriberId, createdAt])
+  @@index([subscriptionId])
+}
+
+// Immutable once the invoice is issued (enforced by a database trigger).
+model InvoiceLine {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  invoiceId    String    @db.Uuid
+  position     Int
+  description  String
+  quantity     Decimal   @db.Decimal(12, 3)
+  unitPrice    Decimal   @db.Decimal(14, 2)
+  discount     Decimal   @default(0) @db.Decimal(14, 2)
+  taxRate      Decimal   @default(0) @db.Decimal(5, 2)
+  lineSubtotal Decimal   @db.Decimal(14, 2) // quantity × unitPrice, rounded
+  taxAmount    Decimal   @db.Decimal(14, 2)
+  lineTotal    Decimal   @db.Decimal(14, 2) // subtotal − discount + tax
+  packageId    String?   @db.Uuid
+  periodStart  DateTime? @db.Timestamptz(6)
+  periodEnd    DateTime? @db.Timestamptz(6)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([invoiceId, position])
+}
+
+model CreditNote {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  organizationId   String   @db.Uuid
+  invoiceId        String   @db.Uuid
+  subscriberId     String   @db.Uuid
+  creditNoteNumber String
+  reason           String
+  currency         String   @db.Char(3)
+  subtotal         Decimal  @db.Decimal(14, 2)
+  taxTotal         Decimal  @db.Decimal(14, 2)
+  total            Decimal  @db.Decimal(14, 2)
+  appliedToInvoice Decimal  @db.Decimal(14, 2) // part that reduced the invoice balance
+  toCustomerCredit Decimal  @db.Decimal(14, 2) // part credited to the customer (invoice already settled)
+  createdById      String?  @db.Uuid
+  issuedAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  invoice Invoice          @relation(fields: [invoiceId], references: [id])
+  lines   CreditNoteLine[]
+
+  @@unique([organizationId, creditNoteNumber])
+  @@index([invoiceId])
+}
+
+model CreditNoteLine {
+  id           String  @id @default(uuid(7)) @db.Uuid
+  creditNoteId String  @db.Uuid
+  description  String
+  amount       Decimal @db.Decimal(14, 2) // net of tax
+  taxAmount    Decimal @db.Decimal(14, 2)
+
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────── Payments ─────────────────────────
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MPESA
+  CHEQUE
+  CARD
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  CANCELLED
+  REVERSED
+  UNKNOWN
+}
+
+model Payment {
+  id                    String        @id @default(uuid(7)) @db.Uuid
+  organizationId        String        @db.Uuid
+  branchId              String?       @db.Uuid
+  subscriberId          String?       @db.Uuid // null = unmatched (awaiting reconciliation)
+  method                PaymentMethod
+  provider              String        @default("manual") // manual | mpesa_daraja | ...
+  providerTransactionId String? // e.g. M-Pesa receipt or bank reference; unique per provider
+  receiptNumber         String? // assigned when confirmed
+  amount                Decimal       @db.Decimal(14, 2)
+  currency              String        @db.Char(3)
+  status                PaymentStatus @default(PENDING)
+  receivedAt            DateTime?     @db.Timestamptz(6)
+  payerName             String?
+  payerPhone            String?
+  accountReference      String? // what the payer typed (e.g. paybill account number)
+  notes                 String?
+  // Cached; verified by reconciliation. unallocated = amount − active allocations − refunds.
+  allocatedAmount       Decimal       @default(0) @db.Decimal(14, 2)
+  refundedAmount        Decimal       @default(0) @db.Decimal(14, 2)
+  recordedById          String?       @db.Uuid
+  reversedAt            DateTime?     @db.Timestamptz(6)
+  reversalReason        String?
+  metadata              Json?
+  createdAt             DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime      @updatedAt @db.Timestamptz(6)
+
+  allocations PaymentAllocation[]
+  refunds     Refund[]
+
+  @@unique([organizationId, provider, providerTransactionId])
+  @@unique([organizationId, receiptNumber])
+  @@index([organizationId, status, receivedAt])
+  @@index([organizationId, subscriberId])
+}
+
+enum AllocationStatus {
+  ACTIVE
+  REVERSED
+}
+
+model PaymentAllocation {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  organizationId String           @db.Uuid
+  paymentId      String           @db.Uuid
+  invoiceId      String           @db.Uuid
+  amount         Decimal          @db.Decimal(14, 2)
+  status         AllocationStatus @default(ACTIVE)
+  createdById    String?          @db.Uuid
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  reversedAt     DateTime?        @db.Timestamptz(6)
+  reversalReason String?
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([paymentId])
+  @@index([invoiceId])
+}
+
+model Refund {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
+  paymentId      String        @db.Uuid
+  subscriberId   String?       @db.Uuid
+  amount         Decimal       @db.Decimal(14, 2)
+  currency       String        @db.Char(3)
+  method         PaymentMethod
+  reference      String?
+  reason         String
+  createdById    String?       @db.Uuid
+  refundedAt     DateTime      @default(now()) @db.Timestamptz(6)
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@index([organizationId, refundedAt])
+}
+
+// ───────────────────────── Ledger (double entry) ─────────────────────────
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model LedgerAccount {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  organizationId String            @db.Uuid
+  code           String
+  name           String
+  type           LedgerAccountType
+  isSystem       Boolean           @default(true)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+
+  entries LedgerEntry[]
+
+  @@unique([organizationId, code])
+}
+
+model LedgerTransaction {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  type           String // invoice.issued, invoice.voided, payment.received, allocation, allocation.reversed, credit_note, refund, payment.reversed, expense, withdrawal
+  sourceType     String
+  sourceId       String   @db.Uuid
+  description    String
+  currency       String   @db.Char(3)
+  occurredAt     DateTime @db.Timestamptz(6)
+  actorUserId    String?  @db.Uuid
+  actorType      String
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  entries LedgerEntry[]
+
+  @@index([organizationId, occurredAt])
+  @@index([organizationId, sourceType, sourceId])
+}
+
+// Balanced per transaction (sum of debits = sum of credits), enforced by a deferred constraint trigger.
+model LedgerEntry {
+  id             String  @id @default(uuid(7)) @db.Uuid
+  organizationId String  @db.Uuid
+  transactionId  String  @db.Uuid
+  accountId      String  @db.Uuid
+  subscriberId   String? @db.Uuid
+  debit          Decimal @default(0) @db.Decimal(14, 2)
+  credit         Decimal @default(0) @db.Decimal(14, 2)
+
+  transaction LedgerTransaction @relation(fields: [transactionId], references: [id])
+  account     LedgerAccount     @relation(fields: [accountId], references: [id])
+
+  @@index([organizationId, accountId])
+  @@index([organizationId, subscriberId])
+  @@index([transactionId])
+}
+
+// ───────────────────────── Expenses and withdrawals ─────────────────────────
+
+model ExpenseCategory {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  status         RecordStatus @default(ACTIVE)
+
+  @@unique([organizationId, name])
+}
+
+model Expense {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
+  branchId       String?       @db.Uuid
+  categoryId     String        @db.Uuid
+  amount         Decimal       @db.Decimal(14, 2)
+  currency       String        @db.Char(3)
+  method         PaymentMethod
+  paidAt         DateTime      @db.Timestamptz(6)
+  payee          String?
+  reference      String?
+  description    String
+  status         String        @default("RECORDED") // RECORDED | REVERSED
+  reversedAt     DateTime?     @db.Timestamptz(6)
+  reversalReason String?
+  createdById    String?       @db.Uuid
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+
+  @@index([organizationId, paidAt])
+}
+
+model Withdrawal {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
+  branchId       String?       @db.Uuid
+  amount         Decimal       @db.Decimal(14, 2)
+  currency       String        @db.Char(3)
+  fromMethod     PaymentMethod // which cash/bank/M-Pesa account the money left
+  kind           String // OWNER_DRAWING | BANK_DEPOSIT
+  occurredAt     DateTime      @db.Timestamptz(6)
+  reference      String?
+  description    String
+  createdById    String?       @db.Uuid
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+
+  @@index([organizationId, occurredAt])
+}
+
+model ReconciliationRecord {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  paymentId      String?  @db.Uuid
+  action         String // matched, unmatched, flagged, balance_check
+  outcome        String // ok, mismatch, assigned, ...
+  details        Json?
+  actorUserId    String?  @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([organizationId, createdAt])
+  @@index([paymentId])
 }

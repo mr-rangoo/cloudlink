@@ -5,4 +5,5 @@ export const E2E_USERS = {
   owner: "owner@alpha.e2e.test",
   otherOwner: "owner@bravo.e2e.test",
   cashier: "cashier@alpha.e2e.test",
+  accountant: "accountant@alpha.e2e.test",
 } as const;

@@ -4,6 +4,7 @@ import { PermanentError } from "@/server/jobs/operations";
 import { logger } from "@/server/observability/logger";
 import { systemContext } from "@/server/auth/context";
 import { expireDueSubscriptions } from "@/server/services/subscriptions";
+import { runRecurringBilling } from "@/server/services/invoices";
 
 /**
  * Registry of background operation handlers shared by the worker and tests.
@@ -23,5 +24,14 @@ export const operationHandlers: OperationHandlers = {
     const expired = await expireDueSubscriptions(op.organizationId, ctx);
     if (expired) logger.info({ organizationId: op.organizationId, expired }, "subscriptions expired");
     return { expired };
+  },
+
+  /** Invoice upcoming subscription periods (idempotent: one invoice per subscription period). */
+  "billing.run_recurring": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    const ctx = systemContext(op.organizationId, "worker:billing", op.correlationId ?? op.id);
+    const result = await runRecurringBilling(ctx);
+    if (result.created) logger.info({ organizationId: op.organizationId, ...result }, "recurring invoices generated");
+    return result;
   },
 };

@@ -32,7 +32,8 @@ and a subscriber timeline entry, and is audited. Network provisioning status is 
   31 Jan → 28 Feb (29 in leap years) → 31 Mar → 30 Apr. A 29 Feb yearly anchor bills on 28 Feb and returns to 29 Feb in leap years.
 - DAY/WEEK keep the local wall-clock time in the organization timezone (default Africa/Nairobi).
 - HOUR adds exact elapsed time.
-- `nextBillingAt` is set to the end of the current period (invoicing rules arrive in phase 3).
+- `nextBillingAt` is the end of the current period; the next invoice is generated up to `invoiceLeadDays` before it.
+- `invoicedThrough` is the end of the latest period that has an invoice, so a period is never invoiced twice.
 
 ## Renewal policy
 - If the subscription is ACTIVE or SUSPENDED and its current period has not ended, renewal continues seamlessly:
@@ -63,3 +64,59 @@ Metrics a user lacks permission for are hidden, not estimated. Invoice, payment 
 Preview validates every row (format, branch, package, duplicates within the file and against existing subscribers)
 and stores the validated rows. Commit is allowed only when there are zero errors, and creates all rows in one
 transaction: either every row is imported or none is. Imported subscriptions start as PENDING.
+
+## Invoices
+- Created as DRAFT with all lines, then issued (DRAFT → OPEN). Issuing assigns a gapless per-organization number
+  (`INV-000001`; the counter increments inside the issuing transaction, so a rollback leaves no gap), sets the due date,
+  posts the ledger entry, and immediately applies any customer credit.
+- Line math: `subtotal = round2(qty × unit price)`, discount is applied before tax, `tax = round2(taxable × rate / 100)`,
+  rounding half-up per line; invoice totals are sums of rounded lines. Prices are tax-exclusive.
+- Due date = end of the local day (organization timezone) of max(issue date, period start) + `paymentTermsDays`.
+  "Overdue" is derived (open balance and due date passed), never stored.
+- Issued invoices are immutable (database triggers): lines, amounts, currency, customer and number cannot change and the
+  invoice cannot be deleted. Corrections use credit notes, or void (only with no payments/credits applied; the ledger
+  posting is reversed and the number is kept).
+- Settlement cache: `amountPaid`, `amountCredited`, `balanceDue` with a CHECK constraint
+  `balanceDue = total − amountPaid − amountCredited`. Reconciliation recomputes them from allocations and credit notes.
+
+## Recurring billing (prepaid)
+- Activation invoices the first period (organization setting `invoiceOnActivation`, default on).
+- The worker runs `billing.run_recurring` hourly per organization: every ACTIVE, auto-renewing subscription whose period
+  ends within `invoiceLeadDays` (default 3) gets an invoice for the next period. Generation key
+  `sub:<subscriptionId>:<periodStartISO>` is unique per organization, and the subscription row is locked, so repeated or
+  concurrent runs create exactly one invoice per period.
+- When a period invoice becomes fully PAID the subscription renews with idempotency key `invoice:<invoiceId>`:
+  continues seamlessly if still running, or restarts from the payment time if it had lapsed/expired.
+  Paying an invoice for a period already covered (e.g. activation) changes nothing. Suspended or cancelled
+  subscriptions are never renewed automatically.
+
+## Payments
+- Manual payments (cash, bank, cheque, card, manually verified M-Pesa) are CONFIRMED on entry and get a gapless receipt
+  number (`RCT-000001`). Non-cash entries need a reference, unique per organization (case-insensitive). A reversed manual
+  payment releases its reference so the corrected entry can be recorded; gateway references stay unique forever.
+- Every payment first lands in the subscriber's **customer credit**, then allocations move money to invoices.
+  Allocation rules: payment CONFIRMED and matched; same subscriber and currency; amount ≤ unallocated amount and
+  ≤ invoice balance; invoice OPEN/PARTIALLY_PAID. Rows are locked Payment → Invoice → Subscription to prevent races.
+- Automatic allocation: oldest payment to the oldest-due open invoice (on payment entry, on invoice issue, on matching).
+- Unidentified receipts (no subscriber) post to "Unidentified receipts" and appear under Reconciliation until matched.
+- Mutating payment endpoints require an `Idempotency-Key`; the same key and body replays the stored response.
+
+## Corrections
+| Situation | Operation | Effect |
+| --- | --- | --- |
+| Wrong invoice allocated | Reverse allocation | Invoice reopens, money returns to customer credit |
+| Customer overpaid / leaving | Refund (≤ unallocated) | Money leaves cash/bank/M-Pesa; refund record is append-only |
+| Bounced cheque / entry error | Reverse payment | All allocations reversed, receipt marked REVERSED (kept) |
+| Compensation / billing error | Credit note (≤ total − prior credits) | Reduces invoice balance; any excess becomes customer credit |
+| Invoice raised in error (unpaid) | Void | Ledger posting reversed; number retained |
+| Expense entered in error | Reverse expense | Reversing ledger entry |
+
+Refunds, reversals and credit notes require `payments.refund` / `credit_notes.create` (accountant, owner).
+
+## Ledger and reconciliation
+Double-entry; the chart of accounts and every posting rule are documented in `src/server/services/ledger.ts`.
+A deferred constraint trigger rejects any transaction whose debits ≠ credits; ledger rows are append-only.
+**Reconciliation rule**: a subscriber's balance is AR − customer credit from the ledger. The balance checks verify that
+(1) every invoice's cached paid/credited figures equal its active allocations and credit notes, (2) every payment's
+cached allocated/refunded figures equal its active allocations and refunds, (3) the AR account equals the sum of open
+invoice balances, and (4) total debits equal total credits. Each run is stored as a `ReconciliationRecord`.

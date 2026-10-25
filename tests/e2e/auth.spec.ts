@@ -47,8 +47,10 @@ test("navigation is permission-aware and unbuilt modules say so", async ({ page 
   await page.goto("/audit-logs");
   await expect(page.getByText("Access restricted")).toBeVisible();
 
+  await page.goto("/vouchers");
+  await expect(page.getByText("Access restricted").or(page.getByText("Vouchers is not yet available"))).toBeVisible();
   await page.goto("/payments");
-  await expect(page.getByText("Payments is not yet available")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Payments" })).toBeVisible();
 });
 
 test("the command menu opens with Ctrl+K and navigates", async ({ page }) => {

@@ -13,7 +13,7 @@ type Action = "activate" | "renew" | "suspend" | "reactivate" | "cancel";
 
 const ACTION_COPY: Record<Action, { label: string; title: string; body: string; tone: "primary" | "secondary" | "danger"; reason?: "required" | "optional" }> = {
   activate: { label: "Activate", title: "Activate subscription", body: "Starts the first billing period now.", tone: "primary" },
-  renew: { label: "Renew", title: "Renew subscription", body: "Extends the paid period by one billing cycle (continues from the current end date if still running, otherwise restarts from now). Payment recording arrives with the billing module; use this for authorized manual renewals.", tone: "secondary", reason: "optional" },
+  renew: { label: "Renew", title: "Renew subscription", body: "Extends service by one billing cycle (continues from the current end date if still running, otherwise restarts from now). Normally renewal happens automatically when the period invoice is paid.", tone: "secondary", reason: "optional" },
   suspend: { label: "Suspend", title: "Suspend subscription", body: "Marks the subscription as suspended. No router change is made until network automation is connected.", tone: "secondary", reason: "required" },
   reactivate: { label: "Reactivate", title: "Reactivate subscription", body: "Restores a suspended subscription within its paid period.", tone: "primary" },
   cancel: { label: "Cancel", title: "Cancel subscription", body: "Cancellation is permanent. Billing stops; history is kept.", tone: "danger", reason: "optional" },
@@ -21,22 +21,24 @@ const ACTION_COPY: Record<Action, { label: string; title: string; body: string; 
 
 const DONE: Record<Action, string> = { activate: "Subscription activated", renew: "Subscription renewed", suspend: "Subscription suspended", reactivate: "Subscription reactivated", cancel: "Subscription cancelled" };
 
-export function SubscriptionActions({ subscriptionId, packageName, actions }: { subscriptionId: string; packageName: string; actions: Action[] }) {
+export function SubscriptionActions({ subscriptionId, packageName, actions, canInvoice }: { subscriptionId: string; packageName: string; actions: Action[]; canInvoice: boolean }) {
   if (!actions.length) return <p className="text-xs text-muted-foreground">No actions available</p>;
   return (
     <div className="flex flex-wrap gap-2">
       {actions.map((a) => (
-        <ActionDialog key={a} action={a} subscriptionId={subscriptionId} packageName={packageName} />
+        <ActionDialog key={a} action={a} subscriptionId={subscriptionId} packageName={packageName} canInvoice={canInvoice} />
       ))}
     </div>
   );
 }
 
-function ActionDialog({ action, subscriptionId, packageName }: { action: Action; subscriptionId: string; packageName: string }) {
+function ActionDialog({ action, subscriptionId, packageName, canInvoice }: { action: Action; subscriptionId: string; packageName: string; canInvoice: boolean }) {
   const copy = ACTION_COPY[action];
   const [open, setOpen] = React.useState(false);
   const [key, setKey] = React.useState(() => newIdempotencyKey(action));
   const { mutate, pending, errors, formError } = useMutation();
+
+  const offerInvoice = canInvoice && (action === "activate" || action === "renew");
 
   const onOpenChange = (v: boolean) => {
     setOpen(v);
@@ -46,7 +48,7 @@ function ActionDialog({ action, subscriptionId, packageName }: { action: Action;
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const v = formValues(e.currentTarget);
-    const ok = await mutate(`/subscriptions/${subscriptionId}/${action}`, { method: "POST", body: { reason: v.reason }, idempotencyKey: key }, { success: DONE[action], onError: (err) => rotateOnServerError(err, () => setKey(newIdempotencyKey(action))) });
+    const ok = await mutate(`/subscriptions/${subscriptionId}/${action}`, { method: "POST", body: { reason: v.reason, ...(offerInvoice ? { invoice: v.invoice === "on" } : {}) }, idempotencyKey: key }, { success: DONE[action], onError: (err) => rotateOnServerError(err, () => setKey(newIdempotencyKey(action))) });
     if (ok) setOpen(false);
   };
 
@@ -61,6 +63,15 @@ function ActionDialog({ action, subscriptionId, packageName }: { action: Action;
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <p className="text-sm text-muted-foreground">{copy.body}</p>
           {formError ? <Alert tone="danger">{formError}</Alert> : null}
+          {offerInvoice ? (
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" name="invoice" defaultChecked className="mt-0.5" />
+              <span>
+                Create the invoice for the new period
+                <span className="block text-xs text-muted-foreground">Untick only for authorised complimentary service. Existing credit is applied automatically.</span>
+              </span>
+            </label>
+          ) : null}
           {copy.reason ? (
             <Field id={`reason-${action}`} label={copy.reason === "required" ? "Reason" : "Reason (optional)"} error={errors.reason} required={copy.reason === "required"}>
               <Textarea name="reason" rows={2} maxLength={500} />

@@ -35,3 +35,17 @@ export function formatInterval(unit: string, count: number): string {
   const u = unit.toLowerCase();
   return count === 1 ? `per ${u}` : `per ${count} ${u}s`;
 }
+
+const INVOICE: Record<string, Tone> = { DRAFT: "neutral", OPEN: "info", PARTIALLY_PAID: "warning", PAID: "success", VOID: "neutral" };
+const PAYMENT: Record<string, Tone> = { PENDING: "info", CONFIRMED: "success", FAILED: "danger", CANCELLED: "neutral", REVERSED: "danger", UNKNOWN: "warning" };
+
+export function InvoiceStatusBadge({ status, overdue }: { status: string; overdue?: boolean }) {
+  if (overdue) return <Badge tone="danger">Overdue</Badge>;
+  return <Badge tone={INVOICE[status] ?? "neutral"}>{humanize(status)}</Badge>;
+}
+
+export function PaymentStatusBadge({ status }: { status: string }) {
+  return <Badge tone={PAYMENT[status] ?? "neutral"}>{humanize(status)}</Badge>;
+}
+
+export const METHOD_LABEL: Record<string, string> = { CASH: "Cash", BANK_TRANSFER: "Bank transfer", MPESA: "M-Pesa", CHEQUE: "Cheque", CARD: "Card", OTHER: "Other" };

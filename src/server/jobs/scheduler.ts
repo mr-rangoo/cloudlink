@@ -12,7 +12,10 @@ export interface RecurringJob {
   everyMinutes: number;
 }
 
-export const RECURRING_JOBS: RecurringJob[] = [{ type: "subscriptions.expire_due", everyMinutes: 60 }];
+export const RECURRING_JOBS: RecurringJob[] = [
+  { type: "billing.run_recurring", everyMinutes: 60 },
+  { type: "subscriptions.expire_due", everyMinutes: 60 },
+];
 
 export function bucketKey(now: Date, everyMinutes: number): string {
   const ms = everyMinutes * 60_000;

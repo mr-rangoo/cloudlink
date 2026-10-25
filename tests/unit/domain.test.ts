@@ -132,3 +132,11 @@ describe("CSV", () => {
     expect(csvCell(null)).toBe("");
   });
 });
+
+describe("due dates", () => {
+  it("ends at the last millisecond of the local day", async () => {
+    const { endOfLocalDay } = await import("@/server/domain/time");
+    const end = endOfLocalDay(new Date("2026-10-25T05:00:00Z"), "Africa/Nairobi");
+    expect(end.toISOString()).toBe("2026-10-25T20:59:59.999Z");
+  });
+});
