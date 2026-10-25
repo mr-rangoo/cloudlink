@@ -48,6 +48,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               Your access to the selected organization is no longer active. Sign in again.
             </p>
           ) : null}
+          {params.reason === "password-set" ? (
+            <p role="status" className="rounded-md border border-success/20 bg-success-soft px-3 py-2 text-sm text-success">
+              Your password is set. Sign in to continue.
+            </p>
+          ) : null}
           <LoginForm next={next} />
         </div>
       </section>

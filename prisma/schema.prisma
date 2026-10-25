@@ -1188,3 +1188,97 @@ model NotificationPreference {
 
   @@unique([subscriberId, channel, category])
 }
+
+// ───────────────────────── Administration ─────────────────────────
+
+// Single-use staff setup / password-reset link. Only the token hash is stored.
+model StaffInvite {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  userId         String    @db.Uuid
+  purpose        String // setup | reset
+  tokenHash      String    @unique
+  expiresAt      DateTime  @db.Timestamptz(6)
+  usedAt         DateTime? @db.Timestamptz(6)
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([userId])
+}
+
+enum ExportStatus {
+  QUEUED
+  RUNNING
+  READY
+  FAILED
+  EXPIRED
+}
+
+model ExportJob {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  type           String // subscribers | invoices | payments | receivables_aging | revenue | audit_logs
+  params         Json
+  status         ExportStatus @default(QUEUED)
+  fileName       String?
+  storageKey     String?
+  rowCount       Int?
+  error          String?
+  requestedById  String       @db.Uuid
+  expiresAt      DateTime?    @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  completedAt    DateTime?    @db.Timestamptz(6)
+  lastDownloadAt DateTime?    @db.Timestamptz(6)
+  downloadCount  Int          @default(0)
+
+  @@index([organizationId, createdAt])
+}
+
+// ───────────────────────── Inventory ─────────────────────────
+
+enum InventoryStatus {
+  IN_STOCK
+  ASSIGNED
+  FAULTY
+  RETIRED
+}
+
+model InventoryItem {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  organizationId String          @db.Uuid
+  branchId       String?         @db.Uuid
+  category       String // router | onu | cpe | antenna | switch | other
+  model          String
+  serialNumber   String
+  macAddress     String?
+  status         InventoryStatus @default(IN_STOCK)
+  subscriberId   String?         @db.Uuid
+  purchaseCost   Decimal?        @db.Decimal(14, 2)
+  purchasedAt    DateTime?       @db.Timestamptz(6)
+  notes          String?
+  createdAt      DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(6)
+
+  movements InventoryMovement[]
+
+  @@unique([organizationId, serialNumber])
+  @@index([organizationId, status])
+  @@index([subscriberId])
+}
+
+model InventoryMovement {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  organizationId String           @db.Uuid
+  itemId         String           @db.Uuid
+  action         String // received | assigned | returned | marked_faulty | repaired | retired | updated
+  fromStatus     InventoryStatus?
+  toStatus       InventoryStatus?
+  subscriberId   String?          @db.Uuid
+  actorUserId    String?          @db.Uuid
+  note           String?
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId, createdAt])
+}

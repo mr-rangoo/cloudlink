@@ -15,7 +15,7 @@ export function proxy(req: NextRequest) {
   headers.set("x-correlation-id", correlationId);
 
   const { pathname } = req.nextUrl;
-  const isPublic = pathname.startsWith("/api/") || pathname === "/login" || pathname.startsWith("/portal") || pathname.startsWith("/hotspot");
+  const isPublic = pathname.startsWith("/api/") || pathname === "/login" || pathname.startsWith("/invite/") || pathname.startsWith("/portal") || pathname.startsWith("/hotspot");
   const hasSession = req.cookies.has("cloudlink_session") || req.cookies.has("__Host-cloudlink_session");
 
   if (!isPublic && !hasSession) {

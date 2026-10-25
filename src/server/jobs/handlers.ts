@@ -8,6 +8,7 @@ import { runRecurringBilling } from "@/server/services/invoices";
 import { deliverNotification } from "@/server/services/notifications";
 import { inviteLink, mintInviteToken } from "@/server/portal/auth";
 import { db } from "@/server/db/client";
+import { generateExport } from "@/server/services/exports";
 
 /**
  * Registry of background operation handlers shared by the worker and tests.
@@ -36,6 +37,13 @@ export const operationHandlers: OperationHandlers = {
     const result = await runRecurringBilling(ctx);
     if (result.created) logger.info({ organizationId: op.organizationId, ...result }, "recurring invoices generated");
     return result;
+  },
+
+  /** Build a CSV export for the requester (permissions re-checked at generation time). */
+  "exports.generate": async (op) => {
+    const { exportJobId } = op.payload as { exportJobId?: string };
+    if (!exportJobId) throw new PermanentError("exportJobId missing", "BAD_PAYLOAD");
+    await generateExport(exportJobId);
   },
 
   /** Deliver one notification through the configured adapter (mock / SMTP / SMS provider). */

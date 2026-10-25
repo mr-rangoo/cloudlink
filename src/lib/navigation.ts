@@ -32,13 +32,13 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: "sessions", href: "/sessions", label: "Network Sessions", icon: "Activity", permission: "network.read", group: "Network", available: false, phase: 7, description: "PPPoE/Hotspot sessions and operations" },
   { slug: "support", href: "/support", label: "Support", icon: "LifeBuoy", permission: "support.read", group: "Service", available: true, phase: 4, description: "Support tickets" },
   { slug: "notifications", href: "/notifications", label: "Notifications", icon: "Bell", permission: "notifications.read", group: "Service", available: true, phase: 4, description: "Email/SMS notifications" },
-  { slug: "reports", href: "/reports", label: "Reports", icon: "BarChart3", permission: "reports.read", group: "Insights", available: false, phase: 5, description: "Revenue, receivables and subscriber reports" },
-  { slug: "staff", href: "/staff", label: "Staff & Permissions", icon: "ShieldCheck", permission: "staff.read", group: "Administration", available: false, phase: 5, description: "Staff, roles and permissions" },
-  { slug: "branches", href: "/branches", label: "Branches", icon: "Building2", permission: "branches.read", group: "Administration", available: false, phase: 5, description: "Branch management" },
-  { slug: "inventory", href: "/inventory", label: "Inventory", icon: "Boxes", permission: "inventory.read", group: "Administration", available: false, phase: 5, description: "Equipment inventory" },
-  { slug: "integrations", href: "/integrations", label: "Integrations", icon: "Plug", permission: "integrations.read", group: "Administration", available: false, phase: 5, description: "Provider configuration and status" },
-  { slug: "audit-logs", href: "/audit-logs", label: "Audit Logs", icon: "ScrollText", permission: "audit.read", group: "Administration", available: false, phase: 5, description: "Security and change history" },
-  { slug: "settings", href: "/settings", label: "Settings", icon: "Settings", permission: "settings.write", group: "Administration", available: false, phase: 5, description: "Organization settings" },
+  { slug: "reports", href: "/reports", label: "Reports", icon: "BarChart3", permission: "reports.read", group: "Insights", available: true, phase: 5, description: "Revenue, receivables and subscriber reports" },
+  { slug: "staff", href: "/staff", label: "Staff & Permissions", icon: "ShieldCheck", permission: "staff.read", group: "Administration", available: true, phase: 5, description: "Staff, roles and permissions" },
+  { slug: "branches", href: "/branches", label: "Branches", icon: "Building2", permission: "branches.read", group: "Administration", available: true, phase: 5, description: "Branch management" },
+  { slug: "inventory", href: "/inventory", label: "Inventory", icon: "Boxes", permission: "inventory.read", group: "Administration", available: true, phase: 5, description: "Equipment inventory" },
+  { slug: "integrations", href: "/integrations", label: "Integrations", icon: "Plug", permission: "integrations.read", group: "Administration", available: true, phase: 5, description: "Provider configuration and status" },
+  { slug: "audit-logs", href: "/audit-logs", label: "Audit Logs", icon: "ScrollText", permission: "audit.read", group: "Administration", available: true, phase: 5, description: "Security and change history" },
+  { slug: "settings", href: "/settings", label: "Settings", icon: "Settings", permission: "settings.write", group: "Administration", available: true, phase: 5, description: "Organization settings" },
 ];
 
 export function findNavItem(slug: string): NavItem | undefined {

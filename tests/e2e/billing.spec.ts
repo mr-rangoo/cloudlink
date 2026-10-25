@@ -46,7 +46,7 @@ test("activation invoice, partial then full manual payment, receipt and paid inv
   expect(pdf.headers()["content-type"]).toBe("application/pdf");
 
   // Invoice now partially paid with the right balance
-  await page.getByRole("link", { name: /^INV-\d{6}$/ }).first().click();
+  await page.getByRole("link", { name: /^[A-Z]{2,6}-\d{6}$/ }).first().click();
   await expect(page.getByText("Part paid").or(page.getByText("Partially paid"))).toBeVisible();
   await expect(page.getByText("KES 1,800.00").first()).toBeVisible();
 
@@ -57,7 +57,7 @@ test("activation invoice, partial then full manual payment, receipt and paid inv
   await page.getByLabel("Reference").fill(`QA${Date.now().toString(36).toUpperCase()}`);
   await page.getByRole("button", { name: /^Record KES 1,800.00/ }).click();
   await expect(page).toHaveURL(/recorded=1/);
-  await page.getByRole("link", { name: /^INV-\d{6}$/ }).first().click();
+  await page.getByRole("link", { name: /^[A-Z]{2,6}-\d{6}$/ }).first().click();
   await expect(page.getByText("Paid", { exact: true }).first()).toBeVisible();
   const invoicePdf = await page.request.get(page.url().replace("/invoices/", "/api/v1/invoices/") + "/pdf");
   expect(invoicePdf.status()).toBe(200);
@@ -88,7 +88,7 @@ test("accountant matches an unidentified bank receipt to a subscriber", async ({
   await dialog.getByRole("option", { name: new RegExp(name) }).click();
   await dialog.getByRole("button", { name: "Match payment" }).click();
   await expect(page.getByRole("link", { name })).toBeVisible();
-  await expect(page.getByRole("cell", { name: /INV-\d{6}/ })).toBeVisible(); // auto-allocated
+  await expect(page.getByRole("cell", { name: /[A-Z]{2,6}-\d{6}/ })).toBeVisible(); // auto-allocated
 
   await page.goto("/reconciliation");
   await page.getByRole("button", { name: "Run balance checks" }).click();

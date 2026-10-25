@@ -27,7 +27,7 @@ async function subscriberWithPortal(page: Page, label: string) {
   await page.getByRole("button", { name: "Create setup link" }).click();
   const linkText = await page.getByRole("dialog").locator("p.font-mono").textContent();
   await page.getByRole("button", { name: "Done" }).click();
-  const invoiceLink = page.getByRole("link", { name: /^INV-\d{6}$/ }).first();
+  const invoiceLink = page.getByRole("link", { name: /^[A-Z]{2,6}-\d{6}$/ }).first();
   const invoiceHref = await invoiceLink.getAttribute("href");
   return { tel, link: linkText!.trim(), invoiceId: invoiceHref!.split("/").pop()!, subscriberUrl, name: `${label} Portal${id}` };
 }
@@ -54,7 +54,7 @@ test("customer activates, signs in, sees only their own invoice, and raises a su
 
   // Own invoice visible, with PDF
   await customer.goto(`/portal/invoices/${a.invoiceId}`);
-  await expect(customer.getByRole("heading", { name: /Invoice INV-\d{6}/ })).toBeVisible();
+  await expect(customer.getByRole("heading", { name: /Invoice [A-Z]{2,6}-\d{6}/ })).toBeVisible();
   const pdf = await customer.request.get(`/api/v1/customer/invoices/${a.invoiceId}/pdf`);
   expect(pdf.status()).toBe(200);
 

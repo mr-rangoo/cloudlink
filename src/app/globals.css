@@ -38,6 +38,17 @@
   --info: #1d6fe8;
   --info-soft: #e7f0fe;
   --neutral-soft: #eef1f6;
+
+  /* Chart series slots: fixed order, validated (CVD + normal-vision floors) on the light card surface. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --chart-grid: #e8ebf0;
+  --chart-axis: #cbd5e1;
+  --chart-ink: #5b6b82;
 }
 
 .dark {
@@ -71,6 +82,17 @@
   --info: #60a5fa;
   --info-soft: #14284a;
   --neutral-soft: #1a2538;
+
+  /* Dark steps of the same hues, validated against the dark card surface (#111b2c). */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --chart-grid: #1f2c44;
+  --chart-axis: #2c3b58;
+  --chart-ink: #8d9bb5;
 }
 
 @theme inline {

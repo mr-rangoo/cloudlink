@@ -12,6 +12,10 @@ import { categoryInput, expenseInput, financeListQuery, reverseExpenseInput, wit
 import { commentInput, customerCommentInput, customerTicketInput, staffTicketInput, ticketListQuery, ticketUpdateInput } from "@/server/services/tickets";
 import { notificationListQuery, preferencesInput, templateInput } from "@/server/services/notifications";
 import { portalActivateInput, portalLoginInput } from "@/server/portal/auth";
+import { reportRangeQuery } from "@/server/services/reports";
+import { exportRequestInput } from "@/server/services/exports";
+import { auditQuery, branchInput, branchUpdateInput, roleInput, setPasswordInput, settingsInput, staffInviteInput, staffUpdateInput } from "@/server/services/admin";
+import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/inventory";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -164,6 +168,33 @@ export const operations: Operation[] = [
   { method: "get", path: "/customer/attachments/:id", summary: "Download attachment from own ticket", tag: "Customer portal", auth: "session" },
   { method: "get", path: "/customer/preferences", summary: "Own notification preferences", tag: "Customer portal", auth: "session" },
   { method: "put", path: "/customer/preferences", summary: "Update own notification preferences", tag: "Customer portal", auth: "session", body: preferencesInput },
+  { method: "get", path: "/reports/revenue", summary: "Revenue, credit notes, tax, collections and expenses by month (from the ledger)", tag: "Reports", auth: "session", permission: "reports.read", query: reportRangeQuery },
+  { method: "get", path: "/reports/receivables", summary: "Receivables aging by subscriber", tag: "Reports", auth: "session", permission: "reports.read" },
+  { method: "get", path: "/reports/subscribers", summary: "Subscriber growth and lifecycle events by month; active by package", tag: "Reports", auth: "session", permission: "reports.read", query: reportRangeQuery },
+  { method: "get", path: "/reports/collections", summary: "Confirmed collections by method and month", tag: "Reports", auth: "session", permission: "reports.read", query: reportRangeQuery },
+  { method: "get", path: "/exports", summary: "Recent export jobs", tag: "Reports", auth: "session", permission: "reports.export" },
+  { method: "post", path: "/exports", summary: "Queue a CSV export (202)", tag: "Reports", auth: "session", permission: "reports.export + read access to the data", body: exportRequestInput, responses: { "202": "Queued" } },
+  { method: "get", path: "/exports/:id/download", summary: "Download a ready export (valid 24 h; audited)", tag: "Reports", auth: "session", permission: "reports.export" },
+  { method: "get", path: "/staff", summary: "Staff members of this organization", tag: "Administration", auth: "session", permission: "staff.read" },
+  { method: "post", path: "/staff", summary: "Invite staff (returns a one-time setup link for new users)", tag: "Administration", auth: "session", permission: "staff.write", body: staffInviteInput },
+  { method: "patch", path: "/staff/:id", summary: "Update roles, branch scope or status (revokes sessions)", tag: "Administration", auth: "session", permission: "staff.write", body: staffUpdateInput },
+  { method: "post", path: "/staff/:id/reset-link", summary: "One-time password reset link", tag: "Administration", auth: "session", permission: "staff.write" },
+  { method: "post", path: "/auth/invite", summary: "Complete a staff setup/reset link", tag: "Auth", auth: "none", body: setPasswordInput },
+  { method: "get", path: "/roles", summary: "Roles and the permission catalogue", tag: "Administration", auth: "session", permission: "staff.read" },
+  { method: "post", path: "/roles", summary: "Create a custom role", tag: "Administration", auth: "session", permission: "roles.write", body: roleInput },
+  { method: "patch", path: "/roles/:id", summary: "Edit a role (owner role is locked)", tag: "Administration", auth: "session", permission: "roles.write", body: roleInput },
+  { method: "delete", path: "/roles/:id", summary: "Delete an unused custom role", tag: "Administration", auth: "session", permission: "roles.write" },
+  { method: "get", path: "/branches", summary: "Branches with subscriber counts", tag: "Administration", auth: "session", permission: "branches.read" },
+  { method: "post", path: "/branches", summary: "Create a branch", tag: "Administration", auth: "session", permission: "branches.write", body: branchInput },
+  { method: "patch", path: "/branches/:id", summary: "Update or archive a branch", tag: "Administration", auth: "session", permission: "branches.write", body: branchUpdateInput },
+  { method: "get", path: "/settings", summary: "Organization and billing settings", tag: "Administration", auth: "session", permission: "settings.write" },
+  { method: "patch", path: "/settings", summary: "Update organization and billing settings", tag: "Administration", auth: "session", permission: "settings.write", body: settingsInput },
+  { method: "get", path: "/audit-logs", summary: "Search the audit log", tag: "Administration", auth: "session", permission: "audit.read", query: auditQuery },
+  { method: "get", path: "/inventory", summary: "Equipment inventory", tag: "Inventory", auth: "session", permission: "inventory.read", query: inventoryQuery },
+  { method: "post", path: "/inventory", summary: "Add equipment", tag: "Inventory", auth: "session", permission: "inventory.write", body: itemInput },
+  { method: "get", path: "/inventory/:id", summary: "Item with movement history", tag: "Inventory", auth: "session", permission: "inventory.read" },
+  { method: "post", path: "/inventory/:id/actions", summary: "assign | return | mark_faulty | repaired | retire", tag: "Inventory", auth: "session", permission: "inventory.write", body: itemActionInput },
+  { method: "get", path: "/integrations", summary: "Integration status (no secrets)", tag: "Administration", auth: "session", permission: "integrations.read" },
 ];
 
 /** Register additional operations (called by feature modules at import time). */
