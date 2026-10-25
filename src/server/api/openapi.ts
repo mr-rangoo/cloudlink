@@ -16,6 +16,7 @@ import { reportRangeQuery } from "@/server/services/reports";
 import { exportRequestInput } from "@/server/services/exports";
 import { auditQuery, branchInput, branchUpdateInput, roleInput, setPasswordInput, settingsInput, staffInviteInput, staffUpdateInput } from "@/server/services/admin";
 import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/inventory";
+import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput } from "@/server/services/vouchers";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -195,6 +196,19 @@ export const operations: Operation[] = [
   { method: "get", path: "/inventory/:id", summary: "Item with movement history", tag: "Inventory", auth: "session", permission: "inventory.read" },
   { method: "post", path: "/inventory/:id/actions", summary: "assign | return | mark_faulty | repaired | retire", tag: "Inventory", auth: "session", permission: "inventory.write", body: itemActionInput },
   { method: "get", path: "/integrations", summary: "Integration status (no secrets)", tag: "Administration", auth: "session", permission: "integrations.read" },
+  { method: "get", path: "/vouchers", summary: "Redemption statistics (30 days) and activation outcomes", tag: "Vouchers", auth: "session", permission: "vouchers.read" },
+  { method: "get", path: "/vouchers/batches", summary: "Voucher batches", tag: "Vouchers", auth: "session", permission: "vouchers.read" },
+  { method: "post", path: "/vouchers/batches", summary: "Generate a batch (plaintext codes returned once)", tag: "Vouchers", auth: "session", permission: "vouchers.write", body: batchInput, idempotent: true },
+  { method: "get", path: "/vouchers/batches/:id", summary: "Batch with voucher statuses (code hints only)", tag: "Vouchers", auth: "session", permission: "vouchers.read" },
+  { method: "post", path: "/vouchers/batches/:id/void", summary: "Void unused vouchers in a batch", tag: "Vouchers", auth: "session", permission: "vouchers.write" },
+  { method: "get", path: "/vouchers/batches/:id/export", summary: "Audited export of unused codes (PDF cards, or ?format=csv)", tag: "Vouchers", auth: "session", permission: "vouchers.export" },
+  { method: "post", path: "/vouchers/redeem", summary: "Staff-assisted redemption", tag: "Vouchers", auth: "session", permission: "vouchers.write", body: redeemInput },
+  { method: "get", path: "/agents", summary: "Agents with sold/commission/remitted/owed", tag: "Vouchers", auth: "session", permission: "vouchers.read" },
+  { method: "post", path: "/agents", summary: "Create agent", tag: "Vouchers", auth: "session", permission: "vouchers.write", body: agentInput },
+  { method: "patch", path: "/agents/:id", summary: "Update agent", tag: "Vouchers", auth: "session", permission: "vouchers.write", body: agentUpdateInput },
+  { method: "post", path: "/agents/:id/remittances", summary: "Record cash received from an agent (≤ owed)", tag: "Vouchers", auth: "session", permission: "payments.record", body: remittanceInput, idempotent: true },
+  { method: "post", path: "/hotspot/:org/redeem", summary: "Captive-portal redemption (public, rate-limited, same-origin)", tag: "Hotspot", auth: "none", body: redeemInput, responses: { "409": "Already used", "429": "Rate limited" } },
+  { method: "post", path: "/hotspot/:org/status", summary: "Activation status (requires the voucher code)", tag: "Hotspot", auth: "none" },
 ];
 
 /** Register additional operations (called by feature modules at import time). */

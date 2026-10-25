@@ -9,6 +9,7 @@ import { deliverNotification } from "@/server/services/notifications";
 import { inviteLink, mintInviteToken } from "@/server/portal/auth";
 import { db } from "@/server/db/client";
 import { generateExport } from "@/server/services/exports";
+import { activateRedemption } from "@/server/services/vouchers";
 
 /**
  * Registry of background operation handlers shared by the worker and tests.
@@ -44,6 +45,13 @@ export const operationHandlers: OperationHandlers = {
     const { exportJobId } = op.payload as { exportJobId?: string };
     if (!exportJobId) throw new PermanentError("exportJobId missing", "BAD_PAYLOAD");
     await generateExport(exportJobId);
+  },
+
+  /** Provision a redeemed hotspot voucher on the network (mock: recorded as SIMULATED). */
+  "hotspot.activate": async (op) => {
+    const { redemptionId } = op.payload as { redemptionId?: string };
+    if (!redemptionId) throw new PermanentError("redemptionId missing", "BAD_PAYLOAD");
+    await activateRedemption(redemptionId);
   },
 
   /** Deliver one notification through the configured adapter (mock / SMTP / SMS provider). */

@@ -68,12 +68,12 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Inventory — equipment with status machine, movement history, subscriber timeline entries. UI: /inventory.
 - [x] Integrations status page — honest per-provider status, no secrets. UI: /integrations.
 
-## Phase 6 — Hotspot and vouchers
-- [ ] Voucher batches.
-- [ ] Atomic redemption.
-- [ ] Agent allocation and commission.
-- [ ] Captive portal.
-- [ ] Mock session activation tests.
+## Phase 6 — Hotspot and vouchers ✅
+- [x] Voucher batches — package snapshot (face value incl. tax), unambiguous random codes, keyed HMAC + AES-GCM storage (plaintext shown once), audited PDF-card/CSV export of unused codes, void, redeem-by date. UI: /vouchers, /vouchers/batches/[id].
+- [x] Atomic redemption — row lock + unique redemption (8 concurrent attempts → 1 success), expiry handling, generic errors, ledger posting (receivable/revenue/tax).
+- [x] Agent allocation and commission — agents with commission %, commission accrued on redemption, remittances capped at amount owed, ledger 1150 reconciled with records.
+- [x] Captive portal — public /hotspot/[org] with MikroTik parameters, rate limits, same-origin, status polling with code proof; router login only after ACTIVE.
+- [x] Mock session activation tests — durable `hotspot.activate` job; mock → SIMULATED (labelled "test mode"), disabled/unimplemented → FAILED with reason.
 
 ## Phase 7 — MikroTik/RADIUS
 - [ ] Router inventory.
@@ -219,7 +219,23 @@ Coding agent: update this file continuously. Do not mark items complete without 
 
 **Still mocked / blocked**: unchanged (payments gateway, router/RADIUS, messaging providers, S3).
 
-**Exact next task**: Phase 6 — hotspot and vouchers: VoucherBatch/Voucher/VoucherRedemption/AgentCommission models (voucher codes stored as hashes, shown once at generation or via audited export), batch generation tied to a hotspot package, atomic concurrency-safe redemption (row lock + unique), agent allocation and commission records, public captive-portal page (/hotspot/[org]) with rate-limited redemption, and a mock session-activation adapter whose result is recorded honestly (network side completes in phase 7).
+**Next task at the time**: Phase 6 (completed below).
+
+### 2026-10-25 — Phase 6 (Hotspot and vouchers)
+**Schema**: migration `20261025143404_hotspot_vouchers` (Agent, VoucherBatch, Voucher, VoucherRedemption, AgentCommission, AgentRemittance) with CHECKs and append-only triggers; ledger accounts 1150 Voucher receivable and 5100 Agent commissions.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 9 files, 67 tests passed (adds voucher code alphabet, normalisation, tenant-scoped hashing) |
+| `npm run test:integration` | 13 files, 117 tests passed (adds 8: no plaintext codes stored, export permission + audit + unused only, ledger postings + duration, 8-way concurrent redemption → 1, unknown/void/expired/other-tenant rejection, portal rate limit + code-proof status + SIMULATED activation, FAILED when network disabled, agent commission/remittance cap/ledger reconciliation) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 19 passed (adds: hotspot package → batch → codes once + PDF cards → guest redeems on captive portal → "test mode" after real worker → reuse rejected → staff sees Simulated) |
+
+**Still mocked / blocked**: hotspot activation is SIMULATED (RouterOS adapter is phase 7; needs a device on a private network). Online voucher purchase needs M-Pesa (phase 8).
+
+**Exact next task**: Phase 7 — MikroTik/RADIUS: Router model (management address on a private network, allowlist check against MIKROTIK_ALLOWED_NETWORKS, encrypted credentials), NetworkOperation + NetworkOperationAttempt (durable, idempotent, allowlisted operation types, status history, retry classification), RouterOS API adapter (binary API protocol over TCP/TLS with timeouts; real-device testing only when hardware is available), mock adapter with failure injection, PPPoE secret provision/enable/disable and hotspot user operations, subscription lifecycle → network operations (activate/suspend/reactivate/expire), RADIUS adapter interface, router health checks + alerts, UI for routers/sessions/operations, and wiring hotspot activation through the new queue.
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

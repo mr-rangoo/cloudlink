@@ -226,6 +226,10 @@ export async function runReconciliationChecks(ctx: ActorContext) {
   const arLedger = await accountBalance(db, org, "AR");
   const tb = await computeTrialBalance(org);
   const unmatched = await db.payment.aggregate({ where: { organizationId: org, status: "CONFIRMED", subscriberId: null }, _sum: { amount: true }, _count: { _all: true } });
+  // Voucher receivable in the ledger must equal what agents (and direct sales) owe according to the records.
+  const { agentBalances } = await import("@/server/services/vouchers");
+  const owed = [...(await agentBalances(org)).values()].reduce((a, b) => a.plus(b.owed), new D(0));
+  const voucherLedger = await accountBalance(db, org, "VOUCHER_RECEIVABLE");
 
   const result = {
     checkedAt: new Date().toISOString(),
@@ -233,9 +237,10 @@ export async function runReconciliationChecks(ctx: ActorContext) {
     paymentCacheMismatches: paymentMismatches,
     receivables: { invoices: new D(arRow?.open ?? "0").toFixed(2), ledger: arLedger.toFixed(2), matches: new D(arRow?.open ?? "0").eq(arLedger) },
     ledgerBalanced: tb.balanced,
+    voucherReceivable: { records: owed.toFixed(2), ledger: voucherLedger.toFixed(2), matches: owed.eq(voucherLedger) },
     unmatchedPayments: { count: unmatched._count._all, amount: dec(unmatched._sum.amount ?? 0).toFixed(2) },
   };
-  const ok = !invoiceMismatches.length && !paymentMismatches.length && result.receivables.matches && result.ledgerBalanced;
+  const ok = !invoiceMismatches.length && !paymentMismatches.length && result.receivables.matches && result.ledgerBalanced && result.voucherReceivable.matches;
   await db.reconciliationRecord.create({
     data: { organizationId: org, action: "balance_check", outcome: ok ? "ok" : "mismatch", details: JSON.parse(JSON.stringify(result)), actorUserId: actorUserId(ctx) },
   });

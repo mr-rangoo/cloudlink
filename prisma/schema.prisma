@@ -1282,3 +1282,124 @@ model InventoryMovement {
 
   @@index([itemId, createdAt])
 }
+
+// ───────────────────────── Hotspot vouchers ─────────────────────────
+
+// A voucher reseller (shop, kiosk, or the office itself). Owes the face value of redeemed vouchers, less commission.
+model Agent {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  branchId       String?      @db.Uuid
+  name           String
+  phone          String
+  commissionRate Decimal      @default(0) @db.Decimal(5, 2) // percent of face value
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  @@unique([organizationId, phone])
+}
+
+enum VoucherStatus {
+  UNUSED
+  REDEEMED
+  EXPIRED
+  VOID
+}
+
+model VoucherBatch {
+  id             String      @id @default(uuid(7)) @db.Uuid
+  organizationId String      @db.Uuid
+  branchId       String?     @db.Uuid
+  batchNumber    String
+  packageId      String      @db.Uuid
+  packageName    String
+  durationUnit   BillingUnit
+  durationCount  Int
+  downloadKbps   Int?
+  uploadKbps     Int?
+  netPrice       Decimal     @db.Decimal(14, 2) // revenue per voucher, excl. tax
+  taxRate        Decimal     @db.Decimal(5, 2)
+  faceValue      Decimal     @db.Decimal(14, 2) // price paid by the customer, incl. tax
+  currency       String      @db.Char(3)
+  quantity       Int
+  agentId        String?     @db.Uuid
+  expiresAt      DateTime?   @db.Timestamptz(6) // last day the vouchers can be redeemed
+  status         String      @default("ACTIVE") // ACTIVE | VOID
+  notes          String?
+  exportCount    Int         @default(0)
+  createdById    String?     @db.Uuid
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+
+  vouchers Voucher[]
+
+  @@unique([organizationId, batchNumber])
+  @@index([organizationId, createdAt])
+}
+
+model Voucher {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
+  batchId        String        @db.Uuid
+  codeHash       String // keyed HMAC of the normalised code (lookup without storing plaintext)
+  codeEncrypted  String // AES-256-GCM envelope, decrypted only for audited exports
+  codeHint       String // last 3 characters, for support conversations
+  status         VoucherStatus @default(UNUSED)
+  redeemedAt     DateTime?     @db.Timestamptz(6)
+  voidedAt       DateTime?     @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+
+  batch      VoucherBatch       @relation(fields: [batchId], references: [id])
+  redemption VoucherRedemption?
+
+  @@unique([organizationId, codeHash])
+  @@index([batchId, status])
+}
+
+model VoucherRedemption {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  organizationId   String    @db.Uuid
+  voucherId        String    @unique @db.Uuid // single use, enforced by the database
+  batchId          String    @db.Uuid
+  agentId          String?   @db.Uuid
+  channel          String // captive_portal | staff
+  clientMac        String?
+  clientIp         String?
+  redeemedByUserId String?   @db.Uuid
+  faceValue        Decimal   @db.Decimal(14, 2)
+  accessEndsAt     DateTime  @db.Timestamptz(6)
+  activationStatus String    @default("PENDING") // PENDING | ACTIVE | SIMULATED | FAILED
+  activationDetail String?
+  activatedAt      DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+
+  voucher Voucher @relation(fields: [voucherId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([agentId])
+}
+
+model AgentCommission {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  agentId        String   @db.Uuid
+  redemptionId   String   @unique @db.Uuid
+  amount         Decimal  @db.Decimal(14, 2)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([agentId])
+}
+
+model AgentRemittance {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
+  agentId        String        @db.Uuid
+  amount         Decimal       @db.Decimal(14, 2)
+  method         PaymentMethod
+  reference      String?
+  receivedAt     DateTime      @db.Timestamptz(6)
+  recordedById   String?       @db.Uuid
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+
+  @@index([agentId])
+}

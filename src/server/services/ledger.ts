@@ -16,6 +16,7 @@ import type { LedgerAccountType, PaymentMethod, Prisma } from "@/generated/prism
  * | 1020 | M-Pesa                            | ASSET     |
  * | 1090 | Other receipts                    | ASSET     |
  * | 1100 | Accounts receivable               | ASSET     |
+ * | 1150 | Voucher sales receivable (agents) | ASSET     |
  * | 2100 | Customer credit (prepayments)     | LIABILITY |
  * | 2150 | Unidentified receipts             | LIABILITY |
  * | 2200 | Tax payable                       | LIABILITY |
@@ -23,6 +24,7 @@ import type { LedgerAccountType, PaymentMethod, Prisma } from "@/generated/prism
  * | 4000 | Service revenue                   | INCOME    |
  * | 4100 | Credit notes and allowances       | INCOME (contra) |
  * | 5000 | Operating expenses                | EXPENSE   |
+ * | 5100 | Agent commissions                 | EXPENSE   |
  *
  * Postings:
  * - Invoice issued:      Dr AR total / Cr Revenue (net of discount) / Cr Tax payable
@@ -36,6 +38,9 @@ import type { LedgerAccountType, PaymentMethod, Prisma } from "@/generated/prism
  * - Payment reversed:    Dr Customer credit (or Unidentified) / Cr Cash|Bank|M-Pesa
  * - Expense:             Dr Operating expenses / Cr Cash|Bank|M-Pesa (reversal swaps sides)
  * - Owner drawing:       Dr Owner drawings / Cr Cash|Bank|M-Pesa;  Bank deposit: Dr Bank / Cr Cash|M-Pesa
+ * - Voucher redeemed:    Dr Voucher receivable (face value) / Cr Revenue (net) / Cr Tax payable
+ * - Agent commission:    Dr Agent commissions / Cr Voucher receivable
+ * - Agent remittance:    Dr Cash|Bank|M-Pesa / Cr Voucher receivable
  *
  * Entries are append-only (database trigger) and every transaction must balance (deferred constraint trigger).
  * A subscriber's balance = AR (subscriber lines) − Customer credit (subscriber lines).
@@ -46,6 +51,7 @@ export const ACCOUNTS = {
   MPESA: { code: "1020", name: "M-Pesa", type: "ASSET" },
   OTHER_RECEIPTS: { code: "1090", name: "Other receipts", type: "ASSET" },
   AR: { code: "1100", name: "Accounts receivable", type: "ASSET" },
+  VOUCHER_RECEIVABLE: { code: "1150", name: "Voucher sales receivable (agents)", type: "ASSET" },
   CUSTOMER_CREDIT: { code: "2100", name: "Customer credit (prepayments)", type: "LIABILITY" },
   UNIDENTIFIED: { code: "2150", name: "Unidentified receipts", type: "LIABILITY" },
   TAX_PAYABLE: { code: "2200", name: "Tax payable", type: "LIABILITY" },
@@ -53,6 +59,7 @@ export const ACCOUNTS = {
   REVENUE: { code: "4000", name: "Service revenue", type: "INCOME" },
   ALLOWANCES: { code: "4100", name: "Credit notes and allowances", type: "INCOME" },
   EXPENSES: { code: "5000", name: "Operating expenses", type: "EXPENSE" },
+  AGENT_COMMISSIONS: { code: "5100", name: "Agent commissions", type: "EXPENSE" },
 } as const satisfies Record<string, { code: string; name: string; type: LedgerAccountType }>;
 
 export type AccountKey = keyof typeof ACCOUNTS;

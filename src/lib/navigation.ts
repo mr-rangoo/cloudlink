@@ -27,7 +27,7 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: "reconciliation", href: "/reconciliation", label: "Reconciliation", icon: "Scale", permission: "payments.reconcile", group: "Billing", available: true, phase: 3, description: "Unmatched payments and ledger review" },
   { slug: "expenses", href: "/expenses", label: "Expenses", icon: "Receipt", permission: "expenses.read", group: "Billing", available: true, phase: 3, description: "Operating expenses" },
   { slug: "collections", href: "/collections", label: "Collections", icon: "HandCoins", permission: "expenses.read", group: "Billing", available: true, phase: 3, description: "Collections and withdrawals" },
-  { slug: "vouchers", href: "/vouchers", label: "Vouchers", icon: "Ticket", permission: "vouchers.read", group: "Network", available: false, phase: 6, description: "Hotspot voucher batches" },
+  { slug: "vouchers", href: "/vouchers", label: "Vouchers", icon: "Ticket", permission: "vouchers.read", group: "Network", available: true, phase: 6, description: "Hotspot voucher batches" },
   { slug: "routers", href: "/routers", label: "Routers", icon: "Router", permission: "routers.read", group: "Network", available: false, phase: 7, description: "MikroTik router inventory" },
   { slug: "sessions", href: "/sessions", label: "Network Sessions", icon: "Activity", permission: "network.read", group: "Network", available: false, phase: 7, description: "PPPoE/Hotspot sessions and operations" },
   { slug: "support", href: "/support", label: "Support", icon: "LifeBuoy", permission: "support.read", group: "Service", available: true, phase: 4, description: "Support tickets" },

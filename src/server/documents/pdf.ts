@@ -200,3 +200,34 @@ export async function renderReceiptPdf(data: ReceiptPdfData): Promise<Buffer> {
   footer(doc, org, "This receipt was generated from Cloudlink payment records.");
   return toBuffer(doc);
 }
+
+export interface VoucherCardsData {
+  organization: string;
+  packageName: string;
+  duration: string;
+  price: string;
+  expiresAt: string | null;
+  portalUrl: string;
+  codes: string[];
+}
+
+/** Printable voucher cards: 3 × 8 per A4 page, codes in a monospaced face for legibility. */
+export async function renderVoucherCards(data: VoucherCardsData): Promise<Buffer> {
+  const doc = new PDFDocument({ size: "A4", margin: 28, info: { Title: `Vouchers — ${data.packageName}`, Author: data.organization } });
+  const cols = 3;
+  const rows = 8;
+  const w = (595.28 - 56) / cols;
+  const h = (841.89 - 56) / rows;
+  data.codes.forEach((code, i) => {
+    const slot = i % (cols * rows);
+    if (i > 0 && slot === 0) doc.addPage();
+    const x = 28 + (slot % cols) * w;
+    const y = 28 + Math.floor(slot / cols) * h;
+    doc.save().roundedRect(x + 4, y + 4, w - 8, h - 8, 6).dash(3, { space: 3 }).strokeColor(BORDER).stroke().restore();
+    doc.fillColor(ACCENT).font("Helvetica-Bold").fontSize(9).text(data.organization, x + 12, y + 12, { width: w - 24 });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`${data.packageName} · ${data.duration} · ${data.price}`, x + 12, y + 25, { width: w - 24 });
+    doc.fillColor("#0f172a").font("Courier-Bold").fontSize(15).text(code.replace(/(.{4})(?=.)/g, "$1-"), x + 12, y + 42, { width: w - 24, align: "center" });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(6.5).text(`Connect to the WiFi, open any website and enter this code.${data.expiresAt ? ` Use by ${data.expiresAt}.` : ""}`, x + 12, y + 66, { width: w - 24, align: "center" });
+  });
+  return toBuffer(doc);
+}
