@@ -52,3 +52,40 @@ export const METHOD_LABEL: Record<string, string> = { CASH: "Cash", BANK_TRANSFE
 
 export const TICKET_TONE: Record<string, Tone> = { OPEN: "info", IN_PROGRESS: "warning", WAITING_ON_CUSTOMER: "neutral", RESOLVED: "success", CLOSED: "neutral" };
 export const PRIORITY_TONE: Record<string, Tone> = { LOW: "neutral", NORMAL: "info", HIGH: "warning", URGENT: "danger" };
+
+// ───────── Network (status words always accompany colour; simulated results are labelled as such) ─────────
+
+const NETWORK: Record<string, { label: string; tone: Tone }> = {
+  NOT_PROVISIONED: { label: "Not provisioned", tone: "neutral" },
+  PENDING: { label: "Change pending", tone: "info" },
+  ACTIVE: { label: "Enabled", tone: "success" },
+  DISABLED: { label: "Disabled", tone: "warning" },
+  SIMULATED_ACTIVE: { label: "Enabled (simulated)", tone: "info" },
+  SIMULATED_DISABLED: { label: "Disabled (simulated)", tone: "neutral" },
+  ERROR: { label: "Needs attention", tone: "danger" },
+};
+
+export function NetworkStatusBadge({ status }: { status: string }) {
+  const s = NETWORK[status] ?? { label: humanize(status), tone: "neutral" as Tone };
+  return <Badge tone={s.tone}>{s.label}</Badge>;
+}
+
+const OPERATION: Record<string, Tone> = { QUEUED: "info", RUNNING: "info", RETRYING: "warning", SUCCEEDED: "success", SIMULATED: "neutral", FAILED: "danger", CANCELLED: "neutral" };
+
+export function OperationStatusBadge({ status }: { status: string }) {
+  return <Badge tone={OPERATION[status] ?? "neutral"}>{humanize(status)}</Badge>;
+}
+
+const ROUTER: Record<string, Tone> = { ONLINE: "success", OFFLINE: "danger", ERROR: "danger", UNKNOWN: "neutral" };
+
+export function RouterStatusBadge({ status, adapter }: { status: string; adapter?: string }) {
+  if (status === "UNKNOWN" && adapter === "mock") return <Badge tone="neutral">Simulated</Badge>;
+  return <Badge tone={ROUTER[status] ?? "neutral"}>{status === "UNKNOWN" ? "Not checked" : humanize(status)}</Badge>;
+}
+
+export const VERIFICATION_LABEL: Record<string, string> = {
+  VERIFIED: "Verified by read-back",
+  NOT_SUPPORTED: "Not verifiable (simulated)",
+  UNVERIFIED: "Not verified",
+  PENDING: "Pending",
+};

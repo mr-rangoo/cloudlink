@@ -4,6 +4,7 @@ import { Ticket } from "lucide-react";
 import { getStaffContextWith } from "@/server/auth/page";
 import { listAgents, listBatches, redemptionStats } from "@/server/services/vouchers";
 import { listPackages } from "@/server/services/packages";
+import { routerOptions } from "@/server/services/routers";
 import { describeInterval } from "@/server/domain/billing-period";
 import { formatPhone } from "@/server/domain/contact";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +29,7 @@ export default async function VouchersPage({ searchParams }: { searchParams: Pro
     redemptionStats(ctx),
     canWrite && ctx.permissions.has("packages.read") ? listPackages(ctx, { status: "ACTIVE" }) : Promise.resolve([]),
   ]);
+  const hotspotRouters = canWrite && ctx.permissions.has("routers.read") ? await routerOptions(ctx, "hotspot") : [];
   const cur = ctx.organization.currency;
   const tz = ctx.organization.timezone;
   const portalUrl = `${process.env.APP_URL ?? ""}/hotspot/${ctx.organization.slug}`;
@@ -37,7 +39,7 @@ export default async function VouchersPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Vouchers"
         description="Hotspot voucher batches, resellers and redemptions."
-        actions={canWrite && tab === "batches" ? <GenerateBatchDialog packages={packages.map((p) => ({ id: p.id, label: `${p.name} — ${describeInterval(p.billingUnit, p.billingCount)} · ${formatMoney(p.price.toString(), p.currency)} + tax` }))} agents={agents.agents.filter((a) => a.status === "ACTIVE").map((a) => ({ id: a.id, name: a.name }))} canExport={ctx.permissions.has("vouchers.export")} /> : canWrite && tab === "agents" ? <AgentDialog /> : null}
+        actions={canWrite && tab === "batches" ? <GenerateBatchDialog packages={packages.map((p) => ({ id: p.id, label: `${p.name} — ${describeInterval(p.billingUnit, p.billingCount)} · ${formatMoney(p.price.toString(), p.currency)} + tax` }))} agents={agents.agents.filter((a) => a.status === "ACTIVE").map((a) => ({ id: a.id, name: a.name }))} routers={hotspotRouters.map((r) => ({ id: r.id, name: r.name }))} canExport={ctx.permissions.has("vouchers.export")} /> : canWrite && tab === "agents" ? <AgentDialog /> : null}
       />
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>

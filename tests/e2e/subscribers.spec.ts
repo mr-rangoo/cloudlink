@@ -31,7 +31,7 @@ test("create package, create subscriber with an active subscription, then suspen
   await expect(page.getByText(/Subscriber A\d{6} created/)).toBeVisible();
   const subRow = page.getByRole("listitem").filter({ hasText: `Home ${id}` });
   await expect(subRow.getByText("Active", { exact: true })).toBeVisible();
-  await expect(page.getByText("Not provisioned")).toBeVisible(); // network status is honest
+  await expect(page.getByText("Not provisioned", { exact: true })).toBeVisible(); // network status is honest
 
   // Suspend (reason required) then reactivate
   await subRow.getByRole("button", { name: "Suspend" }).click();

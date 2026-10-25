@@ -57,3 +57,7 @@ npm run test:e2e              # needs a production build and E2E_DATABASE_URL (n
 - Database sessions are pinned to UTC by the application. Business-calendar logic converts to the organization timezone.
 - Never point test URLs at a real database; the harness refuses database names that do not end in `_test`/`_e2e`.
 - The `.local/` directory (cluster data, logs, portable binaries) is git-ignored.
+- Network: development uses `NETWORK_ADAPTER=mock` (nothing is contacted). Name a router with `[flaky]`, `[offline]` or
+  `[reject]` to see retries and alerts. The integration tests start a fake RouterOS API server on 127.0.0.1 and install
+  the FreeRADIUS-compatible tables from `deploy/radius/schema.sql` into a `radius` schema of the test database; no device
+  or RADIUS server is needed. See `docs/NETWORK.md` for real routers.

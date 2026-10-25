@@ -226,5 +226,7 @@ describe("dashboard KPIs", () => {
     const s = await dashboardSummary(tech);
     expect(s.leads).toBeNull();
     expect(s.subscribers).not.toBeNull();
+    expect(s.network).toMatchObject({ routers: { total: 0, online: 0 }, operations: { inProgress: 0, failed7d: 0 }, openAlerts: 0, activeSessions: 0 });
+    expect(s.billing).toBeNull();
   });
 });

@@ -105,6 +105,7 @@ export default async function PackagesPage({ searchParams }: { searchParams: Pro
                           uploadKbps: p.uploadKbps,
                           dataQuotaMb: p.dataQuotaMb,
                           deviceLimit: p.deviceLimit,
+                          networkProfile: p.networkProfile,
                           status: p.status,
                         }}
                       />

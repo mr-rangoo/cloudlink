@@ -21,6 +21,7 @@ export interface PackageFormValues {
   uploadKbps: number | null;
   dataQuotaMb: number | null;
   deviceLimit: number | null;
+  networkProfile: string | null;
   status: string;
 }
 
@@ -44,6 +45,7 @@ export function PackageDialog({ initial, currency }: { initial?: PackageFormValu
       uploadKbps: v.uploadKbps ?? null,
       dataQuotaMb: v.dataQuotaMb ?? null,
       deviceLimit: v.deviceLimit ?? null,
+      networkProfile: v.networkProfile ?? null,
       ...(editing ? { status: v.status } : {}),
     };
     const ok = await mutate(editing ? `/packages/${initial!.id}` : "/packages", { method: editing ? "PATCH" : "POST", body }, { success: editing ? "Package updated" : "Package created" });
@@ -116,6 +118,9 @@ export function PackageDialog({ initial, currency }: { initial?: PackageFormValu
             </Field>
             <Field id="pkg-devices" label="Device limit" error={errors.deviceLimit}>
               <Input name="deviceLimit" type="number" min={1} defaultValue={initial?.deviceLimit ?? ""} />
+            </Field>
+            <Field id="pkg-profile" label="Router profile" error={errors.networkProfile} hint="PPP or hotspot user profile on the router. Leave empty to use the package name.">
+              <Input name="networkProfile" defaultValue={initial?.networkProfile ?? ""} autoComplete="off" spellCheck={false} />
             </Field>
             <Field id="pkg-desc" label="Description" error={errors.description} className="sm:col-span-2">
               <Textarea name="description" defaultValue={initial?.description} maxLength={500} rows={2} />

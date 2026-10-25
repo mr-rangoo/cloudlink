@@ -181,7 +181,12 @@ export async function applyActionTx(
     data.nextBillingAt = sub.autoRenew ? sub.nextBillingAt : null;
   }
 
-  const updated = await tx.subscription.update({ where: { id }, data });
+  let updated = await tx.subscription.update({ where: { id }, data });
+  if (updated.networkRouterId) {
+    // Network access follows the billing status through a durable network operation (separate status).
+    const { queueLifecycleNetworkTx } = await import("@/server/services/network");
+    if (await queueLifecycleNetworkTx(tx, ctx, sub, updated)) updated = await tx.subscription.findUniqueOrThrow({ where: { id } });
+  }
   await tx.subscriptionEvent.create({
     data: {
       organizationId: sub.organizationId,
@@ -224,6 +229,12 @@ export async function applyActionTx(
   return updated;
 }
 
+/** After commit: push any network operation queued by the lifecycle hook (the worker sweeper is the fallback). */
+export async function dispatchSubscriptionNetwork(organizationId: string, subscriptionId: string) {
+  const { dispatchNetworkOperations } = await import("@/server/services/network");
+  await dispatchNetworkOperations(organizationId, { subscriptionId });
+}
+
 const ACTION_PERMISSION = "subscriptions.write" as const;
 
 export async function applySubscriptionAction(ctx: ActorContext, id: string, action: Exclude<SubscriptionAction, "expire">, opts: { reason?: string; idempotencyKey?: string; invoice?: boolean } = {}) {
@@ -232,6 +243,7 @@ export async function applySubscriptionAction(ctx: ActorContext, id: string, act
   const before = await db.subscription.findFirst({ where: { id, ...tenantWhere(ctx) }, select: { status: true } });
   if (!before) throw notFound("subscription");
   const sub = await db.$transaction((tx) => applyActionTx(tx, ctx, id, action, opts));
+  await dispatchSubscriptionNetwork(ctx.organizationId, id);
   await audit(ctx, { action: `subscription.${action}`, entityType: "subscription", entityId: id, metadata: { from: before.status, to: sub.status, reason: opts.reason, invoice: opts.invoice } });
   return sub;
 }
@@ -296,6 +308,7 @@ export async function expireDueSubscriptions(organizationId: string, ctx: ActorC
   let count = 0;
   for (const { id } of due) {
     await db.$transaction((tx) => applyActionTx(tx, ctx, id, "expire", { now, idempotencyKey: undefined }));
+    await dispatchSubscriptionNetwork(organizationId, id);
     count++;
   }
   return count;

@@ -61,5 +61,12 @@ export async function staffAlerts(ctx: StaffContext): Promise<AlertItem[]> {
       ),
     );
   }
+  if (hasPermission(ctx, "network.read")) {
+    checks.push(
+      db.routerAlert.count({ where: { organizationId: org, status: "OPEN" } }).then((n) =>
+        n ? { key: "network-alerts", tone: "danger", title: "Network alerts", detail: `${n} open router or network-operation alert(s)`, href: "/sessions?tab=alerts", count: n } : null,
+      ),
+    );
+  }
   return (await Promise.all(checks)).filter((a): a is AlertItem => a !== null);
 }

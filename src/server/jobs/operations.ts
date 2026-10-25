@@ -101,8 +101,11 @@ export async function dispatchOperation(op: Pick<BackgroundOperation, "id" | "ru
   }
 }
 
+/** Exponential backoff: 30 s, 1 min, 2 min … capped at 1 hour. OPERATION_BACKOFF_BASE_MS shortens it outside production (e2e). */
 export function backoffMs(attempt: number): number {
-  return Math.min(30_000 * 2 ** Math.max(0, attempt - 1), 60 * 60 * 1000);
+  const override = process.env.APP_ENV !== "production" ? Number(process.env.OPERATION_BACKOFF_BASE_MS) : NaN;
+  const base = Number.isFinite(override) && override > 0 ? override : 30_000;
+  return Math.min(base * 2 ** Math.max(0, attempt - 1), 60 * 60 * 1000);
 }
 
 function safeErrorMessage(err: unknown): string {

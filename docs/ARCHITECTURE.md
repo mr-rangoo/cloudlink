@@ -25,7 +25,8 @@ src/server/         server-only code
   auth/             sessions, login, permission catalogue, staff context, page guards
   audit/            audit log writer with metadata redaction
   db/               Prisma client (UTC sessions)
-  jobs/             durable operations, BullMQ dispatch, handler registry
+  integrations/     adapters: messaging, storage, network (mock / RouterOS API / disabled), radius (FreeRADIUS SQL)
+  jobs/             durable operations, BullMQ dispatch, handler registry, recurring scheduler
   observability/    logger, health checks
   security/         crypto (scrypt, AES-256-GCM), PostgreSQL rate limiter
   services/         domain services (organizations, …)
@@ -39,7 +40,8 @@ tests/              unit/, integration/, e2e/
   (`__Host-` prefixed and Secure in production); only its SHA-256 hash is stored in `Session`.
 - Passwords: scrypt (N=16384, r=8, p=1) via Node's crypto. No native dependency.
 - Login is throttled per IP and per email (PostgreSQL fixed-window limiter), accounts lock for 15 minutes after 5 failures,
-  error messages are generic, and every success/failure is audited.
+  error messages are generic, and every success/failure is audited. A successful sign-in gives its per-IP unit back, so only
+  failures accumulate: staff sharing one office NAT address are not locked out, while password guessing is still throttled.
 - Sessions are invalid immediately when the user is disabled, the membership is deactivated, the session is revoked or expired.
   Permissions are re-resolved from the database on every request, so role changes take effect at once.
 
@@ -64,6 +66,12 @@ OpenAPI: `GET /api/v1/openapi.json`.
    real outcome. Retryable failures back off exponentially; permanent failures and exhausted retries become `DEAD`.
 4. A PostgreSQL sweeper re-runs due/failed rows and reclaims `RUNNING` rows whose lease expired (crashed worker).
 Redis therefore never holds financial or operational truth.
+
+## Network operations
+Router and RADIUS changes are `NetworkOperation` rows with an allowlisted type, written in the same transaction as the
+business change (for example a suspension), and executed by the worker through a `network.execute` background job.
+Every attempt is logged append-only; transient failures retry with backoff, permanent ones fail at once, and both raise
+alerts when final. Only the worker connects to routers, over private or VPN addresses. Details: `docs/NETWORK.md`.
 
 ## Time and money
 - All timestamps are `timestamptz`; database sessions are pinned to UTC (found necessary: the adapter sends offset-less

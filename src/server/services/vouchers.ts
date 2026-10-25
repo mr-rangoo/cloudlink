@@ -11,7 +11,7 @@ import { decryptSecret, encryptSecret } from "@/server/security/crypto";
 import { normalizePhone } from "@/server/domain/contact";
 import { actorUserId, nextCounter } from "@/server/services/common";
 import { cashAccountFor, postLedger } from "@/server/services/ledger";
-import { dispatchOperation, enqueueOperation } from "@/server/jobs/operations";
+import { defaultHotspotRouterId, dispatchNetworkOperations, requestNetworkOperationTx } from "@/server/services/network";
 import { consumeRateLimit, RATE_LIMITS } from "@/server/security/rate-limit";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -126,6 +126,8 @@ export const batchInput = z.object({
   expiresAt: z.coerce.date().optional().nullable(),
   notes: z.string().trim().max(300).optional().nullable(),
   branchId: z.uuid().optional().nullable(),
+  /** Hotspot router for these vouchers; defaults to the organization's only hotspot-enabled router. */
+  routerId: z.uuid().optional().nullable(),
 });
 
 /** Generate a batch. Plaintext codes are returned once; only a keyed hash and an encrypted copy are stored. */
@@ -137,6 +139,9 @@ export async function generateBatch(ctx: StaffContext, input: z.infer<typeof bat
   if (input.agentId && !(await db.agent.findFirst({ where: { id: input.agentId, organizationId: ctx.organizationId, status: "ACTIVE" } }))) throw notFound("agent");
   if (input.expiresAt && input.expiresAt < new Date()) throw new AppError("VALIDATION_ERROR", "The expiry date must be in the future.", { fields: [{ path: "expiresAt", message: "Past date" }] });
   const branchId = input.branchId ? await resolveBranchForCreate(ctx, input.branchId) : null;
+  if (input.routerId && !(await db.router.findFirst({ where: { id: input.routerId, organizationId: ctx.organizationId, hotspotEnabled: true, archivedAt: null } }))) {
+    throw new AppError("VALIDATION_ERROR", "Choose a hotspot-enabled router.", { fields: [{ path: "routerId", message: "Not a hotspot router" }] });
+  }
   const net = dec(pkg.price);
   const face = net.plus(net.mul(dec(pkg.taxRate)).div(100)).toDecimalPlaces(2);
 
@@ -164,6 +169,7 @@ export async function generateBatch(ctx: StaffContext, input: z.infer<typeof bat
           currency: pkg.currency,
           quantity: input.quantity,
           agentId: input.agentId ?? null,
+          routerId: input.routerId ?? null,
           expiresAt: input.expiresAt ?? null,
           notes: input.notes ?? null,
           createdById: ctx.userId,
@@ -314,11 +320,18 @@ export async function redeemVoucher(ctx: ActorContext, input: z.infer<typeof red
         });
       }
     }
-    const op = await enqueueOperation({ type: "hotspot.activate", organizationId: ctx.organizationId, payload: { redemptionId: redemption.id }, dedupeKey: `hotspot.activate:${redemption.id}`, maxAttempts: 5 }, tx);
+    // Activation is a durable network operation; its real outcome is written back to the redemption.
+    const op = await requestNetworkOperationTx(tx, ctx, {
+      type: "hotspot.user.upsert",
+      routerId: v.batch.routerId ?? (await defaultHotspotRouterId(tx, ctx.organizationId)),
+      redemptionId: redemption.id,
+      params: { batchId: v.batchId },
+      idempotencyKey: `hotspot:${redemption.id}`,
+    });
     return { expired: false as const, redemption, op, batch: v.batch };
   });
   if (result.expired) throw new AppError("INVALID_STATE", "This voucher has expired.");
-  await dispatchOperation(result.op);
+  await dispatchNetworkOperations(ctx.organizationId, { ids: [result.op.id] });
   await audit(ctx, {
     action: "voucher.redeem",
     entityType: "voucher_redemption",
@@ -358,34 +371,3 @@ export async function redemptionStats(ctx: StaffContext) {
   return { last30Days: { redemptions: count, value: dec(sum._sum.faceValue ?? 0).toFixed(2) }, activation: Object.fromEntries(byStatus.map((b) => [b.activationStatus, b._count._all])) };
 }
 
-// ───────── Activation (worker) ─────────
-
-/**
- * Worker handler for "hotspot.activate": provisions the hotspot user through the network adapter and records the
- * real outcome. Mock → SIMULATED; unavailable/disabled → FAILED with the reason; transient errors are retried.
- */
-export async function activateRedemption(redemptionId: string) {
-  const r = await db.voucherRedemption.findUnique({ where: { id: redemptionId }, include: { voucher: { include: { batch: true } } } });
-  if (!r || r.activationStatus === "ACTIVE" || r.activationStatus === "SIMULATED") return;
-  const { networkAdapter, kbpsToRate } = await import("@/server/integrations/network");
-  const { PermanentError } = await import("@/server/jobs/operations");
-  const code = decryptSecret(r.voucher.codeEncrypted, `voucher:${r.organizationId}`);
-  const b = r.voucher.batch;
-  try {
-    const res = await networkAdapter().activateHotspotUser({
-      username: code,
-      password: code,
-      profile: b.packageName,
-      uptimeLimitSeconds: Math.max(60, Math.floor((r.accessEndsAt.getTime() - Date.now()) / 1000)),
-      rateLimit: b.uploadKbps && b.downloadKbps ? `${kbpsToRate(b.uploadKbps)}/${kbpsToRate(b.downloadKbps)}` : null,
-      macAddress: r.clientMac,
-    });
-    await db.voucherRedemption.update({ where: { id: r.id }, data: { activationStatus: res.status, activationDetail: res.detail, activatedAt: new Date() } });
-  } catch (err) {
-    if (err instanceof PermanentError) {
-      await db.voucherRedemption.update({ where: { id: r.id }, data: { activationStatus: "FAILED", activationDetail: err.message } });
-      return;
-    }
-    throw err;
-  }
-}

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/server/db/client";
 import { AppError, notFound } from "@/server/errors";
 import { getDummyHash, hashPassword, PASSWORD_MIN_LENGTH, randomToken, sha256, verifyPassword } from "@/server/security/crypto";
-import { consumeRateLimit, RATE_LIMITS, resetRateLimit } from "@/server/security/rate-limit";
+import { consumeRateLimit, RATE_LIMITS, refundRateLimit, resetRateLimit } from "@/server/security/rate-limit";
 import { normalizePhone } from "@/server/domain/contact";
 import { audit, auditAnonymous } from "@/server/audit/audit";
 import { requirePermission, tenantWhere, type CustomerContext, type RequestMeta, type StaffContext } from "@/server/auth/context";
@@ -70,6 +70,7 @@ export async function portalLogin(input: z.infer<typeof portalLoginInput>, meta:
   }
   await db.customerAccount.update({ where: { id: account.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() } });
   await resetRateLimit(RATE_LIMITS.loginByEmail, `portal:${key}`);
+  await refundRateLimit(RATE_LIMITS.loginByIp, `portal:${meta.ipAddress ?? "unknown"}`);
   const token = randomToken(32);
   const expiresAt = new Date(Date.now() + PORTAL_SESSION_HOURS * 3_600_000);
   const session = await db.customerSession.create({

@@ -348,6 +348,7 @@ model Package {
   uploadKbps     Int?
   dataQuotaMb    Int?
   deviceLimit    Int?
+  networkProfile String? // PPP / hotspot profile name on the router (defaults to the package name)
   status         RecordStatus @default(ACTIVE)
   createdAt      DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
@@ -488,6 +489,12 @@ model Subscription {
   currentPeriodEnd   DateTime?          @db.Timestamptz(6)
   nextBillingAt      DateTime?          @db.Timestamptz(6) // when the next invoice will be generated
   invoicedThrough    DateTime?          @db.Timestamptz(6) // end of the latest period that has an invoice
+  // Network provisioning (independent of billing status)
+  networkRouterId    String?            @db.Uuid
+  networkUsername    String?
+  networkPasswordEnc String? // AES-GCM envelope; plaintext only exists in memory while provisioning
+  networkStatus      String             @default("NOT_PROVISIONED") // NOT_PROVISIONED | PENDING | ACTIVE | DISABLED | SIMULATED | ERROR
+  networkUpdatedAt   DateTime?          @db.Timestamptz(6)
   graceDays          Int                @default(0)
   autoRenew          Boolean            @default(true)
   activatedAt        DateTime?          @db.Timestamptz(6)
@@ -500,6 +507,7 @@ model Subscription {
   package    Package             @relation(fields: [packageId], references: [id])
   events     SubscriptionEvent[]
 
+  @@unique([organizationId, networkUsername])
   @@index([organizationId, status, nextBillingAt])
   @@index([organizationId, status, currentPeriodEnd])
   @@index([subscriberId])
@@ -1324,6 +1332,7 @@ model VoucherBatch {
   currency       String      @db.Char(3)
   quantity       Int
   agentId        String?     @db.Uuid
+  routerId       String?     @db.Uuid // hotspot router; defaults to the organization's hotspot router
   expiresAt      DateTime?   @db.Timestamptz(6) // last day the vouchers can be redeemed
   status         String      @default("ACTIVE") // ACTIVE | VOID
   notes          String?
@@ -1402,4 +1411,152 @@ model AgentRemittance {
   createdAt      DateTime      @default(now()) @db.Timestamptz(6)
 
   @@index([agentId])
+}
+
+// ───────────────────────── Network ─────────────────────────
+
+enum RouterStatus {
+  UNKNOWN
+  ONLINE
+  OFFLINE
+  ERROR
+}
+
+enum PppoeAuthMode {
+  LOCAL // PPPoE secrets live on the router (RouterOS API)
+  RADIUS // the router authenticates PPPoE against RADIUS
+}
+
+model Router {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  organizationId  String        @db.Uuid
+  branchId        String?       @db.Uuid
+  name            String
+  host            String // private address / VPN address only (allowlisted)
+  apiPort         Int           @default(8728)
+  useTls          Boolean       @default(false)
+  pppoeAuth       PppoeAuthMode @default(LOCAL)
+  hotspotEnabled  Boolean       @default(false)
+  pppoeEnabled    Boolean       @default(true)
+  status          RouterStatus  @default(UNKNOWN)
+  identity        String?
+  routerOsVersion String?
+  boardName       String?
+  lastSeenAt      DateTime?     @db.Timestamptz(6)
+  lastCheckedAt   DateTime?     @db.Timestamptz(6)
+  lastError       String?
+  notes           String?
+  archivedAt      DateTime?     @db.Timestamptz(6)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
+
+  credential RouterCredential?
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+}
+
+// Encrypted API credentials (AES-256-GCM, AAD bound to the router id). Never returned to clients or logged.
+model RouterCredential {
+  routerId        String   @id @db.Uuid
+  encryptedSecret String
+  updatedById     String?  @db.Uuid
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  router Router @relation(fields: [routerId], references: [id], onDelete: Cascade)
+}
+
+enum NetworkOperationStatus {
+  QUEUED
+  RUNNING
+  RETRYING
+  SUCCEEDED
+  SIMULATED
+  FAILED
+  CANCELLED
+}
+
+model NetworkOperation {
+  id                    String                 @id @default(uuid(7)) @db.Uuid
+  organizationId        String                 @db.Uuid
+  routerId              String?                @db.Uuid
+  subscriberId          String?                @db.Uuid
+  subscriptionId        String?                @db.Uuid
+  redemptionId          String?                @db.Uuid
+  type                  String // allowlisted: see src/server/services/network.ts
+  params                Json // non-secret parameters only (passwords are read from encrypted storage at execution time)
+  status                NetworkOperationStatus @default(QUEUED)
+  verification          String                 @default("PENDING") // VERIFIED | NOT_SUPPORTED | UNVERIFIED | PENDING
+  idempotencyKey        String
+  requestedById         String?                @db.Uuid
+  requestedBy           String // user | system:<actor>
+  resultDetail          String?
+  attempts              Int                    @default(0)
+  maxAttempts           Int                    @default(5)
+  backgroundOperationId String?                @db.Uuid
+  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
+  startedAt             DateTime?              @db.Timestamptz(6)
+  completedAt           DateTime?              @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
+
+  attemptsLog NetworkOperationAttempt[]
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, status, createdAt])
+  @@index([routerId, createdAt])
+  @@index([subscriptionId])
+}
+
+model NetworkOperationAttempt {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  operationId   String   @db.Uuid
+  attemptNumber Int
+  outcome       String // SUCCESS | RETRYABLE_ERROR | PERMANENT_ERROR | SIMULATED
+  errorCode     String?
+  detail        String?
+  durationMs    Int
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  operation NetworkOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@index([operationId])
+}
+
+model NetworkSession {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  routerId       String    @db.Uuid
+  subscriberId   String?   @db.Uuid
+  kind           String // PPPOE | HOTSPOT
+  username       String
+  externalId     String // router .id or RADIUS acct session id
+  address        String?
+  macAddress     String?
+  uptimeSeconds  Int?
+  bytesIn        BigInt?
+  bytesOut       BigInt?
+  source         String // router_api | radius_accounting | mock
+  startedAt      DateTime? @db.Timestamptz(6)
+  lastSeenAt     DateTime  @db.Timestamptz(6)
+  endedAt        DateTime? @db.Timestamptz(6)
+
+  @@unique([routerId, kind, externalId])
+  @@index([organizationId, endedAt])
+  @@index([subscriberId])
+}
+
+model RouterAlert {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  routerId       String?   @db.Uuid
+  operationId    String?   @db.Uuid
+  type           String // ROUTER_OFFLINE | OPERATION_FAILED | OPERATION_STUCK
+  severity       String // warning | critical
+  message        String
+  status         String    @default("OPEN") // OPEN | RESOLVED
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  resolvedAt     DateTime? @db.Timestamptz(6)
+
+  @@index([organizationId, status])
+  @@index([routerId, type, status])
 }

@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { isPrivateNetwork, parseCidrList } from "@/server/domain/network-address";
 
 /**
  * Environment validation.
@@ -51,6 +52,10 @@ export const envSchema = z
     MIKROTIK_ALLOWED_NETWORKS: z.string().optional().default(""),
     RADIUS_SERVER_ADDRESS: z.string().optional().default(""),
     RADIUS_SHARED_SECRET: z.string().optional().default(""),
+    /** FreeRADIUS SQL database (radcheck/radreply/radusergroup/radacct). Optional; RADIUS provisioning is unavailable without it. */
+    RADIUS_DATABASE_URL: z.string().optional().default(""),
+    RADIUS_DB_SCHEMA: z.string().regex(/^[a-z_][a-z0-9_]*$/, "must be a lowercase SQL identifier").default("public"),
+    ROUTEROS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(8000),
 
     PAYMENT_ADAPTER: z.enum(["mock", "daraja", "disabled"]).default("mock"),
     NETWORK_ADAPTER: z.enum(["mock", "routeros", "disabled"]).default("mock"),
@@ -60,8 +65,20 @@ export const envSchema = z
     ENABLE_DEMO_SEED: bool,
   })
   .superRefine((env, ctx) => {
-    if (env.APP_ENV !== "production") return;
     const fail = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
+    if (env.MIKROTIK_ALLOWED_NETWORKS.trim()) {
+      try {
+        for (const c of parseCidrList(env.MIKROTIK_ALLOWED_NETWORKS)) {
+          if (!isPrivateNetwork(c, env.APP_ENV !== "production")) fail("MIKROTIK_ALLOWED_NETWORKS", `${c.address}/${c.prefix} is not a private network`);
+        }
+      } catch {
+        fail("MIKROTIK_ALLOWED_NETWORKS", "must be a comma-separated list of CIDR networks");
+      }
+    }
+    if (env.RADIUS_DATABASE_URL && !env.RADIUS_DATABASE_URL.startsWith("postgres")) fail("RADIUS_DATABASE_URL", "must be a PostgreSQL connection string");
+    if (env.APP_ENV !== "production") return;
+    if (env.NETWORK_ADAPTER === "routeros" && !env.MIKROTIK_ALLOWED_NETWORKS.trim())
+      fail("MIKROTIK_ALLOWED_NETWORKS", "is required in production when NETWORK_ADAPTER=routeros");
     if (env.PAYMENT_ADAPTER === "mock") fail("PAYMENT_ADAPTER", "mock payment adapter is not allowed in production");
     if (env.NETWORK_ADAPTER === "mock") fail("NETWORK_ADAPTER", "mock network adapter is not allowed in production");
     if (env.MIKROTIK_CONNECTION_MODE === "mock" && env.NETWORK_ADAPTER === "routeros")

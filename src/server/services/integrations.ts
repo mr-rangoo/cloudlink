@@ -4,6 +4,7 @@ import { requirePermission, type StaffContext } from "@/server/auth/context";
 import { messagingStatus, type IntegrationStatus } from "@/server/integrations/messaging";
 import { pingRedis } from "@/server/jobs/redis";
 import { workerStatus } from "@/server/observability/health";
+import { radiusConfigured, radiusHealth } from "@/server/integrations/radius";
 
 export interface IntegrationRow {
   key: string;
@@ -20,6 +21,13 @@ export interface IntegrationRow {
  * verification exists in IntegrationConfiguration (set only by an explicit, successful test — phases 7–8).
  * Secrets are never returned; only whether required settings are present.
  */
+/** RouterOS row: "ok" only when a real (non-mock) health check has seen at least one router online. */
+function routerStatus(mode: string, routers: { total: number; online: number }): IntegrationRow["status"] {
+  if (mode === "mock") return "mock";
+  if (mode !== "routeros" || routers.total === 0) return "not_configured";
+  return routers.online > 0 ? "ok" : "unavailable";
+}
+
 export async function integrationStatus(ctx: StaffContext): Promise<IntegrationRow[]> {
   requirePermission(ctx, "integrations.read");
   const configs = await db.integrationConfiguration.findMany({ where: { organizationId: ctx.organizationId }, select: { provider: true, status: true, lastCheckedAt: true, lastError: true } });
@@ -31,7 +39,16 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
   const darajaVars = ["MPESA_CONSUMER_KEY", "MPESA_CONSUMER_SECRET", "MPESA_SHORTCODE", "MPESA_PASSKEY", "MPESA_CALLBACK_URL"].filter((k) => !process.env[k]);
   const networkMode = process.env.NETWORK_ADAPTER ?? "mock";
   const messaging = messagingStatus();
-  const [redis, workers] = await Promise.all([pingRedis(), workerStatus()]);
+  const [redis, workers, routerGroups, radius] = await Promise.all([
+    pingRedis(),
+    workerStatus(),
+    db.router.groupBy({ by: ["status"], where: { organizationId: ctx.organizationId, archivedAt: null }, _count: { _all: true } }),
+    radiusHealth(),
+  ]);
+  const routers = {
+    total: routerGroups.reduce((n, g) => n + g._count._all, 0),
+    online: routerGroups.find((g) => g.status === "ONLINE")?._count._all ?? 0,
+  };
 
   return [
     {
@@ -49,11 +66,28 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
       name: "MikroTik RouterOS",
       category: "network",
       mode: networkMode,
-      status: mapStatus(recorded("mikrotik_routeros")?.status) ?? (networkMode === "mock" ? "mock" : "not_configured"),
-      detail: "Router provisioning is implemented in phase 7. Management access must stay on a private network/VPN.",
-      phase: 7,
+      status: mapStatus(recorded("mikrotik_routeros")?.status) ?? routerStatus(networkMode, routers),
+      detail:
+        networkMode === "mock"
+          ? `Simulated: no router is contacted or changed. ${routers.total} router(s) registered.`
+          : networkMode === "routeros"
+            ? routers.total
+              ? `${routers.online} of ${routers.total} router(s) online at the last health check (RouterOS API over private network/VPN).${process.env.MIKROTIK_ALLOWED_NETWORKS ? "" : " Set MIKROTIK_ALLOWED_NETWORKS to restrict router addresses."}`
+              : "No routers registered yet."
+            : "Network automation is disabled; operations fail with a clear reason.",
     },
-    { key: "radius", name: "RADIUS", category: "network", mode: process.env.RADIUS_SERVER_ADDRESS ? "configured" : "none", status: mapStatus(recorded("radius")?.status) ?? "not_configured", detail: "RADIUS adapter is implemented in phase 7.", phase: 7 },
+    {
+      key: "radius",
+      name: "RADIUS (FreeRADIUS SQL)",
+      category: "network",
+      mode: radiusConfigured() ? "sql" : "none",
+      status: mapStatus(recorded("radius")?.status) ?? (radius.ok ? "ok" : radiusConfigured() ? "error" : "not_configured"),
+      detail: radius.ok
+        ? `Provisioning tables reachable (schema ${process.env.RADIUS_DB_SCHEMA || "public"}). Not yet verified with a live RADIUS server.`
+        : radiusConfigured()
+          ? radius.detail
+          : "Not configured: routers set to RADIUS authentication cannot be provisioned. See docs/NETWORK.md.",
+    },
     { key: "sms", name: `SMS (${messaging.sms.provider})`, category: "messaging", mode: process.env.MESSAGING_ADAPTER ?? "mock", status: mapStatus(recorded("sms")?.status) ?? messaging.sms.status, detail: messaging.sms.available ? (messaging.sms.status === "mock" ? "Messages are simulated, not delivered." : "Configured; not yet verified with a real send.") : "Not configured: messages are skipped." },
     { key: "email", name: `Email (${messaging.email.provider})`, category: "messaging", mode: process.env.MESSAGING_ADAPTER ?? "mock", status: mapStatus(recorded("smtp")?.status) ?? messaging.email.status, detail: messaging.email.available ? (messaging.email.status === "mock" ? "Messages are simulated, not delivered." : "Configured; not yet verified with a real send.") : "Not configured: messages are skipped." },
     { key: "storage", name: `File storage (${process.env.STORAGE_ADAPTER ?? "local"})`, category: "infrastructure", mode: process.env.STORAGE_ADAPTER ?? "local", status: (process.env.STORAGE_ADAPTER ?? "local") === "local" ? "ok" : "not_configured", detail: (process.env.STORAGE_ADAPTER ?? "local") === "local" ? "Local disk; suitable for a single server. Use S3-compatible storage for multi-node deployments." : "S3 adapter not implemented yet." },

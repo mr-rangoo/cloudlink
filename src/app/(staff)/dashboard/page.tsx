@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertTriangle, CalendarClock, Database, FileText, Repeat, Server, TrendingUp, UserPlus, Users, Wallet } from "lucide-react";
+import { Activity, AlertTriangle, Bell, CalendarClock, Database, FileText, LifeBuoy, ListChecks, Repeat, Router as RouterIcon, Server, TrendingUp, UserPlus, Users, Wallet } from "lucide-react";
+import { networkAdapterName } from "@/server/integrations/network";
 import { getStaffContextWith } from "@/server/auth/page";
 import { checkDatabase, workerStatus } from "@/server/observability/health";
 import { pingRedis } from "@/server/jobs/redis";
@@ -159,15 +160,69 @@ export default async function DashboardPage() {
               </Row>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Not yet available</CardTitle>
-              <CardDescription>Shown once their modules are built — never estimated</CardDescription>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              Support workload (phase 4); router status and network operations (phase 7).
-            </CardContent>
-          </Card>
+          {summary.network ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Network</CardTitle>
+                <CardDescription>{networkAdapterName() === "mock" ? "Mock adapter: router results are simulated" : "From health checks and the operation log"}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {summary.network.routers ? (
+                  <Row label="Routers online" icon={RouterIcon}>
+                    <span className="flex items-center gap-2">
+                      {summary.network.routers.offline ? <Badge tone="danger">{summary.network.routers.offline} offline</Badge> : null}
+                      <Link href="/routers" className="tabular font-semibold hover:underline">
+                        {summary.network.routers.online} of {summary.network.routers.total}
+                      </Link>
+                    </span>
+                  </Row>
+                ) : null}
+                {summary.network.operations ? (
+                  <>
+                    <Row label="Operations in progress" icon={ListChecks}>
+                      <Link href="/sessions?tab=operations&status=ATTENTION" className="tabular font-semibold hover:underline">
+                        {summary.network.operations.inProgress}
+                      </Link>
+                    </Row>
+                    <Row label="Failed (7 days)" icon={AlertTriangle}>
+                      <Link href="/sessions?tab=operations&status=FAILED" className={`tabular font-semibold hover:underline ${summary.network.operations.failed7d ? "text-danger" : ""}`}>
+                        {summary.network.operations.failed7d}
+                      </Link>
+                    </Row>
+                    <Row label="Open network alerts" icon={Bell}>
+                      <Link href="/sessions?tab=alerts" className="tabular font-semibold hover:underline">
+                        {summary.network.openAlerts ?? 0}
+                      </Link>
+                    </Row>
+                    <Row label="Active sessions" icon={Activity}>
+                      <Link href="/sessions" className="tabular font-semibold hover:underline">
+                        {summary.network.activeSessions ?? 0}
+                      </Link>
+                    </Row>
+                  </>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+          {summary.support ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Support workload</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <Row label="Open tickets" icon={LifeBuoy}>
+                  <Link href="/support" className="tabular font-semibold hover:underline">
+                    {summary.support.openTickets}
+                  </Link>
+                </Row>
+                <Row label="Urgent, unassigned" icon={AlertTriangle}>
+                  <Link href="/support?assignee=unassigned" className={`tabular font-semibold hover:underline ${summary.support.urgentUnassigned ? "text-danger" : ""}`}>
+                    {summary.support.urgentUnassigned}
+                  </Link>
+                </Row>
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       </div>
     </div>

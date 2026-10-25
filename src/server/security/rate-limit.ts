@@ -43,6 +43,15 @@ export async function consumeRateLimit(rule: RateLimitRule, subject: string): Pr
   return { remaining: rule.limit - count };
 }
 
+/**
+ * Give one unit back. Used after a successful sign-in so the per-IP budget only accumulates failures:
+ * staff sharing an office NAT address are not locked out, while password guessing is still throttled.
+ */
+export async function refundRateLimit(rule: RateLimitRule, subject: string): Promise<void> {
+  const key = `${rule.name}:${subject}`;
+  await db.$executeRaw`UPDATE "RateLimitBucket" SET "count" = GREATEST("count" - 1, 0) WHERE "key" = ${key}`;
+}
+
 export async function resetRateLimit(rule: RateLimitRule, subject: string): Promise<void> {
   await db.rateLimitBucket.deleteMany({ where: { key: `${rule.name}:${subject}` } });
 }

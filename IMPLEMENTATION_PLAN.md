@@ -12,8 +12,8 @@ Coding agent: update this file continuously. Do not mark items complete without 
 | Integration | Status | Notes |
 | --- | --- | --- |
 | M-Pesa Daraja | not_configured | Phase 8. No credentials configured. |
-| MikroTik RouterOS | not_configured | Phase 7. No device/private network available. |
-| RADIUS | not_configured | Phase 7. |
+| MikroTik RouterOS | implemented, mock in dev | RouterOS API adapter tested against an in-process fake RouterOS API server only. **Not verified on hardware** (no device or private network available). |
+| RADIUS | implemented, not configured | FreeRADIUS SQL adapter tested against PostgreSQL tables (rlm_sql dialect). **Not verified with a real FreeRADIUS server.** |
 | Email | mock (dev) | SMTP adapter implemented via nodemailer, not verified against a real server. |
 | SMS | mock (dev) | Africa's Talking adapter implemented from public docs, not verified. |
 | Object storage | local disk (dev) | Ticket attachments; S3 adapter not implemented (reports unavailable). |
@@ -75,14 +75,14 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Captive portal — public /hotspot/[org] with MikroTik parameters, rate limits, same-origin, status polling with code proof; router login only after ACTIVE.
 - [x] Mock session activation tests — durable `hotspot.activate` job; mock → SIMULATED (labelled "test mode"), disabled/unimplemented → FAILED with reason.
 
-## Phase 7 — MikroTik/RADIUS
-- [ ] Router inventory.
-- [ ] RouterOS adapter.
-- [ ] PPPoE/Hotspot session operations.
-- [ ] RADIUS integration adapter.
-- [ ] Durable network-operation queue.
-- [ ] Retry and alert behavior.
-- [ ] Real-device test evidence, if hardware/network is available.
+## Phase 7 — MikroTik/RADIUS ✅ (hardware verification pending)
+- [x] Router inventory — `src/server/services/routers.ts`; private/VPN IP literals only (RFC 1918, CGNAT, ULA; public IPs and hostnames refused; `MIKROTIK_ALLOWED_NETWORKS` enforced, mandatory in production); AES-256-GCM credentials bound to `router:<id>`, write-only; archive guard. UI: /routers, /routers/[id] (edit, replace credentials, check now, archive, disconnect session).
+- [x] RouterOS adapter — `src/server/integrations/routeros/{protocol,client}.ts` (binary API, 1–5 byte length prefixes, split-frame reader, `!re/!done/!trap/!fatal`, post-6.43 login, TCP or TLS, per-reply timeouts, control-character injection guard) and `src/server/integrations/network.ts` (read-back verification on every write; error classification).
+- [x] PPPoE/Hotspot session operations — allowlisted `pppoe.enable|disable|remove`, `session.disconnect`, `hotspot.user.upsert`; provisioning, move, re-sync, removal and audited credential reveal on the subscriber page; voucher activation rewired through network operations; session sync from `/ppp/active`, `/ip/hotspot/active` or `radacct`. UI: /sessions (sessions, operations, alerts), /sessions/operations/[id].
+- [x] RADIUS integration adapter — `src/server/integrations/radius.ts` (radcheck/radreply/radusergroup writes in one transaction with read-back, radacct sessions); `deploy/radius/schema.sql`; NAS/firewall/topology documented in `docs/NETWORK.md`.
+- [x] Durable network-operation queue — `NetworkOperation` written in the same transaction as the billing change; unique idempotency key; superseding of queued older state; ordering per subscription; staleness guard; append-only `NetworkOperationAttempt`.
+- [x] Retry and alert behavior — retryable vs permanent classification, 5 attempts with backoff, FAILED → critical alert, stuck-operation monitor, router offline alerts, staff retry/cancel (audited), alerts in the notification centre and dashboard.
+- [ ] Real-device test evidence — **blocked**: no MikroTik device or private network available. Procedure in `docs/NETWORK.md` → "Testing against a real router".
 
 ## Phase 8 — Payments
 - [ ] Daraja sandbox configuration.
@@ -236,6 +236,40 @@ Coding agent: update this file continuously. Do not mark items complete without 
 **Still mocked / blocked**: hotspot activation is SIMULATED (RouterOS adapter is phase 7; needs a device on a private network). Online voucher purchase needs M-Pesa (phase 8).
 
 **Exact next task**: Phase 7 — MikroTik/RADIUS: Router model (management address on a private network, allowlist check against MIKROTIK_ALLOWED_NETWORKS, encrypted credentials), NetworkOperation + NetworkOperationAttempt (durable, idempotent, allowlisted operation types, status history, retry classification), RouterOS API adapter (binary API protocol over TCP/TLS with timeouts; real-device testing only when hardware is available), mock adapter with failure injection, PPPoE secret provision/enable/disable and hotspot user operations, subscription lifecycle → network operations (activate/suspend/reactivate/expire), RADIUS adapter interface, router health checks + alerts, UI for routers/sessions/operations, and wiring hotspot activation through the new queue.
+
+### 2026-10-25 — Phase 7 (MikroTik RouterOS, PPPoE, Hotspot, RADIUS)
+**Schema**: migrations `20261025150000_network_routers_radius` (Router, RouterCredential, NetworkOperation, NetworkOperationAttempt, NetworkSession, RouterAlert; Subscription network fields with a unique PPPoE username per organization; Package.networkProfile; VoucherBatch.routerId) and `20261025150100_network_constraints` (port and attempt CHECKs, append-only attempt trigger). Both wrapped in transactions; applied with `prisma migrate deploy` to the test and e2e databases.
+
+**What was built**
+- Network engine `src/server/services/network.ts`; worker jobs `network.execute`, `routers.healthcheck` (15 min), `network.sync_sessions` (5 min), `network.monitor` (15 min), scheduled only for organizations with routers.
+- Subscription lifecycle hook: activate/reactivate/renew → enable, suspend/expire/cancel → disable, inside the same transaction as the billing change; payment renewals dispatch immediately.
+- 19 endpoints (`/routers…`, `/network/operations…`, `/network/alerts…`, `/network/sessions`, `/subscriptions/:id/network…`); OpenAPI now 158 operations.
+- Dashboard "Network" and "Support workload" cards replace the "not yet available" card. Package form gains "Router profile"; voucher batches can name a hotspot router.
+- /integrations reports RouterOS as `ok` only when a real (non-mock) health check has seen a router online, and RADIUS as `ok` only when its tables answer a live query.
+
+**Defects found and fixed during the phase**
+- The idempotency store would have persisted a revealed PPPoE password in its response copy. Routes can now declare `secretResponse`, which bypasses storage; covered by a test.
+- The per-IP login limit counted successful sign-ins, so the larger e2e suite (and any office sharing one NAT address) was locked out after 20 sign-ins in 15 minutes. Successful sign-ins now refund their unit, so only failures accumulate; covered by a new test.
+- The operations list overflowed horizontally on phones (non-wrapping detail text, multi-part cells laid out side by side). Fixed and re-checked at 390 px and 1440 px.
+- The dashboard still listed support and network metrics as unavailable after those modules shipped. Replaced with real, permission-aware counts.
+- The subscriber page still showed the phase-6 placeholder ("provisioning not connected"). Replaced with the real network card.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` | exit 0 |
+| `npm run typecheck` | exit 0 |
+| `npm run test` | 10 files, 82 tests passed (adds 15: protocol framing at every length boundary, split-frame reassembly, UTF-8, injection guards, address policy, allowlist validation, production guards, duration/rate helpers, retry classification) |
+| `npm run test:integration` | 15 files, 135 tests passed (adds 18: encrypted write-only credentials, address/TLS policy, health checks and offline alerts, provision → suspend → reactivate with read-back, superseding, transient retry with attempt log, timeout retry, permanent failure → alert → staff retry, exhaustion after 5 attempts, cancel/move/deprovision/audited reveal, session sync and closing, stuck alert, hotspot activation on the router, mock flaky retry, authorization/tenant/branch isolation, reveal never stored; RADIUS radcheck/radreply/radusergroup, radacct sessions, unconfigured RADIUS; per-IP login refund) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 21 passed (adds flow 11: a `[flaky]` mock router's failure is visible in the attempt log and retried per policy to SIMULATED; flow 10: cashier cannot see routers or sessions and gets 403 from the router operation and health-check APIs; public router address refused in the UI) |
+
+**Still mocked / blocked**
+- No MikroTik hardware or private network: the RouterOS adapter is verified only against the fake API server; `NETWORK_ADAPTER=mock` in development.
+- No FreeRADIUS server: RADIUS provisioning is verified against compatible tables only. RADIUS CoA/Disconnect-Message is not implemented (disconnects use the router API).
+- Payments gateway (phase 8), messaging providers, S3 storage: unchanged.
+
+**Exact next task**: Phase 8 — Payments: payment provider interface (pending/confirmed/failed/cancelled/reversed/unknown), M-Pesa Daraja adapter (OAuth token, STK Push with idempotent payment attempts, callback endpoint with validation and durable event deduplication, transaction status query for unknown outcomes), mock adapter for development, portal "Pay with M-Pesa" and voucher purchase, allocation and renewal on confirmed callbacks only (never on redirects), reconciliation of unmatched C2B receipts. Use sandbox credentials only when the user supplies them.
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

@@ -10,11 +10,16 @@ export interface RecurringJob {
   type: string;
   /** Bucket granularity in minutes. */
   everyMinutes: number;
+  /** "routers": only organizations that have at least one active router. */
+  scope?: "all" | "routers";
 }
 
 export const RECURRING_JOBS: RecurringJob[] = [
   { type: "billing.run_recurring", everyMinutes: 60 },
   { type: "subscriptions.expire_due", everyMinutes: 60 },
+  { type: "routers.healthcheck", everyMinutes: 15, scope: "routers" },
+  { type: "network.sync_sessions", everyMinutes: 5, scope: "routers" },
+  { type: "network.monitor", everyMinutes: 15, scope: "routers" },
 ];
 
 export function bucketKey(now: Date, everyMinutes: number): string {
@@ -24,10 +29,14 @@ export function bucketKey(now: Date, everyMinutes: number): string {
 
 export async function scheduleRecurringJobs(now = new Date()): Promise<number> {
   const orgs = await db.organization.findMany({ where: { status: "ACTIVE" }, select: { id: true } });
+  const withRouters = new Set(
+    (await db.router.groupBy({ by: ["organizationId"], where: { archivedAt: null, organizationId: { in: orgs.map((o) => o.id) } } })).map((r) => r.organizationId),
+  );
   let created = 0;
   for (const job of RECURRING_JOBS) {
     const bucket = bucketKey(now, job.everyMinutes);
     for (const org of orgs) {
+      if (job.scope === "routers" && !withRouters.has(org.id)) continue;
       const dedupeKey = `${job.type}:${org.id}:${bucket}`;
       const op = await enqueueOperation({ type: job.type, organizationId: org.id, payload: { bucket }, dedupeKey, maxAttempts: 3 });
       if (op.status === "PENDING") {

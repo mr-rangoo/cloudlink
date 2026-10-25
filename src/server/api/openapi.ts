@@ -17,6 +17,8 @@ import { exportRequestInput } from "@/server/services/exports";
 import { auditQuery, branchInput, branchUpdateInput, roleInput, setPasswordInput, settingsInput, staffInviteInput, staffUpdateInput } from "@/server/services/admin";
 import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/inventory";
 import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput } from "@/server/services/vouchers";
+import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from "@/server/services/routers";
+import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -209,6 +211,27 @@ export const operations: Operation[] = [
   { method: "post", path: "/agents/:id/remittances", summary: "Record cash received from an agent (≤ owed)", tag: "Vouchers", auth: "session", permission: "payments.record", body: remittanceInput, idempotent: true },
   { method: "post", path: "/hotspot/:org/redeem", summary: "Captive-portal redemption (public, rate-limited, same-origin)", tag: "Hotspot", auth: "none", body: redeemInput, responses: { "409": "Already used", "429": "Rate limited" } },
   { method: "post", path: "/hotspot/:org/status", summary: "Activation status (requires the voucher code)", tag: "Hotspot", auth: "none" },
+  // Phase 7: routers, network operations, sessions, RADIUS-backed provisioning
+  { method: "get", path: "/routers", summary: "Router inventory with status, sessions and open alerts", tag: "Network", auth: "session", permission: "routers.read", query: routerListQuery },
+  { method: "post", path: "/routers", summary: "Register a router (private/VPN IP only; credentials write-only, encrypted)", tag: "Network", auth: "session", permission: "routers.write", body: routerInput },
+  { method: "get", path: "/routers/:id", summary: "Router detail (never includes credentials)", tag: "Network", auth: "session", permission: "routers.read" },
+  { method: "patch", path: "/routers/:id", summary: "Edit a router; send username+password to rotate credentials", tag: "Network", auth: "session", permission: "routers.write", body: routerUpdateInput },
+  { method: "post", path: "/routers/:id/archive", summary: "Archive a router (refused while subscriptions are provisioned on it)", tag: "Network", auth: "session", permission: "routers.write" },
+  { method: "post", path: "/routers/:id/health-check", summary: "Queue a reachability check (runs in the worker)", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },
+  { method: "get", path: "/routers/:id/sessions", summary: "Sessions seen on one router", tag: "Network", auth: "session", permission: "network.read", query: sessionListQuery.omit({ routerId: true }) },
+  { method: "post", path: "/routers/:id/operations", summary: "Request an allowlisted operation (pppoe.sync | session.disconnect)", tag: "Network", auth: "session", permission: "network.operate", body: routerOperationInput, responses: { "202": "Queued" } },
+  { method: "get", path: "/network/operations", summary: "Durable network operations (status, attempts, verification)", tag: "Network", auth: "session", permission: "network.read", query: operationListQuery },
+  { method: "get", path: "/network/operations/:id", summary: "Operation with its append-only attempt log and alerts", tag: "Network", auth: "session", permission: "network.read" },
+  { method: "post", path: "/network/operations/:id/retry", summary: "Re-queue a failed operation", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },
+  { method: "post", path: "/network/operations/:id/cancel", summary: "Cancel a queued or retrying operation", tag: "Network", auth: "session", permission: "network.operate", body: cancelOperationInput },
+  { method: "get", path: "/network/alerts", summary: "Router offline / operation failed / operation stuck alerts", tag: "Network", auth: "session", permission: "network.read", query: alertListQuery },
+  { method: "post", path: "/network/alerts/:id/resolve", summary: "Resolve an alert", tag: "Network", auth: "session", permission: "network.operate" },
+  { method: "get", path: "/network/sessions", summary: "PPPoE/Hotspot sessions (router API or RADIUS accounting)", tag: "Network", auth: "session", permission: "network.read", query: sessionListQuery },
+  { method: "post", path: "/network/sessions", summary: "Queue a session sync from every router", tag: "Network", auth: "session", permission: "network.read", responses: { "202": "Queued" } },
+  { method: "get", path: "/subscriptions/:id/network", summary: "Network access state (separate from billing status)", tag: "Network", auth: "session", permission: "network.read" },
+  { method: "post", path: "/subscriptions/:id/network", summary: "Provision or move PPPoE access (queues an operation)", tag: "Network", auth: "session", permission: "network.operate", body: provisionInput, responses: { "202": "Queued" } },
+  { method: "post", path: "/subscriptions/:id/network/credentials", summary: "Reveal PPPoE credentials (audited, never cached or stored)", tag: "Network", auth: "session", permission: "network.operate" },
+  { method: "post", path: "/subscriptions/:id/network/deprovision", summary: "Remove network access and stored credentials", tag: "Network", auth: "session", permission: "network.operate", body: deprovisionInput, responses: { "202": "Queued" } },
 ];
 
 /** Register additional operations (called by feature modules at import time). */

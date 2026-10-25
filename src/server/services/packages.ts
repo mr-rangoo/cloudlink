@@ -22,6 +22,10 @@ export const packageInput = z.object({
   uploadKbps: optionalPositiveInt,
   dataQuotaMb: optionalPositiveInt,
   deviceLimit: optionalPositiveInt,
+  /** PPP / hotspot profile name on the router (speed and pool live there). Empty = use the package name. */
+  networkProfile: z
+    .union([z.string().trim().regex(/^[A-Za-z0-9 ._-]{1,64}$/, "Letters, digits, spaces, dot, dash or underscore (max 64)"), z.literal("").transform(() => null), z.null()])
+    .optional(),
 });
 
 export const packageUpdate = packageInput.partial().extend({ status: z.enum(["ACTIVE", "INACTIVE", "ARCHIVED"]).optional() });
@@ -46,6 +50,7 @@ export const packageSelect = {
   uploadKbps: true,
   dataQuotaMb: true,
   deviceLimit: true,
+  networkProfile: true,
   status: true,
   createdAt: true,
   updatedAt: true,

@@ -9,7 +9,8 @@ import { deliverNotification } from "@/server/services/notifications";
 import { inviteLink, mintInviteToken } from "@/server/portal/auth";
 import { db } from "@/server/db/client";
 import { generateExport } from "@/server/services/exports";
-import { activateRedemption } from "@/server/services/vouchers";
+import { ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperations, syncNetworkSessions } from "@/server/services/network";
+import { runRouterHealthChecks } from "@/server/services/routers";
 
 /**
  * Registry of background operation handlers shared by the worker and tests.
@@ -47,11 +48,37 @@ export const operationHandlers: OperationHandlers = {
     await generateExport(exportJobId);
   },
 
-  /** Provision a redeemed hotspot voucher on the network (mock: recorded as SIMULATED). */
+  /** Legacy (pre-network-operation) hotspot activation jobs: converted into a durable network operation. */
   "hotspot.activate": async (op) => {
     const { redemptionId } = op.payload as { redemptionId?: string };
     if (!redemptionId) throw new PermanentError("redemptionId missing", "BAD_PAYLOAD");
-    await activateRedemption(redemptionId);
+    await ensureHotspotOperation(redemptionId);
+  },
+
+  /** Execute one durable network operation (router API / RADIUS / mock) and record the real outcome. */
+  "network.execute": async (op) => {
+    const { networkOperationId } = op.payload as { networkOperationId?: string };
+    if (!networkOperationId) throw new PermanentError("networkOperationId missing", "BAD_PAYLOAD");
+    return executeNetworkOperation(networkOperationId);
+  },
+
+  /** Router reachability: one router (manual check) or every active router of the organization (scheduled). */
+  "routers.healthcheck": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    const { routerId } = op.payload as { routerId?: string };
+    return runRouterHealthChecks(op.organizationId, routerId);
+  },
+
+  /** Pull active PPPoE/Hotspot sessions from routers or RADIUS accounting. */
+  "network.sync_sessions": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    return syncNetworkSessions(op.organizationId);
+  },
+
+  /** Alert on network operations that stopped progressing. */
+  "network.monitor": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    return monitorNetworkOperations(op.organizationId);
   },
 
   /** Deliver one notification through the configured adapter (mock / SMTP / SMS provider). */

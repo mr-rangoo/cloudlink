@@ -51,6 +51,7 @@ describe("environment validation", () => {
       PAYMENT_ADAPTER: "daraja",
       NETWORK_ADAPTER: "routeros",
       MIKROTIK_CONNECTION_MODE: "api-ssl",
+      MIKROTIK_ALLOWED_NETWORKS: "10.8.0.0/24",
       MESSAGING_ADAPTER: "smtp",
       ENABLE_DEMO_SEED: "false",
     });

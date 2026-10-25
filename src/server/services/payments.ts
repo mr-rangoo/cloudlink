@@ -7,6 +7,7 @@ import { AppError, notFound } from "@/server/errors";
 import { D, positiveMoneyInput } from "@/server/domain/money";
 import { actorUserId, nextCounter, searchTerm } from "@/server/services/common";
 import { cashAccountFor, postLedger } from "@/server/services/ledger";
+import { dispatchNetworkOperations } from "@/server/services/network";
 import { allocateTx, autoAllocateForSubscriberTx, lockPayment, reverseAllocationTx, unallocatedOf, type AllocationResult } from "@/server/services/settlement";
 import { getBillingSettings } from "@/server/services/invoices";
 import { queueSubscriberNotificationTx } from "@/server/services/notifications";
@@ -119,6 +120,7 @@ export async function recordManualPayment(ctx: ActorContext, input: z.infer<type
     if (input.subscriberId) await notifyPaymentReceivedTx(tx, ctx.organizationId, payment.id);
     return { payment: await tx.payment.findUniqueOrThrow({ where: { id: payment.id } }), allocations };
   });
+  await dispatchRenewalNetwork(ctx.organizationId, result.allocations);
   await audit(ctx, {
     action: "payment.record_manual",
     entityType: "payment",
@@ -126,6 +128,11 @@ export async function recordManualPayment(ctx: ActorContext, input: z.infer<type
     metadata: { receipt: result.payment.receiptNumber, amount: result.payment.amount.toString(), method: input.method, subscriberId: input.subscriberId ?? null, allocations: result.allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })) },
   });
   return result;
+}
+
+/** A paid period invoice can renew a lapsed subscription, which queues a network enable; push it right away. */
+async function dispatchRenewalNetwork(organizationId: string, allocations: AllocationResult[]) {
+  if (allocations.some((a) => a.subscription === "renewed")) await dispatchNetworkOperations(organizationId);
 }
 
 export async function allocatePayment(ctx: ActorContext, paymentId: string, input: z.infer<typeof allocateInput>) {
@@ -136,6 +143,7 @@ export async function allocatePayment(ctx: ActorContext, paymentId: string, inpu
     for (const a of input.allocations) out.push(await allocateTx(tx, ctx, paymentId, a.invoiceId, new D(a.amount)));
     return out;
   });
+  await dispatchRenewalNetwork(ctx.organizationId, results);
   await audit(ctx, { action: "payment.allocate", entityType: "payment", entityId: paymentId, metadata: { allocations: results.map((r) => ({ invoiceId: r.invoiceId, amount: r.amount })) } });
   return results;
 }
@@ -253,6 +261,7 @@ export async function reconcilePayment(ctx: ActorContext, paymentId: string, inp
     await notifyPaymentReceivedTx(tx, ctx.organizationId, paymentId);
     return { allocations };
   });
+  await dispatchRenewalNetwork(ctx.organizationId, result.allocations);
   await audit(ctx, { action: "payment.reconcile", entityType: "payment", entityId: paymentId, metadata: { subscriberId: input.subscriberId, allocations: result.allocations.length } });
   return result;
 }

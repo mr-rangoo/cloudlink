@@ -32,19 +32,23 @@ Direct (office) sales use the same receivable. The reconciliation checks verify 
 total owed according to the records. Redemptions, commissions and remittances are append-only.
 
 ## Network activation
-After a successful redemption a durable `hotspot.activate` job provisions a hotspot user (username/password = the
-code, uptime limit = remaining access, rate limit from the package, optional MAC binding) through the network adapter:
+The redemption transaction also creates a durable `hotspot.user.upsert` network operation (see `docs/NETWORK.md`).
+It provisions a hotspot user on the batch's router: username and password are the code, the profile is the package's
+router profile, the uptime limit is the remaining access time, and the MAC binding is optional. If the batch names
+no router, Cloudlink uses the organization's only hotspot-enabled router.
 
-| `NETWORK_ADAPTER` | Result recorded |
+| `NETWORK_ADAPTER` | Result recorded on the redemption |
 | --- | --- |
-| `mock` (development) | `SIMULATED` — "hotspot user was NOT created on any router"; the portal says "test mode" |
-| `routeros` | Implemented in phase 7; until then `FAILED` ("not available yet") |
-| `disabled` | `FAILED` ("network automation is disabled") |
+| `mock` (development) | `SIMULATED`, "No router was changed". The portal says "test mode". |
+| `routeros` | `ACTIVE` after the router accepts the user and the read-back matches. Retried on timeouts. `FAILED` with the reason after a permanent error, exhausted retries, or when no hotspot router is assigned. |
+| `disabled` | `FAILED`, "network automation is disabled". |
+
+Failed activations raise a network alert. Staff can retry them from the operation page.
 
 The captive portal only submits credentials to the router's own login URL (`link-login-only`, accepted only for
 private-network addresses) when the status is `ACTIVE`. Billing (the redemption) and network status are separate.
 
-## MikroTik hotspot setup (for phase 7)
+## MikroTik hotspot setup
 Configure the hotspot login page to redirect to
 `https://<cloudlink-host>/hotspot/<provider-code>?mac=$(mac)&ip=$(ip)&link-login-only=$(link-login-only)&dst=$(link-orig)`
 and add the Cloudlink host to the hotspot walled garden.

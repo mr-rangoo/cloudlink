@@ -100,7 +100,7 @@ describe("redemption", () => {
     await runAllOps();
     const s = await portalRedemptionStatus(org.organization.slug, res.redemptionId, codes[0]!);
     expect(s.activationStatus).toBe("SIMULATED");
-    expect(s.activationDetail).toMatch(/NOT created on any router/);
+    expect(s.activationDetail).toMatch(/No router was changed/);
 
     let limited = false;
     for (let i = 0; i < 12; i++) {

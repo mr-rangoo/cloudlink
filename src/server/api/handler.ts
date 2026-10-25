@@ -125,7 +125,12 @@ const IDEMPOTENCY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 
 /** Authenticated staff endpoint with permission check, validation and the standard error envelope. */
 export function staffRoute<B extends ZodType = ZodType<undefined>, Q extends ZodType = ZodType<unknown>, P extends ZodType = ZodType<unknown>>(
-  opts: Schemas<B, Q, P> & { permission?: PermissionKey | PermissionKey[]; requireIdempotencyKey?: boolean },
+  opts: Schemas<B, Q, P> & {
+    permission?: PermissionKey | PermissionKey[];
+    requireIdempotencyKey?: boolean;
+    /** The response contains a secret: never persist it in the idempotency store (the key is ignored). */
+    secretResponse?: boolean;
+  },
   fn: (args: StaffArgs<z.output<B>, z.output<Q>, z.output<P>>) => Promise<Result>,
 ) {
   return async (req: NextRequest, routeCtx?: RouteParams): Promise<Response> => {
@@ -143,7 +148,7 @@ export function staffRoute<B extends ZodType = ZodType<undefined>, Q extends Zod
 
       const { params, query, body } = await parseInputs(req, routeCtx, opts);
       const run = () => fn({ req, meta, ctx, params, query, body, idempotencyKey: rawKey });
-      if (!rawKey || !UNSAFE_METHODS.has(req.method)) return toResponse(await run(), meta.correlationId);
+      if (!rawKey || !UNSAFE_METHODS.has(req.method) || opts.secretResponse) return toResponse(await run(), meta.correlationId);
 
       // Idempotent execution: the same key + same body replays the stored response.
       const scope = `org:${ctx.organizationId}:${req.method}:${req.nextUrl.pathname}`;

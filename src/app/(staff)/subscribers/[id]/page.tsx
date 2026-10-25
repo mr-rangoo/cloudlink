@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Mail, MapPin, Phone, Router as RouterIcon } from "lucide-react";
+import { Mail, MapPin, Phone } from "lucide-react";
 import { z } from "zod";
 import { getStaffContextWith } from "@/server/auth/page";
 import { getSubscriber, listSubscriberActivity } from "@/server/services/subscribers";
@@ -11,13 +11,14 @@ import { allowedActions } from "@/server/domain/subscription-state";
 import { formatPhone } from "@/server/domain/contact";
 import { isAppError } from "@/server/errors";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, Badge, EmptyState, PageHeader } from "@/components/ui/feedback";
+import { Alert, EmptyState, PageHeader } from "@/components/ui/feedback";
 import { RecordStatusBadge, SERVICE_LABEL, SubscriptionStatusBadge, formatInterval, humanize } from "@/components/status";
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
 import { AddSubscriptionDialog, EditSubscriberDialog, NoteForm, SubscriptionActions } from "./client";
 import { BillingCard } from "./billing-card";
 import { PortalAccessCard } from "./portal-card";
+import { NetworkAccessCard } from "./network-card";
 import { portalAccessStatus } from "@/server/portal/auth";
 
 export const metadata: Metadata = { title: "Subscriber" };
@@ -124,21 +125,7 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
           canManage={canWrite}
           messagingMock={(process.env.MESSAGING_ADAPTER ?? "mock") === "mock"}
         />
-        <Card>
-          <CardHeader>
-            <CardTitle>Network access</CardTitle>
-            <CardDescription>Billing status and network status are tracked separately.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-start gap-3 text-sm">
-            <RouterIcon className="mt-0.5 size-5 text-muted-foreground" aria-hidden />
-            <div>
-              <Badge tone="neutral">Not provisioned</Badge>
-              <p className="mt-1.5 text-muted-foreground">
-                Router/RADIUS provisioning is not connected yet (implementation phase 7). Activating a subscription here changes billing status only; no network change is made or claimed.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <NetworkAccessCard ctx={ctx} subscriptions={subscriber.subscriptions.map((s) => ({ id: s.id, packageName: s.packageName, serviceType: s.serviceType, status: s.status }))} />
         </div>
       </div>
 

@@ -14,7 +14,17 @@ import { formatMoney } from "@/lib/utils";
 
 const group = (c: string) => c.replace(/(.{4})(?=.)/g, "$1-");
 
-export function GenerateBatchDialog({ packages, agents, canExport }: { packages: Array<{ id: string; label: string }>; agents: Array<{ id: string; name: string }>; canExport: boolean }) {
+export function GenerateBatchDialog({
+  packages,
+  agents,
+  routers,
+  canExport,
+}: {
+  packages: Array<{ id: string; label: string }>;
+  agents: Array<{ id: string; name: string }>;
+  routers: Array<{ id: string; name: string }>;
+  canExport: boolean;
+}) {
   const [open, setOpen] = React.useState(false);
   const [result, setResult] = React.useState<{ batchId: string; batchNumber: string; codes: string[] } | null>(null);
   const [key, setKey] = React.useState(() => newIdempotencyKey("batch"));
@@ -24,7 +34,7 @@ export function GenerateBatchDialog({ packages, agents, canExport }: { packages:
     const v = formValues(e.currentTarget);
     const res = await mutate(
       "/vouchers/batches",
-      { method: "POST", idempotencyKey: key, body: { packageId: v.packageId, quantity: v.quantity, codeLength: v.codeLength, agentId: v.agentId ?? null, expiresAt: v.expiresAt ? new Date(`${v.expiresAt}T23:59:59`).toISOString() : null, notes: v.notes ?? null } },
+      { method: "POST", idempotencyKey: key, body: { packageId: v.packageId, quantity: v.quantity, codeLength: v.codeLength, agentId: v.agentId ?? null, routerId: v.routerId ?? null, expiresAt: v.expiresAt ? new Date(`${v.expiresAt}T23:59:59`).toISOString() : null, notes: v.notes ?? null } },
       { success: "Batch generated", onError: (err) => rotateOnServerError(err, () => setKey(newIdempotencyKey("batch"))) },
     );
     if (res) {
@@ -73,6 +83,16 @@ export function GenerateBatchDialog({ packages, agents, canExport }: { packages:
                     {agents.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field id="vb-router" label="Hotspot router" hint={routers.length > 1 ? "Required when more than one router runs a hotspot." : undefined} error={errors.routerId}>
+                  <Select name="routerId" defaultValue="">
+                    <option value="">{routers.length === 1 ? `Default (${routers[0]!.name})` : routers.length ? "Choose a router" : "No hotspot router registered"}</option>
+                    {routers.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
                       </option>
                     ))}
                   </Select>

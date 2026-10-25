@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/server/db/client";
 import { AppError } from "@/server/errors";
 import { getDummyHash, verifyPassword } from "@/server/security/crypto";
-import { consumeRateLimit, RATE_LIMITS, resetRateLimit } from "@/server/security/rate-limit";
+import { consumeRateLimit, RATE_LIMITS, refundRateLimit, resetRateLimit } from "@/server/security/rate-limit";
 import { auditAnonymous, audit } from "@/server/audit/audit";
 import { createSession, revokeSession } from "@/server/auth/session";
 import type { RequestMeta, StaffContext } from "@/server/auth/context";
@@ -72,6 +72,7 @@ export async function loginStaff(input: z.infer<typeof loginSchema>, meta: Reque
 
   await db.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: now } });
   await resetRateLimit(RATE_LIMITS.loginByEmail, email);
+  await refundRateLimit(RATE_LIMITS.loginByIp, meta.ipAddress ?? "unknown");
   const session = await createSession(user.id, membership.organizationId, meta);
   await auditAnonymous({
     action: "auth.login",

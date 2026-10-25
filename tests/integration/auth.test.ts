@@ -63,6 +63,21 @@ describe("staff authentication", () => {
     expect(limited).toBe(true);
   });
 
+  it("counts only failed sign-ins toward the per-IP limit", async () => {
+    const { owner } = await createOrg();
+    const shared = { ...meta, ipAddress: "10.4.0.1" };
+    for (let i = 0; i < 25; i++) await loginStaff({ email: owner.email, password: TEST_PASSWORD }, shared); // an office behind one NAT address
+    let limited = false;
+    for (let i = 0; i < 25 && !limited; i++) {
+      try {
+        await loginStaff({ email: `nobody-${i}@example.test`, password: "wrong-password" }, shared);
+      } catch (err) {
+        if ((err as { code?: string }).code === "RATE_LIMITED") limited = true;
+      }
+    }
+    expect(limited).toBe(true);
+  });
+
   it("rejects disabled users and revokes sessions", async () => {
     const { organization } = await createOrg();
     const { user } = await createStaff(organization.id, "support");
