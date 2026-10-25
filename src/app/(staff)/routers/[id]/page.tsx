@@ -14,7 +14,7 @@ import { OperationStatusBadge, RouterStatusBadge } from "@/components/status";
 import { AdapterNotice, formatDuration } from "@/components/network-notice";
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDateTime } from "@/lib/utils";
-import { ArchiveRouterButton, DisconnectSessionDialog, HealthCheckButton, RotateCredentialsDialog, RouterFormDialog } from "../client";
+import { ArchiveRouterButton, DisconnectSessionDialog, HealthCheckButton, RotateCredentialsDialog, RouterFormDialog, SetupCommandDialog } from "../client";
 import { ResolveAlertButton } from "../../sessions/client";
 
 export const metadata: Metadata = { title: "Router" };
@@ -63,6 +63,7 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
                 branches={branches.map((b) => ({ id: b.id, name: b.name }))}
               />
             ) : null}
+            {canWrite ? <SetupCommandDialog routerId={router.id} name={router.name} /> : null}
             {canWrite ? <RotateCredentialsDialog routerId={router.id} /> : null}
             {canWrite ? <ArchiveRouterButton routerId={router.id} name={router.name} /> : null}
           </>
@@ -103,6 +104,7 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
               {detail("Branch", router.branchName ?? "All branches")}
               {detail("Provisioned subscriptions", router.provisionedSubscriptions)}
               {detail("Credentials updated", router.credentialsUpdatedAt ? formatDateTime(router.credentialsUpdatedAt, tz) : "Missing")}
+              {detail("Setup command", router.onboardedAt ? `Used ${formatDateTime(router.onboardedAt, tz)}${router.onboardedFromIp ? ` from ${router.onboardedFromIp}` : ""}` : router.setupExpiresAt && router.setupExpiresAt > new Date() ? `Issued, valid until ${formatDateTime(router.setupExpiresAt, tz)}` : "Not used")}
               {router.notes ? detail("Notes", router.notes) : null}
             </dl>
           </CardContent>

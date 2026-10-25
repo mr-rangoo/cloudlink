@@ -97,6 +97,39 @@ Staff can also queue a health check ("Check now") or a session refresh. Both run
 - Operation records hold only non-secret parameters, such as the username and reason.
 
 ## Setting up a MikroTik router
+
+### Option A: the one-time setup command (recommended)
+On the router's page, click **Setup command**, then **Generate command**. You get one line to paste into the router terminal (WinBox → New Terminal, or SSH):
+
+```
+/tool fetch mode=https url="https://<cloudlink>/api/v1/routers/setup/<token>" dst-path=cloudlink-setup.rsc; :delay 2s; /import file-name=cloudlink-setup.rsc;
+```
+
+The link works **once** and expires after **30 minutes**. Generating a new command cancels the previous one. Only a hash of the token is stored.
+
+When the router downloads the script, Cloudlink:
+- generates a new API password, stores it encrypted, and replaces the router's previous credentials in Cloudlink;
+- records when and from which public address the script was fetched;
+- queues a health check for one minute later.
+
+The script itself (original Cloudlink content, idempotent):
+- creates the user group `cloudlink` (`api`, `read`, `write` only) and the user `cloudlink-api`, allowed to log in only from `ROUTER_MANAGEMENT_SOURCES`;
+- enables the API (or API-SSL with a self-signed certificate) for those addresses only;
+- adds a firewall rule at the top of the input chain that drops API traffic from anywhere else;
+- for RADIUS routers, adds the RADIUS server (`RADIUS_SERVER_ADDRESS`, `RADIUS_SHARED_SECRET`) for PPP and turns on RADIUS authentication and accounting;
+- for hotspot routers, adds Cloudlink's host to the walled garden;
+- deletes the downloaded file, which contains the password.
+
+It never opens the API to the internet and does not change routing, PPPoE servers, pools or profiles.
+
+Things to know:
+- Set `ROUTER_MANAGEMENT_SOURCES` to the address the Cloudlink worker uses on your VPN (for example `10.8.0.1/32`). If it is empty, the API is restricted to private ranges in general, which is looser.
+- The router's management address in Cloudlink must still be its private or VPN address. The script does not create a VPN.
+- Treat the command like a password until it has been used. If the import fails part-way, generate a new command.
+- RouterOS `fetch` may not validate the server certificate on older versions. The single use and short lifetime limit the exposure.
+- **Not verified on hardware.** The script is unit-tested for content and escaping only.
+
+### Option B: manual setup
 Review these commands against your RouterOS version before running them.
 
 ```
@@ -156,7 +189,8 @@ Run WireGuard, OpenVPN or IPsec from the worker host to your routers, and put th
 | `MIKROTIK_ALLOWED_NETWORKS` | Comma-separated private CIDRs that router addresses must fall in. Required in production with RouterOS. |
 | `ROUTEROS_TIMEOUT_MS` | Per-connection and per-reply timeout. Default 8000. |
 | `RADIUS_DATABASE_URL`, `RADIUS_DB_SCHEMA` | FreeRADIUS SQL database for RADIUS routers. |
-| `RADIUS_SERVER_ADDRESS`, `RADIUS_SHARED_SECRET` | Reference values for NAS setup. Cloudlink does not speak RADIUS UDP itself. |
+| `ROUTER_MANAGEMENT_SOURCES` | Addresses the worker connects from (its VPN address). Written into setup scripts as the only allowed API sources. |
+| `RADIUS_SERVER_ADDRESS`, `RADIUS_SHARED_SECRET` | Written into the setup script of RADIUS routers. Cloudlink does not speak RADIUS UDP itself. |
 | `OPERATION_BACKOFF_BASE_MS` | Shortens retry backoff outside production. Used by end-to-end tests. |
 
 ## Testing against a real router

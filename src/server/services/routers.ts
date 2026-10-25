@@ -99,6 +99,9 @@ export const routerPublicSelect = {
   notes: true,
   branchId: true,
   archivedAt: true,
+  setupExpiresAt: true,
+  onboardedAt: true,
+  onboardedFromIp: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.RouterSelect;
@@ -122,6 +125,12 @@ const credentialAad = (routerId: string) => `router:${routerId}`;
 
 function sealCredentials(routerId: string, username: string, password: string): string {
   return encryptSecret(JSON.stringify({ username, password }), credentialAad(routerId));
+}
+
+/** Replace a router's stored API credentials (encrypted, bound to the router id). */
+export async function storeRouterCredentials(routerId: string, username: string, password: string, updatedById: string | null) {
+  const encryptedSecret = sealCredentials(routerId, username, password);
+  await db.routerCredential.upsert({ where: { routerId }, update: { encryptedSecret, updatedById }, create: { routerId, encryptedSecret, updatedById } });
 }
 
 /** Worker-side only: build the connection target with decrypted credentials. Never return this to clients. */

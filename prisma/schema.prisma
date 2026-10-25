@@ -1447,6 +1447,11 @@ model Router {
   lastError       String?
   notes           String?
   archivedAt      DateTime?     @db.Timestamptz(6)
+  // One-time setup command (see services/router-setup.ts): only the token hash is stored.
+  setupTokenHash  String?       @unique
+  setupExpiresAt  DateTime?     @db.Timestamptz(6)
+  onboardedAt     DateTime?     @db.Timestamptz(6)
+  onboardedFromIp String?
   createdAt       DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
 

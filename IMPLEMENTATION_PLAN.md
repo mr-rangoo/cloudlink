@@ -82,6 +82,7 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] RADIUS integration adapter — `src/server/integrations/radius.ts` (radcheck/radreply/radusergroup writes in one transaction with read-back, radacct sessions); `deploy/radius/schema.sql`; NAS/firewall/topology documented in `docs/NETWORK.md`.
 - [x] Durable network-operation queue — `NetworkOperation` written in the same transaction as the billing change; unique idempotency key; superseding of queued older state; ordering per subscription; staleness guard; append-only `NetworkOperationAttempt`.
 - [x] Retry and alert behavior — retryable vs permanent classification, 5 attempts with backoff, FAILED → critical alert, stuck-operation monitor, router offline alerts, staff retry/cancel (audited), alerts in the notification centre and dashboard.
+- [x] One-time router setup command (added 2026-10-26 at the user's request) — `/tool fetch … /import` line generated per router: 256-bit single-use token (hash stored), 30-minute expiry, credentials rotated on download, original idempotent script (limited API user, API restricted to `ROUTER_MANAGEMENT_SOURCES`, firewall guard, optional RADIUS and walled garden, self-deleting file). Script content unit-tested; not run on hardware.
 - [ ] Real-device test evidence — **blocked**: no MikroTik device or private network available. Procedure in `docs/NETWORK.md` → "Testing against a real router".
 
 ## Phase 8 — Payments ✅ (sandbox/production verification pending credentials)
@@ -295,6 +296,21 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - Not implemented: B2C refunds/reversals, C2B Transaction Status verification, online hotspot voucher purchase, other gateways.
 
 **Exact next task**: Router onboarding command (user request, 2026-10-26): Cloudlink's own single-use, expiring `/tool fetch … /import` script per router. Then Phase 9 — release readiness.
+
+### 2026-10-26 — Router setup command (user request)
+The user shared the command their current provider uses to connect MikroTik routers (a third-party URL with an embedded token). It was **not** fetched or run: it belongs to another product, its token is a credential, and AGENTS.md forbids copying proprietary scripts. The URL was not written to any file (checked with `git grep`). Cloudlink's own equivalent was built instead:
+- Migration `20261026090000_router_setup_command` (Router.setupTokenHash unique, setupExpiresAt, onboardedAt, onboardedFromIp).
+- `src/server/domain/routeros-setup.ts` (script builder, RouterOS string escaping), `src/server/services/router-setup.ts`, `POST /routers/:id/setup-command` (routers.write; response never stored for idempotent replay), public `GET /routers/setup/:token` (text/plain, no-store, rate-limited), "Setup command" dialog on the router page, `ROUTER_MANAGEMENT_SOURCES` (validated as private addresses).
+
+| Command | Result |
+| --- | --- |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 12 files, 97 tests passed (adds 5: script content, TLS/RADIUS/walled-garden variants, escaping and name sanitising, command format, env validation) |
+| `npm run test:integration` | 17 files, 150 tests passed (adds 2: single use, credential rotation, RADIUS secret and walled garden in the script, health check queued, audit without secrets; expiry, replacement, archived routers, permissions, tenancy, no idempotent storage) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 22 passed |
+
+**Exact next task**: Phase 9 — release readiness (security review, backup/restore test, deployment artefacts and docs, smoke tests, handover).
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

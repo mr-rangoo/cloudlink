@@ -66,6 +66,8 @@ export const envSchema = z
     RADIUS_DATABASE_URL: z.string().optional().default(""),
     RADIUS_DB_SCHEMA: z.string().regex(/^[a-z_][a-z0-9_]*$/, "must be a lowercase SQL identifier").default("public"),
     ROUTEROS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(8000),
+    /** Addresses the Cloudlink worker connects to routers from (e.g. its VPN address); written into router setup scripts. */
+    ROUTER_MANAGEMENT_SOURCES: z.string().optional().default(""),
 
     PAYMENT_ADAPTER: z.enum(["mock", "daraja", "disabled"]).default("mock"),
     NETWORK_ADAPTER: z.enum(["mock", "routeros", "disabled"]).default("mock"),
@@ -86,6 +88,15 @@ export const envSchema = z
       }
     }
     if (env.RADIUS_DATABASE_URL && !env.RADIUS_DATABASE_URL.startsWith("postgres")) fail("RADIUS_DATABASE_URL", "must be a PostgreSQL connection string");
+    if (env.ROUTER_MANAGEMENT_SOURCES.trim()) {
+      try {
+        for (const c of parseCidrList(env.ROUTER_MANAGEMENT_SOURCES)) {
+          if (!isPrivateNetwork(c, env.APP_ENV !== "production")) fail("ROUTER_MANAGEMENT_SOURCES", `${c.address}/${c.prefix} is not a private (VPN/LAN) address`);
+        }
+      } catch {
+        fail("ROUTER_MANAGEMENT_SOURCES", "must be a comma-separated list of IP addresses or CIDR networks");
+      }
+    }
     if (env.APP_ENV !== "production") return;
     if (env.NETWORK_ADAPTER === "routeros" && !env.MIKROTIK_ALLOWED_NETWORKS.trim())
       fail("MIKROTIK_ALLOWED_NETWORKS", "is required in production when NETWORK_ADAPTER=routeros");

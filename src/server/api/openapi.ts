@@ -218,6 +218,8 @@ export const operations: Operation[] = [
   { method: "post", path: "/routers", summary: "Register a router (private/VPN IP only; credentials write-only, encrypted)", tag: "Network", auth: "session", permission: "routers.write", body: routerInput },
   { method: "get", path: "/routers/:id", summary: "Router detail (never includes credentials)", tag: "Network", auth: "session", permission: "routers.read" },
   { method: "patch", path: "/routers/:id", summary: "Edit a router; send username+password to rotate credentials", tag: "Network", auth: "session", permission: "routers.write", body: routerUpdateInput },
+  { method: "post", path: "/routers/:id/setup-command", summary: "One-time router setup command (30 min, single use; response never stored)", tag: "Network", auth: "session", permission: "routers.write" },
+  { method: "get", path: "/routers/setup/:token", summary: "Router downloads its setup script (.rsc); the single-use token is the authorization", tag: "Network", auth: "none", responses: { "200": "RouterOS script (text/plain)", "404": "Invalid, expired or used" } },
   { method: "post", path: "/routers/:id/archive", summary: "Archive a router (refused while subscriptions are provisioned on it)", tag: "Network", auth: "session", permission: "routers.write" },
   { method: "post", path: "/routers/:id/health-check", summary: "Queue a reachability check (runs in the worker)", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },
   { method: "get", path: "/routers/:id/sessions", summary: "Sessions seen on one router", tag: "Network", auth: "session", permission: "network.read", query: sessionListQuery.omit({ routerId: true }) },

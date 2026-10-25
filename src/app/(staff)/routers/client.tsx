@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Activity, KeyRound, Pencil, Plus } from "lucide-react";
+import { Activity, Copy, KeyRound, Pencil, Plus, Terminal } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/form";
@@ -233,5 +234,77 @@ export function DisconnectSessionDialog({ routerId }: { routerId: string }) {
         </>
       )}
     </ActionDialog>
+  );
+}
+
+/** One-time setup command: paste into the router terminal. Shown once; a new one replaces the old. */
+export function SetupCommandDialog({ routerId, name }: { routerId: string; name: string }) {
+  const [open, setOpen] = React.useState(false);
+  const [result, setResult] = React.useState<{ command: string; expiresAt: string; warnings: string[]; managementSources: string[] } | null>(null);
+  const { mutate, pending, formError } = useMutation<{ command: string; expiresAt: string; warnings: string[]; managementSources: string[] }>();
+  const copy = async () => {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(result.command);
+      toast.success("Command copied");
+    } catch {
+      toast.error("Copy failed. Select the text instead.");
+    }
+  };
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setResult(null);
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="secondary">
+          <Terminal /> Setup command
+        </Button>
+      </DialogTrigger>
+      <DialogContent title="Router setup command" description={name} wide>
+        <div className="space-y-4 text-sm">
+          {formError ? <Alert tone="danger">{formError}</Alert> : null}
+          {result ? (
+            <>
+              <p>Paste this into the router&apos;s terminal (WinBox → New Terminal, or SSH). It works once and expires at {new Date(result.expiresAt).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" })}.</p>
+              <pre className="whitespace-pre-wrap break-all rounded-md border border-border bg-surface-muted p-3 font-mono text-xs">{result.command}</pre>
+              <Button size="sm" variant="secondary" onClick={copy}>
+                <Copy /> Copy command
+              </Button>
+              {result.warnings.map((w) => (
+                <Alert key={w} tone="warning">
+                  {w}
+                </Alert>
+              ))}
+              <p className="text-xs text-muted-foreground">API access will be limited to: {result.managementSources.join(", ")}. Treat this command like a password until it has been used.</p>
+            </>
+          ) : (
+            <>
+              <p>The router downloads a Cloudlink script that:</p>
+              <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+                <li>creates a limited API user with a new password (Cloudlink stores it encrypted),</li>
+                <li>allows the API only from Cloudlink&apos;s management addresses and blocks it from everywhere else,</li>
+                <li>configures RADIUS for routers that use it, and the captive-portal walled garden for hotspot routers,</li>
+                <li>deletes itself afterwards.</li>
+              </ul>
+              <p className="text-muted-foreground">Cloudlink must still reach the router over its private or VPN address. Generating a new command replaces any earlier one.</p>
+            </>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+            {!result ? (
+              <Button loading={pending} onClick={() => mutate(`/routers/${routerId}/setup-command`, { method: "POST" }, { refresh: false, onSuccess: setResult })}>
+                Generate command
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
