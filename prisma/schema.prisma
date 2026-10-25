@@ -1560,3 +1560,84 @@ model RouterAlert {
   @@index([organizationId, status])
   @@index([routerId, type, status])
 }
+
+// ───────────────────────── Payment gateways (M-Pesa Daraja) ─────────────────────────
+
+enum PaymentAttemptStatus {
+  PENDING // created; the provider has not accepted the request yet
+  SUBMITTED // provider accepted the request; waiting for the customer and the callback
+  CONFIRMED // a validated, verified callback confirmed the money; a Payment exists
+  FAILED // provider reported a failure (insufficient funds, wrong PIN, rejected request …)
+  CANCELLED // the customer cancelled the prompt
+  EXPIRED // the customer did not respond in time
+  UNKNOWN // outcome could not be determined; needs reconciliation
+}
+
+// One request for money (e.g. an STK Push). Money is recorded only as a Payment after confirmation.
+model PaymentAttempt {
+  id                String               @id @default(uuid(7)) @db.Uuid
+  organizationId    String               @db.Uuid
+  subscriberId      String?              @db.Uuid
+  invoiceId         String?              @db.Uuid
+  provider          String // mpesa_daraja | mock
+  channel           String // staff | portal
+  amount            Decimal              @db.Decimal(14, 2)
+  currency          String               @db.Char(3)
+  phone             String // MSISDN, 2547XXXXXXXX
+  accountReference  String
+  status            PaymentAttemptStatus @default(PENDING)
+  idempotencyKey    String
+  callbackTokenHash String               @unique // SHA-256 of the secret callback URL token
+  merchantRequestId String?
+  checkoutRequestId String?
+  resultCode        String?
+  resultDesc        String?
+  providerReceipt   String?
+  paymentId         String?              @unique @db.Uuid
+  requestedById     String?              @db.Uuid
+  requestedBy       String // user | customer | system
+  detail            String? // latest human-readable explanation
+  submittedAt       DateTime?            @db.Timestamptz(6)
+  completedAt       DateTime?            @db.Timestamptz(6)
+  lastQueriedAt     DateTime?            @db.Timestamptz(6)
+  queryCount        Int                  @default(0)
+  metadata          Json?
+  createdAt         DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime             @updatedAt @db.Timestamptz(6)
+
+  @@unique([organizationId, idempotencyKey])
+  @@unique([provider, checkoutRequestId])
+  @@index([organizationId, status, createdAt])
+  @@index([subscriberId, status])
+}
+
+enum WebhookEventStatus {
+  RECEIVED // persisted; processing pending or waiting for verification
+  PROCESSED
+  REJECTED // failed validation (structure, context, amount or provider verification)
+  FAILED // processing error; safe to process again
+}
+
+// Durable, deduplicated record of every accepted provider callback (payload minimised and redacted).
+model WebhookEvent {
+  id                   String             @id @default(uuid(7)) @db.Uuid
+  organizationId       String?            @db.Uuid
+  provider             String // mpesa_daraja | mock
+  kind                 String // stk_callback | c2b_confirmation
+  eventKey             String // CheckoutRequestID or TransID
+  fingerprint          String // SHA-256 of the raw body
+  status               WebhookEventStatus @default(RECEIVED)
+  payload              Json
+  attemptId            String?            @db.Uuid
+  paymentId            String?            @db.Uuid
+  error                String?
+  sourceIp             String?
+  duplicateCount       Int                @default(0)
+  conflictingDuplicate Boolean            @default(false) // a repeat arrived with a different body
+  receivedAt           DateTime           @default(now()) @db.Timestamptz(6)
+  processedAt          DateTime?          @db.Timestamptz(6)
+
+  @@unique([provider, kind, eventKey])
+  @@index([organizationId, receivedAt])
+  @@index([status, receivedAt])
+}

@@ -56,6 +56,69 @@ export async function nextReceiptNumber(tx: Tx, organizationId: string): Promise
   return `${settings.receiptPrefix}-${String(await nextCounter(tx, organizationId, "receipt")).padStart(6, "0")}`;
 }
 
+/** A live (not reversed) payment already carrying this provider reference, from any path (manual, STK, C2B). */
+export async function findLivePaymentByReference(tx: Tx, organizationId: string, reference: string) {
+  return tx.payment.findFirst({ where: { organizationId, providerTransactionId: reference, status: { not: "REVERSED" } }, select: { id: true, receiptNumber: true, subscriberId: true } });
+}
+
+export interface ConfirmedPaymentData {
+  subscriberId: string | null;
+  branchId: string | null;
+  method: PaymentMethod;
+  provider: string;
+  providerTransactionId: string | null;
+  amount: string;
+  currency: string;
+  receivedAt: Date;
+  payerName?: string | null;
+  payerPhone?: string | null;
+  accountReference?: string | null;
+  notes?: string | null;
+  metadata?: Prisma.InputJsonValue;
+}
+
+/**
+ * Create a CONFIRMED payment with a gapless receipt number and its ledger posting (cash/M-Pesa debit; customer
+ * credit, or unidentified receipts when no subscriber is known). Shared by manual entry and gateway confirmations.
+ * Callers allocate, notify and audit.
+ */
+export async function createConfirmedPaymentTx(tx: Tx, ctx: ActorContext, p: ConfirmedPaymentData): Promise<Payment> {
+  const payment = await tx.payment.create({
+    data: {
+      organizationId: ctx.organizationId,
+      branchId: p.branchId,
+      subscriberId: p.subscriberId,
+      method: p.method,
+      provider: p.provider,
+      providerTransactionId: p.providerTransactionId,
+      receiptNumber: await nextReceiptNumber(tx, ctx.organizationId),
+      amount: p.amount,
+      currency: p.currency,
+      status: "CONFIRMED",
+      receivedAt: p.receivedAt,
+      payerName: p.payerName ?? null,
+      payerPhone: p.payerPhone ?? null,
+      accountReference: p.accountReference ?? null,
+      notes: p.notes ?? null,
+      recordedById: actorUserId(ctx),
+      ...(p.metadata !== undefined ? { metadata: p.metadata } : {}),
+    },
+  });
+  await postLedger(tx, ctx, {
+    type: "payment.received",
+    sourceType: "payment",
+    sourceId: payment.id,
+    description: `Payment ${payment.receiptNumber} (${p.provider === "manual" ? p.method.toLowerCase().replace("_", " ") : p.provider === "mock" ? "simulated M-Pesa" : "M-Pesa"})`,
+    currency: payment.currency,
+    occurredAt: p.receivedAt,
+    lines: [
+      { account: cashAccountFor(p.method), debit: dec(payment.amount) },
+      p.subscriberId ? { account: "CUSTOMER_CREDIT", credit: dec(payment.amount), subscriberId: p.subscriberId } : { account: "UNIDENTIFIED", credit: dec(payment.amount) },
+    ],
+  });
+  return payment;
+}
+
 /**
  * Record a confirmed payment received outside a gateway (cash, bank, cheque, manual M-Pesa entry).
  * One transaction: payment + receipt number + ledger + allocations (explicit, or oldest-first) + renewals.
@@ -76,38 +139,20 @@ export async function recordManualPayment(ctx: ActorContext, input: z.infer<type
     const org = await tx.organization.findUniqueOrThrow({ where: { id: ctx.organizationId }, select: { currency: true } });
     const reference = input.reference?.toUpperCase() ?? null;
     if (reference) {
-      const dup = await tx.payment.findFirst({ where: { organizationId: ctx.organizationId, providerTransactionId: reference, status: { not: "REVERSED" } }, select: { receiptNumber: true } });
+      const dup = await findLivePaymentByReference(tx, ctx.organizationId, reference);
       if (dup) throw new AppError("CONFLICT", `A payment with reference ${reference} is already recorded (${dup.receiptNumber}).`);
     }
-    const payment = await tx.payment.create({
-      data: {
-        organizationId: ctx.organizationId,
-        branchId,
-        subscriberId: input.subscriberId ?? null,
-        method: input.method,
-        provider: "manual",
-        providerTransactionId: reference,
-        receiptNumber: await nextReceiptNumber(tx, ctx.organizationId),
-        amount: input.amount,
-        currency: org.currency,
-        status: "CONFIRMED",
-        receivedAt: input.receivedAt,
-        payerName: input.payerName ?? null,
-        notes: input.notes ?? null,
-        recordedById: actorUserId(ctx),
-      },
-    });
-    await postLedger(tx, ctx, {
-      type: "payment.received",
-      sourceType: "payment",
-      sourceId: payment.id,
-      description: `Payment ${payment.receiptNumber} (${input.method.toLowerCase().replace("_", " ")})`,
-      currency: payment.currency,
-      occurredAt: input.receivedAt,
-      lines: [
-        { account: cashAccountFor(input.method), debit: dec(payment.amount) },
-        input.subscriberId ? { account: "CUSTOMER_CREDIT", credit: dec(payment.amount), subscriberId: input.subscriberId } : { account: "UNIDENTIFIED", credit: dec(payment.amount) },
-      ],
+    const payment = await createConfirmedPaymentTx(tx, ctx, {
+      subscriberId: input.subscriberId ?? null,
+      branchId,
+      method: input.method,
+      provider: "manual",
+      providerTransactionId: reference,
+      amount: input.amount,
+      currency: org.currency,
+      receivedAt: input.receivedAt,
+      payerName: input.payerName ?? null,
+      notes: input.notes ?? null,
     });
     let allocations: AllocationResult[] = [];
     if (input.subscriberId) {

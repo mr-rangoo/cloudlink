@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/feedback";
 import { METHOD_LABEL, SubscriptionStatusBadge, formatInterval } from "@/components/status";
 import { formatDate, formatMoney } from "@/lib/utils";
+import { paymentAdapterMode } from "@/server/services/mpesa-config";
+import { PortalPayForm } from "../pay-form";
 
 export const metadata: Metadata = { title: "My account · Customer portal" };
 
@@ -15,6 +17,8 @@ export default async function PortalHome() {
   const cur = ctx.organization.currency;
   const tz = ctx.organization.timezone;
   const net = Number(o.balance.net);
+  const paymentMode = paymentAdapterMode();
+  const payOnline = paymentMode !== "disabled" && cur === "KES";
 
   return (
     <div className="space-y-5">
@@ -29,17 +33,28 @@ export default async function PortalHome() {
           <p className={`tabular text-3xl font-semibold ${net > 0 ? "text-danger" : "text-success"}`}>{formatMoney(Math.abs(net).toFixed(2), cur)}</p>
           {net > 0 ? (
             <div className="rounded-md bg-surface-muted p-3 text-sm">
-              <p className="font-medium">How to pay</p>
+              <p className="font-medium">{payOnline ? "Other ways to pay" : "How to pay"}</p>
               <p className="text-muted-foreground">
-                Pay by M-Pesa or bank transfer using your account number <span className="font-mono font-semibold text-foreground">{o.subscriber.accountNumber}</span> as the reference. Payments appear here once your provider confirms them.
+                Pay by M-Pesa paybill or bank transfer using your account number <span className="font-mono font-semibold text-foreground">{o.subscriber.accountNumber}</span> as the reference. Payments appear here once your provider confirms them.
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Online payment from this portal is not available yet.</p>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">You are all paid up. Thank you!</p>
           )}
         </CardContent>
       </Card>
+
+      {payOnline ? (
+        // Kept in a fixed position so the payment result stays on screen when the balance above refreshes.
+        <Card>
+          <CardHeader>
+            <CardTitle>Pay with M-Pesa</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PortalPayForm phone={o.subscriber.phone} amount={net > 0 ? Math.ceil(net) : 0} simulated={paymentMode === "mock"} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

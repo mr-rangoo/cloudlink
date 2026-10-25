@@ -11,6 +11,7 @@ import { db } from "@/server/db/client";
 import { generateExport } from "@/server/services/exports";
 import { ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperations, syncNetworkSessions } from "@/server/services/network";
 import { runRouterHealthChecks } from "@/server/services/routers";
+import { processStkEvent, runStatusQuery } from "@/server/services/mobile-money";
 
 /**
  * Registry of background operation handlers shared by the worker and tests.
@@ -73,6 +74,20 @@ export const operationHandlers: OperationHandlers = {
   "network.sync_sessions": async (op) => {
     if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
     return syncNetworkSessions(op.organizationId);
+  },
+
+  /** Ask M-Pesa for the final state of an STK request when no callback arrived (bounded retries). */
+  "payments.mpesa.query": async (op) => {
+    const { attemptId } = op.payload as { attemptId?: string };
+    if (!attemptId) throw new PermanentError("attemptId missing", "BAD_PAYLOAD");
+    return runStatusQuery(attemptId, { final: op.attempts >= op.maxAttempts });
+  },
+
+  /** Verify a stored success callback with the provider before recording money (retried while M-Pesa is busy). */
+  "payments.mpesa.verify": async (op) => {
+    const { eventId } = op.payload as { eventId?: string };
+    if (!eventId) throw new PermanentError("eventId missing", "BAD_PAYLOAD");
+    await processStkEvent(eventId, { final: op.attempts >= op.maxAttempts });
   },
 
   /** Alert on network operations that stopped progressing. */

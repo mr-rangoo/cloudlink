@@ -9,6 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { InvoiceStatusBadge, METHOD_LABEL } from "@/components/status";
 import { formatDate, formatMoney } from "@/lib/utils";
+import { db } from "@/server/db/client";
+import { paymentAdapterMode } from "@/server/services/mpesa-config";
+import { PortalPayForm } from "../../pay-form";
 
 export const metadata: Metadata = { title: "Invoice · Customer portal" };
 
@@ -26,6 +29,10 @@ export default async function PortalInvoice({ params }: { params: Promise<{ id: 
   const tz = ctx.organization.timezone;
   const m = (v: { toString(): string }) => formatMoney(v.toString(), inv.currency);
   const overdue = (inv.status === "OPEN" || inv.status === "PARTIALLY_PAID") && !!inv.dueAt && inv.dueAt < new Date();
+  const paymentMode = paymentAdapterMode();
+  const open = inv.status === "OPEN" || inv.status === "PARTIALLY_PAID";
+  const payable = inv.status !== "VOID" && inv.status !== "DRAFT" && paymentMode !== "disabled" && inv.currency === "KES";
+  const payer = payable ? await db.subscriber.findUnique({ where: { id: ctx.subscriberId }, select: { phone: true } }) : null;
 
   return (
     <div className="space-y-4">
@@ -67,6 +74,16 @@ export default async function PortalInvoice({ params }: { params: Promise<{ id: 
           </div>
         </CardContent>
       </Card>
+      {payable ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pay with M-Pesa</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PortalPayForm phone={payer?.phone ?? ""} amount={Math.ceil(Number(inv.balanceDue.toString()))} invoiceId={inv.id} simulated={paymentMode === "mock"} closed={!open} />
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }

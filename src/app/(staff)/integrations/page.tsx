@@ -5,11 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, Badge, PageHeader, type Tone } from "@/components/ui/feedback";
 import { humanize } from "@/components/status";
 import { Forbidden } from "@/components/shell/forbidden";
+import { MpesaSettingsCard } from "./mpesa-card";
 
 export const metadata: Metadata = { title: "Integrations" };
 
-const TONE: Record<string, Tone> = { ok: "success", production_verified: "success", sandbox_tested: "info", mock: "warning", not_configured: "neutral", unavailable: "danger", error: "danger" };
-const LABEL: Record<string, string> = { ok: "Working", production_verified: "Production verified", sandbox_tested: "Sandbox tested", mock: "Mock (simulated)", not_configured: "Not configured", unavailable: "Unavailable", error: "Error" };
+const TONE: Record<string, Tone> = { ok: "success", production_verified: "success", sandbox_tested: "info", configured: "info", mock: "warning", not_configured: "neutral", unavailable: "danger", error: "danger" };
+const LABEL: Record<string, string> = { ok: "Working", production_verified: "Production verified", sandbox_tested: "Sandbox tested", configured: "Configured, not yet tested", mock: "Mock (simulated)", not_configured: "Not configured", unavailable: "Unavailable", error: "Error" };
 
 export default async function IntegrationsPage() {
   const { ctx, allowed } = await getStaffContextWith("integrations.read");
@@ -47,7 +48,8 @@ export default async function IntegrationsPage() {
           </CardContent>
         </Card>
       ))}
-      <p className="text-xs text-muted-foreground">Credentials are configured as server environment secrets and are never displayed here.</p>
+      <MpesaSettingsCard ctx={ctx} />
+      <p className="text-xs text-muted-foreground">Credentials are stored encrypted (or as server environment secrets) and are never displayed after saving.</p>
     </div>
   );
 }

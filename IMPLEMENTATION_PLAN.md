@@ -11,7 +11,7 @@ Coding agent: update this file continuously. Do not mark items complete without 
 ## Integration status (truthful)
 | Integration | Status | Notes |
 | --- | --- | --- |
-| M-Pesa Daraja | not_configured | Phase 8. No credentials configured. |
+| M-Pesa Daraja | implemented, mock in dev | Adapter tested against an in-process fake Daraja server only. **Sandbox and production not verified**: no credentials supplied. |
 | MikroTik RouterOS | implemented, mock in dev | RouterOS API adapter tested against an in-process fake RouterOS API server only. **Not verified on hardware** (no device or private network available). |
 | RADIUS | implemented, not configured | FreeRADIUS SQL adapter tested against PostgreSQL tables (rlm_sql dialect). **Not verified with a real FreeRADIUS server.** |
 | Email | mock (dev) | SMTP adapter implemented via nodemailer, not verified against a real server. |
@@ -84,13 +84,13 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Retry and alert behavior — retryable vs permanent classification, 5 attempts with backoff, FAILED → critical alert, stuck-operation monitor, router offline alerts, staff retry/cancel (audited), alerts in the notification centre and dashboard.
 - [ ] Real-device test evidence — **blocked**: no MikroTik device or private network available. Procedure in `docs/NETWORK.md` → "Testing against a real router".
 
-## Phase 8 — Payments
-- [ ] Daraja sandbox configuration.
-- [ ] STK Push.
-- [ ] Durable webhook deduplication.
-- [ ] Callback validation and payment reconciliation.
-- [ ] Additional gateway adapter interface.
-- [ ] Production verification, only with approved credentials.
+## Phase 8 — Payments ✅ (sandbox/production verification pending credentials)
+- [x] Daraja sandbox configuration — per-organization settings under Integrations (environment, paybill/till, shortcode, AES-256-GCM encrypted credentials, write-only), single-tenant `MPESA_*` fallback, credential test (OAuth only), C2B URL registration; status becomes "Sandbox tested" only after a confirmed sandbox payment. **Sandbox run blocked: no credentials supplied.**
+- [x] STK Push — `src/server/integrations/payments/daraja.ts` (OAuth with token refresh, STK Push, STK Query, C2B register; documented password example reproduced); staff "Request M-Pesa" and portal "Pay with M-Pesa" with live server-side status; idempotent, rate-limited, whole-shilling and invoice-balance rules.
+- [x] Durable webhook deduplication — `WebhookEvent` unique per provider/kind/key (STK keyed by request + CheckoutRequestID; C2B by TransID); identical repeats counted, conflicting repeats flagged and judged separately; minimised payloads.
+- [x] Callback validation and payment reconciliation — per-request secret callback URLs (hash stored), identifier and amount checks, mandatory provider status-query verification of every outcome (production), optional source allowlist, receipt unique per organization across STK/C2B/manual (partial unique index), status-query job for missing callbacks, UNKNOWN requests surfaced for review, C2B matching by account/invoice/phone with unmatched receipts sent to Reconciliation, no expiry while a payment is in progress.
+- [x] Additional gateway adapter interface — `PaymentGateway` (request, query, test credentials, register C2B) with Daraja and mock implementations; documented in `docs/PAYMENTS.md`.
+- [ ] Production verification — **blocked**: requires approved production credentials and a real payment.
 
 ## Phase 9 — Release readiness
 - [ ] Full automated test suite passes.
@@ -270,6 +270,31 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - Payments gateway (phase 8), messaging providers, S3 storage: unchanged.
 
 **Exact next task**: Phase 8 — Payments: payment provider interface (pending/confirmed/failed/cancelled/reversed/unknown), M-Pesa Daraja adapter (OAuth token, STK Push with idempotent payment attempts, callback endpoint with validation and durable event deduplication, transaction status query for unknown outcomes), mock adapter for development, portal "Pay with M-Pesa" and voucher purchase, allocation and renewal on confirmed callbacks only (never on redirects), reconciliation of unmatched C2B receipts. Use sandbox credentials only when the user supplies them.
+
+### 2026-10-26 — Phase 8 (Payments: M-Pesa Daraja)
+**Schema**: migration `20261025190000_payment_gateways` (PaymentAttempt, WebhookEvent, CHECKs, partial unique index "one live payment per M-Pesa receipt per organization"). Verified beforehand that the dev, test and e2e databases had no duplicate receipts.
+
+**Defects found and fixed during the phase**
+- Callbacks were first deduplicated by CheckoutRequestID alone: a callback posted on one request's URL with another request's identifiers would have shadowed the genuine callback of the second request. Events are now keyed by request + CheckoutRequestID (test covers it).
+- Failure callbacks were initially applied without asking M-Pesa, so a forged "cancelled" arriving first could hide a real payment. Every outcome is now verified with an STK status query, and repeats with a different body are processed on their own (test covers it).
+- The portal's payment result disappeared when the page refreshed after confirmation (the form lived inside the "amount due" branch). The form now stays mounted; found by the e2e test.
+- The manual-payment path and the gateway path duplicated payment + ledger code; extracted `createConfirmedPaymentTx` so both use one implementation.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` | exit 0 |
+| `npm run typecheck` | exit 0 |
+| `npm run test` | 11 files, 92 tests passed (adds 10: EAT timestamps, documented STK password example, MSISDN rules, amount/reference limits, result-code mapping, documented callback and C2B payloads, source allowlist, production guards) |
+| `npm run test:integration` | 16 files, 148 tests passed (adds 13: request shape + idempotency + verified confirmation + invoice paid + ledger + duplicate/tampered repeats + sandbox_tested status; unknown/malformed/forged/mismatched/off-allowlist callbacks; cancellations/failures; status queries never record money alone + late confirmation; deferred verification; rejected/unreachable provider + token refresh + bad credentials; encrypted settings + till requests + permissions; rate limit; forged failure cannot hide a payment; C2B matching/unmatched/duplicates/shortcode/manual conflict/validation; renewal re-enables network + no expiry during payment; portal ownership; mock simulation labelled and refused in production) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 22 passed (adds: customer pays an invoice with M-Pesa in the portal, staff simulates the response, customer sees "Paid (simulated)" with an SIM receipt and a zero balance) |
+
+**Still mocked / blocked**
+- No Daraja credentials: sandbox and production unverified; development uses `PAYMENT_ADAPTER=mock`.
+- Not implemented: B2C refunds/reversals, C2B Transaction Status verification, online hotspot voucher purchase, other gateways.
+
+**Exact next task**: Router onboarding command (user request, 2026-10-26): Cloudlink's own single-use, expiring `/tool fetch … /import` script per router. Then Phase 9 — release readiness.
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

@@ -47,6 +47,16 @@ export const envSchema = z
     MPESA_SHORTCODE: z.string().optional().default(""),
     MPESA_PASSKEY: z.string().optional().default(""),
     MPESA_CALLBACK_URL: z.string().optional().default(""),
+    /** Organization (slug) that uses the MPESA_* variables when it has no credentials saved in Integrations. */
+    MPESA_ENV_ORGANIZATION: z.string().optional().default(""),
+    MPESA_SHORTCODE_TYPE: z.enum(["PAYBILL", "TILL"]).default("PAYBILL"),
+    MPESA_TILL_NUMBER: z.string().optional().default(""),
+    /** Optional comma-separated IPs/CIDRs allowed to call the M-Pesa webhooks (first X-Forwarded-For hop). */
+    MPESA_CALLBACK_ALLOWED_IPS: z.string().optional().default(""),
+    /** Confirm every successful callback with an STK Push Query before recording money (default on). */
+    MPESA_VERIFY_CALLBACKS: z.enum(["true", "false"]).default("true"),
+    /** Non-production only: point the Daraja adapter at a fake server (tests). */
+    MPESA_BASE_URL: z.string().optional().default(""),
 
     MIKROTIK_CONNECTION_MODE: z.enum(["mock", "api", "api-ssl"]).default("mock"),
     MIKROTIK_ALLOWED_NETWORKS: z.string().optional().default(""),
@@ -89,6 +99,8 @@ export const envSchema = z
     if (/replace-with|changeme|example/i.test(env.AUTH_SECRET)) fail("AUTH_SECRET", "placeholder secret detected");
     if (env.PAYMENT_ADAPTER === "daraja" && env.MPESA_CALLBACK_URL && !env.MPESA_CALLBACK_URL.startsWith("https://"))
       fail("MPESA_CALLBACK_URL", "must use https");
+    if (env.MPESA_BASE_URL) fail("MPESA_BASE_URL", "is a test-only override and must be empty in production");
+    if (env.MPESA_VERIFY_CALLBACKS === "false") fail("MPESA_VERIFY_CALLBACKS", "callback verification cannot be disabled in production");
   });
 
 export type Env = z.infer<typeof envSchema>;

@@ -19,6 +19,9 @@ import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/in
 import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput } from "@/server/services/vouchers";
 import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from "@/server/services/routers";
 import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
+import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } from "@/server/services/mobile-money";
+import { mpesaConfigInput } from "@/server/services/mpesa-config";
+import { c2bConfirmationSchema, stkCallbackSchema } from "@/server/domain/mpesa";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -161,7 +164,6 @@ export const operations: Operation[] = [
   { method: "get", path: "/customer/invoices/:id", summary: "Own invoice (404 for anyone else's)", tag: "Customer portal", auth: "session" },
   { method: "get", path: "/customer/invoices/:id/pdf", summary: "Own invoice PDF", tag: "Customer portal", auth: "session" },
   { method: "get", path: "/customer/payments", summary: "Own payments", tag: "Customer portal", auth: "session" },
-  { method: "post", path: "/customer/payments", summary: "Start an online payment (503 until the payments integration is enabled)", tag: "Customer portal", auth: "session", responses: { "503": "Integration unavailable" } },
   { method: "get", path: "/customer/receipts/:id", summary: "Own receipt PDF", tag: "Customer portal", auth: "session" },
   { method: "get", path: "/customer/tickets", summary: "Own tickets", tag: "Customer portal", auth: "session" },
   { method: "post", path: "/customer/tickets", summary: "Open a ticket", tag: "Customer portal", auth: "session", body: customerTicketInput },
@@ -232,6 +234,21 @@ export const operations: Operation[] = [
   { method: "post", path: "/subscriptions/:id/network", summary: "Provision or move PPPoE access (queues an operation)", tag: "Network", auth: "session", permission: "network.operate", body: provisionInput, responses: { "202": "Queued" } },
   { method: "post", path: "/subscriptions/:id/network/credentials", summary: "Reveal PPPoE credentials (audited, never cached or stored)", tag: "Network", auth: "session", permission: "network.operate" },
   { method: "post", path: "/subscriptions/:id/network/deprovision", summary: "Remove network access and stored credentials", tag: "Network", auth: "session", permission: "network.operate", body: deprovisionInput, responses: { "202": "Queued" } },
+  // Phase 8: M-Pesa (Daraja) payment requests, callbacks and configuration
+  { method: "post", path: "/payments/mpesa/stk-push", summary: "Prompt a subscriber's phone to pay (STK Push); money is recorded only on a verified callback", tag: "Payments", auth: "session", permission: "payments.initiate", body: stkPushInput, idempotent: true, responses: { "202": "Request sent", "503": "M-Pesa not configured" } },
+  { method: "get", path: "/payments/attempts", summary: "M-Pesa payment requests and outcomes", tag: "Payments", auth: "session", permission: "payments.read", query: attemptListQuery },
+  { method: "get", path: "/payments/attempts/:id", summary: "Payment request with its (minimised) provider callbacks", tag: "Payments", auth: "session", permission: "payments.read" },
+  { method: "post", path: "/payments/attempts/:id/query", summary: "Ask M-Pesa for the current state now (worker)", tag: "Payments", auth: "session", permission: "payments.initiate", responses: { "202": "Queued" } },
+  { method: "post", path: "/payments/attempts/:id/simulate", summary: "Development only (mock adapter): simulate the customer's response", tag: "Payments", auth: "session", permission: "payments.initiate", body: simulateInput },
+  { method: "get", path: "/integrations/mpesa", summary: "M-Pesa settings (credentials never returned)", tag: "Integrations", auth: "session", permission: "integrations.read" },
+  { method: "put", path: "/integrations/mpesa", summary: "Save M-Pesa settings and encrypted credentials", tag: "Integrations", auth: "session", permission: "integrations.write", body: mpesaConfigInput },
+  { method: "post", path: "/integrations/mpesa/test", summary: "Check credentials (OAuth token only; no money moves)", tag: "Integrations", auth: "session", permission: "integrations.write" },
+  { method: "post", path: "/integrations/mpesa/register-c2b", summary: "Register C2B confirmation/validation URLs", tag: "Integrations", auth: "session", permission: "integrations.write" },
+  { method: "post", path: "/customer/payments", summary: "Customer pays with M-Pesa (own account or invoice)", tag: "Customer portal", auth: "session", body: customerPaymentInput, responses: { "202": "Request sent" } },
+  { method: "get", path: "/customer/payments/attempts/:id", summary: "Status of the customer's own payment request", tag: "Customer portal", auth: "session" },
+  { method: "post", path: "/webhooks/mobile-money/stk/:token", summary: "M-Pesa STK result callback (secret per-request token; verified with an STK query)", tag: "Webhooks", auth: "webhook", body: stkCallbackSchema, responses: { "200": "Acknowledged (also for duplicates)", "404": "Unknown token" } },
+  { method: "post", path: "/webhooks/mobile-money/c2b/:token/confirmation", summary: "M-Pesa C2B confirmation (secret per-organization token)", tag: "Webhooks", auth: "webhook", body: c2bConfirmationSchema, responses: { "200": "Acknowledged" } },
+  { method: "post", path: "/webhooks/mobile-money/c2b/:token/validation", summary: "M-Pesa C2B validation", tag: "Webhooks", auth: "webhook", body: c2bConfirmationSchema, responses: { "200": "Accepted or rejected (ResultCode)" } },
 ];
 
 /** Register additional operations (called by feature modules at import time). */

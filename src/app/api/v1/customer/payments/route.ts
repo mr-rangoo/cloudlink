@@ -1,10 +1,11 @@
 import { customerRoute } from "@/server/api/handler";
-import { AppError } from "@/server/errors";
 import { listCustomerPayments } from "@/server/portal/services";
+import { customerPaymentInput, initiateCustomerPayment } from "@/server/services/mobile-money";
 
 export const GET = customerRoute({}, async ({ ctx }) => ({ data: await listCustomerPayments(ctx) }));
 
-/** Online payment initiation (M-Pesa STK Push) is not available until the payments integration is enabled. */
-export const POST = customerRoute({}, async () => {
-  throw new AppError("INTEGRATION_UNAVAILABLE", "Online payment is not available yet. Please pay using the account number shown on your invoice.");
-});
+/**
+ * Pay with M-Pesa (STK Push) for the signed-in customer's own account or invoice. Returns a payment request whose
+ * status comes only from the provider's confirmed callback; poll GET /customer/payments/attempts/:id.
+ */
+export const POST = customerRoute({ body: customerPaymentInput }, async ({ ctx, body }) => ({ data: await initiateCustomerPayment(ctx, body), status: 202 }));

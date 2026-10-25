@@ -33,11 +33,16 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
         title="Payments"
         description={`Confirmed in this view: ${formatMoney(confirmedTotal, ctx.organization.currency)}. Payments are confirmed by staff entry or provider callbacks, never by a browser redirect.`}
         actions={
-          ctx.permissions.has("payments.record") ? (
-            <Link href="/payments/new" className={buttonVariants()}>
-              <Plus /> Record payment
+          <>
+            <Link href="/payments/requests" className={buttonVariants({ variant: "secondary" })}>
+              M-Pesa requests
             </Link>
-          ) : null
+            {ctx.permissions.has("payments.record") ? (
+              <Link href="/payments/new" className={buttonVariants()}>
+                <Plus /> Record payment
+              </Link>
+            ) : null}
+          </>
         }
       />
       <Card>

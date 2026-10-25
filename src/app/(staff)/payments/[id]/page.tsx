@@ -42,13 +42,14 @@ export default async function PaymentDetailPage({ params, searchParams }: { para
       {sp.recorded ? <Alert tone="success" title={`Payment recorded · receipt ${p.receiptNumber}`} /> : null}
       <PageHeader
         title={`Receipt ${p.receiptNumber ?? ""}`}
-        description={`${METHOD_LABEL[p.method]} · ${p.provider === "manual" ? `recorded by ${p.recordedBy ?? "staff"}` : p.provider}`}
+        description={`${METHOD_LABEL[p.method]} · ${p.provider === "manual" ? `recorded by ${p.recordedBy ?? "staff"}` : p.provider === "mock" ? "simulated (mock adapter)" : p.provider === "mpesa_daraja" ? "confirmed by M-Pesa" : p.provider}`}
         actions={
           <a href={`/api/v1/payments/${p.id}/receipt`} target="_blank" rel="noopener" className={buttonVariants({ variant: "secondary" })}>
             <Download /> Receipt PDF
           </a>
         }
       />
+      {p.provider === "mock" ? <Alert tone="warning" title="Simulated payment">Created by the mock payment adapter in a non-production environment. No money moved.</Alert> : null}
       {p.status === "REVERSED" ? (
         <Alert tone="danger" title="This payment was reversed">
           {p.reversalReason} · {formatDateTime(p.reversedAt, tz)}

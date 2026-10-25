@@ -6,7 +6,9 @@ import { subscriberLedgerBalance } from "@/server/services/ledger";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { InvoiceStatusBadge, METHOD_LABEL, PaymentStatusBadge } from "@/components/status";
-import { formatDate, formatMoney } from "@/lib/utils";
+import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
+import { paymentAdapterMode } from "@/server/services/mpesa-config";
+import { AttemptBadge, MpesaRequestDialog } from "@/components/mpesa-request";
 
 /** Server component: subscriber balance from the ledger plus recent invoices and payments. */
 export async function BillingCard({ ctx, subscriberId }: { ctx: StaffContext; subscriberId: string }) {
@@ -21,6 +23,12 @@ export async function BillingCard({ ctx, subscriberId }: { ctx: StaffContext; su
   const cur = ctx.organization.currency;
   const tz = ctx.organization.timezone;
   const owes = balance.net.gt(0);
+  const paymentMode = paymentAdapterMode();
+  const [subscriber, openInvoices, requests] = await Promise.all([
+    db.subscriber.findUnique({ where: { id: subscriberId }, select: { phone: true } }),
+    db.invoice.findMany({ where: { organizationId: ctx.organizationId, subscriberId, status: { in: ["OPEN", "PARTIALLY_PAID"] } }, orderBy: { issuedAt: "asc" }, take: 10, select: { id: true, invoiceNumber: true, balanceDue: true, currency: true } }),
+    canPay ? db.paymentAttempt.findMany({ where: { organizationId: ctx.organizationId, subscriberId }, orderBy: { createdAt: "desc" }, take: 3 }) : Promise.resolve([]),
+  ]);
 
   return (
     <Card>
@@ -29,7 +37,16 @@ export async function BillingCard({ ctx, subscriberId }: { ctx: StaffContext; su
           <CardTitle>Billing</CardTitle>
           <CardDescription>Balance from the ledger: receivables minus account credit</CardDescription>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {ctx.permissions.has("payments.initiate") && paymentMode !== "disabled" && cur === "KES" ? (
+            <MpesaRequestDialog
+              subscriberId={subscriberId}
+              phone={subscriber?.phone ?? ""}
+              suggestedAmount={owes ? Math.ceil(Number(balance.net.toFixed(2))) : 0}
+              invoices={openInvoices.map((i) => ({ id: i.id, label: `${i.invoiceNumber} — ${formatMoney(i.balanceDue.toString(), i.currency)} due`, balance: Math.ceil(Number(i.balanceDue)) }))}
+              mockMode={paymentMode === "mock"}
+            />
+          ) : null}
           {ctx.permissions.has("invoices.write") ? (
             <Link href={`/invoices/new?subscriberId=${subscriberId}`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
               <FileText /> New invoice
@@ -89,6 +106,22 @@ export async function BillingCard({ ctx, subscriberId }: { ctx: StaffContext; su
               ) : (
                 <p className="text-sm text-muted-foreground">No payments.</p>
               )}
+              {requests.length ? (
+                <>
+                  <h3 className="mb-2 mt-4 text-sm font-medium">M-Pesa requests</h3>
+                  <ul className="divide-y divide-border rounded-md border border-border">
+                    {requests.map((r) => (
+                      <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                        <Link href={`/payments/requests/${r.id}`} className="text-xs text-accent hover:underline">
+                          {formatDateTime(r.createdAt, tz)}
+                        </Link>
+                        <AttemptBadge status={r.status} simulated={r.provider === "mock"} />
+                        <span className="tabular">{formatMoney(r.amount.toString(), r.currency)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>

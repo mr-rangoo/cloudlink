@@ -67,6 +67,12 @@ OpenAPI: `GET /api/v1/openapi.json`.
 4. A PostgreSQL sweeper re-runs due/failed rows and reclaims `RUNNING` rows whose lease expired (crashed worker).
 Redis therefore never holds financial or operational truth.
 
+## Payments and webhooks
+Payment requests (`PaymentAttempt`) never record money. Provider callbacks arrive on per-request secret URLs, are
+stored once in `WebhookEvent` (deduplicated, minimised), checked against the request, verified with a provider status
+query, and only then turned into a `Payment` in one transaction with its ledger posting, allocations and renewals.
+Gateways are adapters behind `PaymentGateway`. Details: `docs/PAYMENTS.md`.
+
 ## Network operations
 Router and RADIUS changes are `NetworkOperation` rows with an allowlisted type, written in the same transaction as the
 business change (for example a suspension), and executed by the worker through a `network.execute` background job.

@@ -61,6 +61,13 @@ export async function staffAlerts(ctx: StaffContext): Promise<AlertItem[]> {
       ),
     );
   }
+  if (hasPermission(ctx, "payments.reconcile")) {
+    checks.push(
+      db.paymentAttempt.count({ where: { organizationId: org, status: "UNKNOWN", createdAt: { gte: new Date(now.getTime() - 30 * 86_400_000) } } }).then((n) =>
+        n ? { key: "mpesa-unknown", tone: "warning", title: "M-Pesa payments to review", detail: `${n} request(s) with an unknown outcome`, href: "/payments/requests?status=UNKNOWN", count: n } : null,
+      ),
+    );
+  }
   if (hasPermission(ctx, "network.read")) {
     checks.push(
       db.routerAlert.count({ where: { organizationId: org, status: "OPEN" } }).then((n) =>

@@ -304,6 +304,13 @@ export async function expireDueSubscriptions(organizationId: string, ctx: ActorC
       AND "status" IN ('ACTIVE', 'SUSPENDED')
       AND "currentPeriodEnd" IS NOT NULL
       AND "currentPeriodEnd" + make_interval(days => "graceDays") <= ${now}
+      -- Never cut off a customer whose payment is still being processed (APP_FLOW: unresolved payment states).
+      AND NOT EXISTS (
+        SELECT 1 FROM "PaymentAttempt" pa
+        WHERE pa."subscriberId" = "Subscription"."subscriberId"
+          AND ((pa."status" IN ('PENDING', 'SUBMITTED') AND pa."createdAt" > ${new Date(now.getTime() - 30 * 60_000)})
+            OR (pa."status" = 'UNKNOWN' AND pa."createdAt" > ${new Date(now.getTime() - 24 * 3_600_000)}))
+      )
     LIMIT 500`;
   let count = 0;
   for (const { id } of due) {

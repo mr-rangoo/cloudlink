@@ -5,12 +5,13 @@ import { messagingStatus, type IntegrationStatus } from "@/server/integrations/m
 import { pingRedis } from "@/server/jobs/redis";
 import { workerStatus } from "@/server/observability/health";
 import { radiusConfigured, radiusHealth } from "@/server/integrations/radius";
+import { darajaConfigFor, paymentAdapterMode } from "@/server/services/mpesa-config";
 
 export interface IntegrationRow {
   key: string;
   name: string;
   category: "payments" | "network" | "messaging" | "infrastructure";
-  status: IntegrationStatus | "ok" | "unavailable";
+  status: IntegrationStatus | "ok" | "unavailable" | "configured";
   mode: string;
   detail: string;
   phase?: number;
@@ -35,8 +36,8 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
   const mapStatus = (s: string | undefined): IntegrationStatus | undefined =>
     s === "SANDBOX_TESTED" ? "sandbox_tested" : s === "PRODUCTION_VERIFIED" ? "production_verified" : s === "ERROR" ? "error" : undefined;
 
-  const paymentMode = process.env.PAYMENT_ADAPTER ?? "mock";
-  const darajaVars = ["MPESA_CONSUMER_KEY", "MPESA_CONSUMER_SECRET", "MPESA_SHORTCODE", "MPESA_PASSKEY", "MPESA_CALLBACK_URL"].filter((k) => !process.env[k]);
+  const paymentMode = paymentAdapterMode();
+  const mpesa = paymentMode === "daraja" ? await darajaConfigFor(ctx.organizationId).catch(() => null) : null;
   const networkMode = process.env.NETWORK_ADAPTER ?? "mock";
   const messaging = messagingStatus();
   const [redis, workers, routerGroups, radius] = await Promise.all([
@@ -56,9 +57,15 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
       name: "M-Pesa (Daraja)",
       category: "payments",
       mode: paymentMode,
-      status: mapStatus(recorded("mpesa_daraja")?.status) ?? (paymentMode === "mock" ? "mock" : "not_configured"),
-      detail: paymentMode === "mock" ? "Simulated payments only; no money moves." : darajaVars.length ? `Missing settings: ${darajaVars.join(", ")}` : `${process.env.MPESA_ENVIRONMENT ?? "sandbox"} credentials present; not yet verified.`,
-      phase: 8,
+      status: paymentMode === "mock" ? "mock" : paymentMode === "disabled" ? "not_configured" : (mapStatus(recorded("mpesa_daraja")?.status) ?? (mpesa ? "configured" : "not_configured")),
+      detail:
+        paymentMode === "mock"
+          ? "Simulated: no prompt is sent and no money moves. Staff can simulate the customer's response outside production."
+          : paymentMode === "disabled"
+            ? "Online payment is disabled (PAYMENT_ADAPTER=disabled)."
+            : mpesa
+              ? `${mpesa.config.environment === "production" ? "Production" : "Sandbox"} credentials for shortcode ${mpesa.config.shortcode} (${mpesa.source === "environment" ? "server environment" : "saved in Cloudlink"}). Marked tested only after a confirmed payment.`
+              : "Not configured: save the Daraja credentials below.",
     },
     { key: "manual_payments", name: "Cash / bank / cheque", category: "payments", mode: "built-in", status: "ok", detail: "Recorded and confirmed by authorised staff." },
     {
