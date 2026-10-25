@@ -8,6 +8,7 @@
  */
 import "dotenv/config";
 import os from "node:os";
+import http from "node:http";
 import { Worker } from "bullmq";
 
 process.env.CLOUDLINK_SERVICE ??= "cloudlink-worker";
@@ -88,6 +89,26 @@ async function main() {
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
+
+  // Optional health endpoint for container/orchestrator probes (no sensitive data).
+  const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 0);
+  if (healthPort) {
+    const server = http.createServer(async (req, res) => {
+      if (req.url === "/health/live") {
+        res.writeHead(stopping ? 503 : 200, { "content-type": "application/json" }).end(JSON.stringify({ status: stopping ? "stopping" : "ok" }));
+        return;
+      }
+      if (req.url === "/health/ready") {
+        const ok = await db.$queryRaw`SELECT 1`.then(() => true).catch(() => false);
+        res.writeHead(ok && !stopping ? 200 : 503, { "content-type": "application/json" }).end(JSON.stringify({ status: ok ? "ready" : "not_ready", redis: connection ? "configured" : "not_configured" }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    server.listen(healthPort, "127.0.0.1");
+    process.once("SIGTERM", () => server.close());
+    process.once("SIGINT", () => server.close());
+  }
 
   logger.info({ workerId }, "cloudlink worker started");
   await loop();

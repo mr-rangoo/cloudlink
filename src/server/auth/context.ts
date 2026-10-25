@@ -42,7 +42,18 @@ export interface SystemContext extends RequestMeta {
   actor: string; // e.g. "worker:billing", "webhook:mpesa"
 }
 
-export type ActorContext = StaffContext | SystemContext;
+/** Customer portal context: always bound to exactly one subscriber. Holds no staff permissions. */
+export interface CustomerContext extends RequestMeta {
+  kind: "customer";
+  organizationId: string;
+  organization: OrganizationSummary;
+  subscriberId: string;
+  customerAccountId: string;
+  sessionId: string;
+  displayName: string;
+}
+
+export type ActorContext = StaffContext | SystemContext | CustomerContext;
 
 export async function loadStaffContext(session: ResolvedSession, meta: RequestMeta): Promise<StaffContext> {
   if (session.user.kind !== "STAFF") throw new AppError("FORBIDDEN");
@@ -92,6 +103,7 @@ export async function loadStaffContext(session: ResolvedSession, meta: RequestMe
 
 export function hasPermission(ctx: ActorContext, permission: PermissionKey): boolean {
   if (ctx.kind === "system") return true;
+  if (ctx.kind === "customer") return false; // customers never hold staff permissions
   return ctx.permissions.has(permission);
 }
 
@@ -110,6 +122,7 @@ export function requirePermission(ctx: ActorContext, ...required: PermissionKey[
  * Branch-restricted members only see records assigned to their branches.
  */
 export function tenantWhere(ctx: ActorContext): { organizationId: string; branchId?: { in: string[] } } {
+  if (ctx.kind === "customer") throw new AppError("FORBIDDEN"); // portal code scopes by subscriberId explicitly
   if (ctx.kind === "staff" && ctx.branchIds) return { organizationId: ctx.organizationId, branchId: { in: ctx.branchIds } };
   return { organizationId: ctx.organizationId };
 }

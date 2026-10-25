@@ -17,6 +17,8 @@ import { Forbidden } from "@/components/shell/forbidden";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
 import { AddSubscriptionDialog, EditSubscriberDialog, NoteForm, SubscriptionActions } from "./client";
 import { BillingCard } from "./billing-card";
+import { PortalAccessCard } from "./portal-card";
+import { portalAccessStatus } from "@/server/portal/auth";
 
 export const metadata: Metadata = { title: "Subscriber" };
 
@@ -43,6 +45,7 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
     canWrite ? listAccessibleBranches(ctx) : Promise.resolve([]),
   ]);
   const live = subscriber.subscriptions.filter((s) => s.status !== "CANCELLED");
+  const portal = await portalAccessStatus(ctx, subscriber.id);
 
   return (
     <div className="space-y-6">
@@ -114,7 +117,14 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
+        <div className="grid gap-4 lg:col-span-2 lg:grid-cols-2">
+        <PortalAccessCard
+          subscriberId={subscriber.id}
+          status={portal ? { status: portal.status, lastLoginAt: portal.lastLoginAt?.toISOString() ?? null, activatedAt: portal.activatedAt?.toISOString() ?? null } : null}
+          canManage={canWrite}
+          messagingMock={(process.env.MESSAGING_ADAPTER ?? "mock") === "mock"}
+        />
+        <Card>
           <CardHeader>
             <CardTitle>Network access</CardTitle>
             <CardDescription>Billing status and network status are tracked separately.</CardDescription>
@@ -129,6 +139,7 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
 
       <Card>

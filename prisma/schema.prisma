@@ -967,3 +967,224 @@ model ReconciliationRecord {
   @@index([organizationId, createdAt])
   @@index([paymentId])
 }
+
+// ───────────────────────── Customer portal ─────────────────────────
+
+enum CustomerAccountStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+// Portal login for one subscriber. Separate from staff users: customers sign in with phone or account number.
+model CustomerAccount {
+  id              String                @id @default(uuid(7)) @db.Uuid
+  organizationId  String                @db.Uuid
+  subscriberId    String                @unique @db.Uuid
+  loginPhone      String // normalised E.164 digits
+  passwordHash    String?
+  status          CustomerAccountStatus @default(INVITED)
+  inviteTokenHash String?               @unique
+  inviteExpiresAt DateTime?             @db.Timestamptz(6)
+  failedLogins    Int                   @default(0)
+  lockedUntil     DateTime?             @db.Timestamptz(6)
+  lastLoginAt     DateTime?             @db.Timestamptz(6)
+  activatedAt     DateTime?             @db.Timestamptz(6)
+  createdAt       DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime              @updatedAt @db.Timestamptz(6)
+
+  sessions CustomerSession[]
+
+  @@unique([organizationId, loginPhone])
+}
+
+model CustomerSession {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  tokenHash         String    @unique
+  customerAccountId String    @db.Uuid
+  organizationId    String    @db.Uuid
+  ipAddress         String?
+  userAgent         String?
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  lastSeenAt        DateTime  @default(now()) @db.Timestamptz(6)
+  expiresAt         DateTime  @db.Timestamptz(6)
+  revokedAt         DateTime? @db.Timestamptz(6)
+
+  account CustomerAccount @relation(fields: [customerAccountId], references: [id], onDelete: Cascade)
+
+  @@index([customerAccountId, revokedAt])
+}
+
+// ───────────────────────── Support ─────────────────────────
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TicketCategory {
+  CONNECTIVITY
+  BILLING
+  INSTALLATION
+  EQUIPMENT
+  ACCOUNT
+  OTHER
+}
+
+model SupportTicket {
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  organizationId      String         @db.Uuid
+  branchId            String?        @db.Uuid
+  subscriberId        String?        @db.Uuid
+  ticketNumber        String
+  subject             String
+  description         String
+  category            TicketCategory @default(OTHER)
+  priority            TicketPriority @default(NORMAL)
+  status              TicketStatus   @default(OPEN)
+  channel             String         @default("staff") // staff | portal | phone | walk_in | email
+  assigneeId          String?        @db.Uuid
+  createdByUserId     String?        @db.Uuid
+  createdByCustomerId String?        @db.Uuid
+  firstResponseAt     DateTime?      @db.Timestamptz(6)
+  resolvedAt          DateTime?      @db.Timestamptz(6)
+  resolution          String?
+  closedAt            DateTime?      @db.Timestamptz(6)
+  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime       @updatedAt @db.Timestamptz(6)
+
+  comments    TicketComment[]
+  events      TicketEvent[]
+  attachments TicketAttachment[]
+
+  @@unique([organizationId, ticketNumber])
+  @@index([organizationId, status, priority])
+  @@index([organizationId, subscriberId])
+  @@index([organizationId, assigneeId])
+}
+
+model TicketComment {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  organizationId   String   @db.Uuid
+  ticketId         String   @db.Uuid
+  authorUserId     String?  @db.Uuid
+  authorCustomerId String?  @db.Uuid
+  body             String
+  internal         Boolean  @default(false) // staff-only note, never shown to the customer
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+}
+
+model TicketEvent {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  ticketId       String   @db.Uuid
+  actorUserId    String?  @db.Uuid
+  actorType      String // user | customer | system
+  type           String // created, status_changed, assigned, priority_changed, resolved, reopened
+  fromValue      String?
+  toValue        String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+}
+
+model TicketAttachment {
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  organizationId       String   @db.Uuid
+  ticketId             String   @db.Uuid
+  commentId            String?  @db.Uuid
+  fileName             String
+  contentType          String
+  sizeBytes            Int
+  storageKey           String   @unique
+  sha256               String
+  uploadedByUserId     String?  @db.Uuid
+  uploadedByCustomerId String?  @db.Uuid
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+// ───────────────────────── Notifications ─────────────────────────
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SKIPPED
+}
+
+model NotificationTemplate {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  organizationId String              @db.Uuid
+  key            String // invoice.issued, payment.received, ticket.reply, portal.invite, subscription.expiring
+  channel        NotificationChannel
+  subject        String?
+  body           String
+  active         Boolean             @default(true)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(6)
+
+  @@unique([organizationId, key, channel])
+}
+
+model Notification {
+  id                String              @id @default(uuid(7)) @db.Uuid
+  organizationId    String              @db.Uuid
+  subscriberId      String?             @db.Uuid
+  channel           NotificationChannel
+  templateKey       String
+  category          String // billing | service | support | account
+  recipient         String
+  subject           String?
+  body              String
+  status            NotificationStatus  @default(QUEUED)
+  provider          String?
+  providerMessageId String?
+  simulated         Boolean             @default(false) // true when sent through a mock adapter
+  attempts          Int                 @default(0)
+  lastError         String?
+  dedupeKey         String              @unique
+  sentAt            DateTime?           @db.Timestamptz(6)
+  deliveredAt       DateTime?           @db.Timestamptz(6)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, status])
+  @@index([subscriberId])
+}
+
+model NotificationPreference {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  organizationId String              @db.Uuid
+  subscriberId   String              @db.Uuid
+  channel        NotificationChannel
+  category       String // billing | service | support (account messages are always sent)
+  enabled        Boolean             @default(true)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(6)
+
+  @@unique([subscriberId, channel, category])
+}

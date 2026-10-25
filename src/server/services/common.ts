@@ -26,7 +26,9 @@ export function actorUserId(ctx: ActorContext): string | null {
 }
 
 export function actorType(ctx: ActorContext): string {
-  return ctx.kind === "staff" ? "user" : ctx.actor;
+  if (ctx.kind === "staff") return "user";
+  if (ctx.kind === "customer") return "customer";
+  return ctx.actor;
 }
 
 /** Search term sanitiser: trims, caps length; Prisma parameterises the value. */

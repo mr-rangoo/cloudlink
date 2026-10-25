@@ -47,13 +47,14 @@ export async function contextFor(userId: string, organizationId: string): Promis
 
 export function request(
   path: string,
-  opts: { method?: string; body?: unknown; token?: string; origin?: string | null; headers?: Record<string, string> } = {},
+  opts: { method?: string; body?: unknown; token?: string; portalToken?: string; origin?: string | null; headers?: Record<string, string> } = {},
 ) {
   const headers = new Headers(opts.headers);
   headers.set("host", "localhost:3100");
   if (opts.origin !== null) headers.set("origin", opts.origin ?? ORIGIN);
   if (opts.body !== undefined) headers.set("content-type", "application/json");
   if (opts.token) headers.set("cookie", `${SESSION_COOKIE}=${opts.token}`);
+  if (opts.portalToken) headers.set("cookie", `cloudlink_portal=${opts.portalToken}`);
   headers.set("x-forwarded-for", headers.get("x-forwarded-for") ?? "10.0.0.1");
   return new NextRequest(new URL(path, ORIGIN), {
     method: opts.method ?? (opts.body !== undefined ? "POST" : "GET"),

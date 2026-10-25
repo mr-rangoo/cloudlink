@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/server/db/client";
-import { listWhere, requirePermission, type ActorContext } from "@/server/auth/context";
+import { hasPermission, listWhere, requirePermission, type ActorContext } from "@/server/auth/context";
 import { D, type DecimalValue } from "@/server/domain/money";
 import { fromWallTime, toWallTime } from "@/server/domain/time";
 import type { BillingUnit } from "@/server/domain/billing-period";
@@ -43,11 +43,11 @@ export async function dashboardSummary(ctx: ActorContext & { organization: { tim
   const scope = listWhere(ctx);
   const now = new Date();
   const monthStart = startOfMonth(now, ctx.organization.timezone);
-  const canSubs = ctx.kind === "system" || ctx.permissions.has("subscribers.read");
-  const canSubscriptions = ctx.kind === "system" || ctx.permissions.has("subscriptions.read");
-  const canLeads = ctx.kind === "system" || ctx.permissions.has("leads.read");
-  const canInvoices = ctx.kind === "system" || ctx.permissions.has("invoices.read");
-  const canPayments = ctx.kind === "system" || ctx.permissions.has("payments.read");
+  const canSubs = hasPermission(ctx, "subscribers.read");
+  const canSubscriptions = hasPermission(ctx, "subscriptions.read");
+  const canLeads = hasPermission(ctx, "leads.read");
+  const canInvoices = hasPermission(ctx, "invoices.read");
+  const canPayments = hasPermission(ctx, "payments.read");
 
   const open = { in: ["OPEN", "PARTIALLY_PAID"] as Array<"OPEN" | "PARTIALLY_PAID"> };
   const [receivables, overdue, collected, unmatched] = await Promise.all([
@@ -103,7 +103,7 @@ export async function dashboardSummary(ctx: ActorContext & { organization: { tim
 
 export async function dashboardActivity(ctx: ActorContext, take = 15) {
   requirePermission(ctx, "dashboard.view");
-  const canSubs = ctx.kind === "system" || ctx.permissions.has("subscribers.read");
+  const canSubs = hasPermission(ctx, "subscribers.read");
   if (!canSubs) return [];
   const rows = await db.subscriberActivity.findMany({
     where: { organizationId: ctx.organizationId, ...(ctx.kind === "staff" && (ctx.branchIds || ctx.activeBranchId) ? { subscriber: listWhere(ctx) } : {}) },

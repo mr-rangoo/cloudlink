@@ -9,6 +9,9 @@ import { importPreviewInput } from "@/server/services/imports";
 import { creditNoteInput, invoiceCreateInput, invoiceListQuery, voidInput } from "@/server/services/invoices";
 import { allocateInput, manualPaymentInput, paymentListQuery, reconcileInput, refundInput, reverseInput } from "@/server/services/payments";
 import { categoryInput, expenseInput, financeListQuery, reverseExpenseInput, withdrawalInput } from "@/server/services/finance";
+import { commentInput, customerCommentInput, customerTicketInput, staffTicketInput, ticketListQuery, ticketUpdateInput } from "@/server/services/tickets";
+import { notificationListQuery, preferencesInput, templateInput } from "@/server/services/notifications";
+import { portalActivateInput, portalLoginInput } from "@/server/portal/auth";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -126,6 +129,41 @@ export const operations: Operation[] = [
   { method: "get", path: "/withdrawals", summary: "Owner drawings and bank deposits", tag: "Finance", auth: "session", permission: "expenses.read", query: financeListQuery },
   { method: "post", path: "/withdrawals", summary: "Record an owner drawing or bank deposit", tag: "Finance", auth: "session", permission: "expenses.write", body: withdrawalInput, idempotent: true },
   { method: "get", path: "/collections/summary", summary: "Monthly collections, refunds, expenses and ledger balances", tag: "Finance", auth: "session", permission: "expenses.read" },
+  { method: "get", path: "/support/tickets", summary: "List support tickets", tag: "Support", auth: "session", permission: "support.read", query: ticketListQuery },
+  { method: "post", path: "/support/tickets", summary: "Create a ticket", tag: "Support", auth: "session", permission: "support.write", body: staffTicketInput },
+  { method: "get", path: "/support/tickets/:id", summary: "Ticket with comments (incl. internal), events, attachments", tag: "Support", auth: "session", permission: "support.read" },
+  { method: "patch", path: "/support/tickets/:id", summary: "Update status / priority / assignee (RESOLVED needs a resolution)", tag: "Support", auth: "session", permission: "support.write", body: ticketUpdateInput },
+  { method: "post", path: "/support/tickets/:id/comments", summary: "Reply to customer or add internal note", tag: "Support", auth: "session", permission: "support.write", body: commentInput },
+  { method: "post", path: "/support/tickets/:id/attachments", summary: "Upload attachment (multipart, ≤5 MB, PNG/JPEG/WebP/PDF/text by content)", tag: "Support", auth: "session", permission: "support.write" },
+  { method: "get", path: "/support/attachments/:id", summary: "Download attachment", tag: "Support", auth: "session", permission: "support.read" },
+  { method: "get", path: "/notifications", summary: "Notification log", tag: "Notifications", auth: "session", permission: "notifications.read", query: notificationListQuery },
+  { method: "get", path: "/notifications/templates", summary: "Templates (defaults + customised)", tag: "Notifications", auth: "session", permission: "notifications.read" },
+  { method: "put", path: "/notifications/templates", summary: "Save a template", tag: "Notifications", auth: "session", permission: "notifications.write", body: templateInput },
+  { method: "post", path: "/notifications/:id/retry", summary: "Retry a failed/skipped notification", tag: "Notifications", auth: "session", permission: "notifications.write" },
+  { method: "get", path: "/notifications/status", summary: "Messaging adapter status", tag: "Notifications", auth: "session", permission: "notifications.read" },
+  { method: "get", path: "/alerts", summary: "Items needing attention (permission-filtered)", tag: "Notifications", auth: "session" },
+  { method: "get", path: "/subscribers/:id/portal", summary: "Portal access status", tag: "Subscribers", auth: "session", permission: "subscribers.read" },
+  { method: "post", path: "/subscribers/:id/portal", summary: "Portal access: invite | link | enable | disable", tag: "Subscribers", auth: "session", permission: "subscribers.write" },
+  { method: "get", path: "/subscribers/:id/preferences", summary: "Notification preferences", tag: "Subscribers", auth: "session", permission: "subscribers.read" },
+  { method: "put", path: "/subscribers/:id/preferences", summary: "Update notification preferences", tag: "Subscribers", auth: "session", permission: "subscribers.write", body: preferencesInput },
+  { method: "post", path: "/customer/auth/login", summary: "Customer sign-in (phone or account number)", tag: "Customer portal", auth: "none", body: portalLoginInput, responses: { "401": "Invalid credentials", "429": "Rate limited" } },
+  { method: "post", path: "/customer/auth/activate", summary: "Set password from a single-use invite token", tag: "Customer portal", auth: "none", body: portalActivateInput },
+  { method: "post", path: "/customer/auth/logout", summary: "Customer sign-out", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/me", summary: "Own profile, service, balance, open invoices, recent payments", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/invoices", summary: "Own invoices", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/invoices/:id", summary: "Own invoice (404 for anyone else's)", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/invoices/:id/pdf", summary: "Own invoice PDF", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/payments", summary: "Own payments", tag: "Customer portal", auth: "session" },
+  { method: "post", path: "/customer/payments", summary: "Start an online payment (503 until the payments integration is enabled)", tag: "Customer portal", auth: "session", responses: { "503": "Integration unavailable" } },
+  { method: "get", path: "/customer/receipts/:id", summary: "Own receipt PDF", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/tickets", summary: "Own tickets", tag: "Customer portal", auth: "session" },
+  { method: "post", path: "/customer/tickets", summary: "Open a ticket", tag: "Customer portal", auth: "session", body: customerTicketInput },
+  { method: "get", path: "/customer/tickets/:id", summary: "Own ticket (no internal notes)", tag: "Customer portal", auth: "session" },
+  { method: "post", path: "/customer/tickets/:id/comments", summary: "Reply (reopens resolved tickets)", tag: "Customer portal", auth: "session", body: customerCommentInput },
+  { method: "post", path: "/customer/tickets/:id/attachments", summary: "Upload attachment to own ticket", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/attachments/:id", summary: "Download attachment from own ticket", tag: "Customer portal", auth: "session" },
+  { method: "get", path: "/customer/preferences", summary: "Own notification preferences", tag: "Customer portal", auth: "session" },
+  { method: "put", path: "/customer/preferences", summary: "Update own notification preferences", tag: "Customer portal", auth: "session", body: preferencesInput },
 ];
 
 /** Register additional operations (called by feature modules at import time). */
@@ -174,7 +212,7 @@ export function buildOpenApiDocument(serverUrl = "/api/v1") {
     info: { title: "Cloudlink API", version: "1.0.0", description: "ISP billing, payments and network operations API. All money values are decimal strings with an explicit currency." },
     servers: [{ url: serverUrl }],
     components: {
-      securitySchemes: { session: { type: "apiKey", in: "cookie", name: "cloudlink_session" } },
+      securitySchemes: { session: { type: "apiKey", in: "cookie", name: "cloudlink_session", description: "Staff session cookie. Customer-portal endpoints use the cloudlink_portal cookie instead." } },
       schemas: { Error: errorEnvelope },
     },
     paths,

@@ -36,7 +36,7 @@ export async function audit(ctx: ActorContext, input: AuditInput, tx?: Tx): Prom
     data: {
       organizationId: ctx.organizationId,
       actorUserId: ctx.kind === "staff" ? ctx.userId : null,
-      actorType: ctx.kind === "staff" ? "user" : ctx.actor,
+      actorType: ctx.kind === "staff" ? "user" : ctx.kind === "customer" ? `customer:${ctx.customerAccountId}` : ctx.actor,
       action: input.action,
       entityType: input.entityType ?? null,
       entityId: input.entityId ?? null,

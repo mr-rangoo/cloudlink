@@ -351,12 +351,7 @@ function Topbar(props: ShellProps & { onOpenMobile: () => void; onOpenCommand: (
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
 
-        {/* Notifications: the notification centre ships in Phase 4; the control is visibly disabled with a reason. */}
-        <span title="Notification centre is not yet available (Phase 4)">
-          <button type="button" disabled className="rounded-md p-2 text-muted-foreground disabled:opacity-50" aria-label="Notifications (not yet available)">
-            <Bell className="size-5" />
-          </button>
-        </span>
+        <NotificationCenter />
 
         {/* User menu */}
         <DropdownMenu.Root>
@@ -493,5 +488,72 @@ function CommandMenu({ open, onOpenChange, items }: { open: boolean; onOpenChang
         ) : null}
       </AnimatePresence>
     </Dialog.Root>
+  );
+}
+
+interface AlertItem {
+  key: string;
+  tone: "danger" | "warning" | "info";
+  title: string;
+  detail: string;
+  href: string;
+  count: number;
+}
+
+/** Live "needs attention" items from the server (permission-filtered). Refreshed whenever the menu opens. */
+function NotificationCenter() {
+  const [items, setItems] = React.useState<AlertItem[] | null>(null);
+  const [error, setError] = React.useState(false);
+  const load = React.useCallback(async () => {
+    try {
+      const res = await api<{ data: AlertItem[] }>("/alerts");
+      setItems(res.data);
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }, []);
+  React.useEffect(() => {
+    let cancelled = false;
+    api<{ data: AlertItem[] }>("/alerts")
+      .then((res) => {
+        if (!cancelled) setItems(res.data);
+      })
+      .catch(() => {
+        if (!cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const total = items?.reduce((a, i) => a + i.count, 0) ?? 0;
+  const toneDot = { danger: "bg-danger", warning: "bg-warning", info: "bg-info" } as const;
+
+  return (
+    <DropdownMenu.Root onOpenChange={(o) => o && void load()}>
+      <DropdownMenu.Trigger className="relative rounded-md p-2 hover:bg-surface-muted" aria-label={total ? `Notifications: ${total} items need attention` : "Notifications"}>
+        <Bell className="size-5" />
+        {total ? <span className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-danger text-[10px] font-semibold text-white">{total > 9 ? "9+" : total}</span> : null}
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="end" sideOffset={6} className={cn(menuContentClass, "w-80")}>
+          <DropdownMenu.Label className="px-2 py-1.5 text-sm font-semibold">Needs attention</DropdownMenu.Label>
+          <DropdownMenu.Separator className="my-1 h-px bg-border" />
+          {error ? <p className="px-2 py-3 text-sm text-danger">Could not load alerts.</p> : null}
+          {items && items.length === 0 ? <p className="px-2 py-3 text-sm text-muted-foreground">All clear. Nothing needs your attention.</p> : null}
+          {items?.map((a) => (
+            <DropdownMenu.Item key={a.key} asChild className={cn(menuItemClass, "items-start py-2")}>
+              <Link href={a.href}>
+                <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", toneDot[a.tone])} aria-hidden />
+                <span className="min-w-0">
+                  <span className="block font-medium">{a.title}</span>
+                  <span className="block text-xs text-muted-foreground">{a.detail}</span>
+                </span>
+              </Link>
+            </DropdownMenu.Item>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }

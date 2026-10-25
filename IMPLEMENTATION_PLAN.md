@@ -14,8 +14,9 @@ Coding agent: update this file continuously. Do not mark items complete without 
 | M-Pesa Daraja | not_configured | Phase 8. No credentials configured. |
 | MikroTik RouterOS | not_configured | Phase 7. No device/private network available. |
 | RADIUS | not_configured | Phase 7. |
-| Email/SMS | not_configured | Phase 4. |
-| Object storage | local disk (dev) | S3 adapter Phase 3/9. |
+| Email | mock (dev) | SMTP adapter implemented via nodemailer, not verified against a real server. |
+| SMS | mock (dev) | Africa's Talking adapter implemented from public docs, not verified. |
+| Object storage | local disk (dev) | Ticket attachments; S3 adapter not implemented (reports unavailable). |
 | Redis/BullMQ | verified locally | Portable Redis 8.10.2 (dev only) on 127.0.0.1:6379; BullMQ dispatch test passes. |
 
 ## Phase 1 — Foundation ✅
@@ -50,12 +51,13 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] PDF invoices and receipts — PDFKit, rendered on demand from persisted records, permission-checked.
 - [x] Dashboard billing KPIs — receivables, overdue, collected this month, payment exceptions (definitions in docs/BILLING.md).
 
-## Phase 4 — Customer portal and support
-- [ ] Customer authentication and ownership checks.
-- [ ] Invoice/payment/receipt views.
-- [ ] Support tickets.
-- [ ] Email/SMS adapters.
-- [ ] Notification preferences.
+## Phase 4 — Customer portal and support ✅
+- [x] Customer authentication and ownership checks — separate CustomerAccount/CustomerSession (cookie `cloudlink_portal`), phone-or-account-number login, throttling + lockout, single-use hashed invite tokens (minted at send time), enable/disable revokes sessions; every portal query scoped by the session's subscriber (other ids → 404); customer sessions rejected by staff APIs.
+- [x] Invoice/payment/receipt views — /portal/home (balance, service, how to pay), /portal/invoices(+PDF), /portal/payments(+receipt PDF), /portal/profile.
+- [x] Support tickets — staff (/support, /support/[id]) and portal (/portal/tickets): numbering, statuses with events, internal notes, auto IN_PROGRESS on first reply, reopen on customer reply, resolution required, content-validated attachments via storage adapter.
+- [x] Email/SMS adapters — mock (simulated), SMTP (nodemailer), Africa's Talking SMS (unverified), NotConfigured → SKIPPED; outbox notifications for invoice issued, payment received, ticket reply/resolved, portal invite; templates editable at /notifications.
+- [x] Notification preferences — per subscriber/channel/category (portal profile + staff API); account messages always sent.
+- [x] Staff notification centre (bell) with live permission-filtered alerts; worker health endpoint (`WORKER_HEALTH_PORT`).
 
 ## Phase 5 — Reports and administration
 - [ ] Reports and exports.
@@ -170,7 +172,29 @@ Coding agent: update this file continuously. Do not mark items complete without 
 
 **Still mocked / blocked**: M-Pesa (phase 8) — manual M-Pesa entries only; payment gateway callbacks not yet implemented. Object storage not needed yet (PDFs rendered on demand).
 
-**Exact next task**: Phase 4 — customer portal and support: customer accounts (User kind CUSTOMER linked to Subscriber) with separate session handling and ownership checks; portal pages for invoices/payments/receipts/profile; support tickets (staff + customer) with comments and timeline; email/SMS adapters (mock + SMTP) with notification records and preferences; notifications on invoice issue/payment receipt.
+**Next task at the time**: Phase 4 (completed below).
+
+### 2026-10-25 — Phase 4 (Customer portal, support, notifications)
+**Schema**: migration `20261025102814_portal_support_notifications` (CustomerAccount, CustomerSession, SupportTicket, TicketComment, TicketEvent, TicketAttachment, NotificationTemplate, Notification, NotificationPreference) wrapped in a transaction with attachment-size and single-author checks.
+
+**Defects found and fixed during the phase**
+- "Resolved requires a resolution" was only enforced by the API schema; direct service calls could bypass it. Now enforced in the service too.
+- Storage key validation rejected file extensions (no dot allowed). Fixed; covered by the attachment test.
+- The e2e suite had no worker, so it could not prove notification delivery. Added a worker health endpoint and Playwright now starts the real worker.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` | exit 0 |
+| `npm run typecheck` | exit 0 |
+| `npm run test` | 8 files, 64 tests passed (adds upload sniffing, filename sanitising, template rendering) |
+| `npm run test:integration` | 11 files, 94 tests passed (adds 12 portal/support/notification tests incl. cross-customer 404s, staff-API rejection, lockout/disable, invite token never stored, opt-outs, unconfigured → SKIPPED, attachment ownership) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 15 passed (adds: customer activates + signs in + views own invoice/PDF, other customer's invoice 404 (page + API), staff API 401 with customer session, portal ticket → staff reply + internal note hidden → notification delivered by the real worker as simulated; generic portal login failure) |
+
+**Still mocked / blocked**: messaging providers (mock only; SMTP/Africa's Talking unverified); S3 storage; portal online payment (phase 8).
+
+**Exact next task**: Phase 5 — reports and administration: reports (revenue, receivables/aging, subscribers, collections) with filters, Recharts charts and CSV exports (audited, time-limited downloads via ExportJob); staff management (invite, roles, branch scope, disable → session revoke, admin password reset); role/permission editor; branches CRUD; organization + billing settings (BillingSettings UI); audit log search; import/export job status; inventory (equipment) and integrations status pages.
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

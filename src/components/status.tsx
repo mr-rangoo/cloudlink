@@ -49,3 +49,6 @@ export function PaymentStatusBadge({ status }: { status: string }) {
 }
 
 export const METHOD_LABEL: Record<string, string> = { CASH: "Cash", BANK_TRANSFER: "Bank transfer", MPESA: "M-Pesa", CHEQUE: "Cheque", CARD: "Card", OTHER: "Other" };
+
+export const TICKET_TONE: Record<string, Tone> = { OPEN: "info", IN_PROGRESS: "warning", WAITING_ON_CUSTOMER: "neutral", RESOLVED: "success", CLOSED: "neutral" };
+export const PRIORITY_TONE: Record<string, Tone> = { LOW: "neutral", NORMAL: "info", HIGH: "warning", URGENT: "danger" };

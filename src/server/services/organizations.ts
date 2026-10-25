@@ -6,13 +6,17 @@ import { hashPassword, PASSWORD_MIN_LENGTH } from "@/server/security/crypto";
 import { normalizeEmail } from "@/server/auth/service";
 import { AppError } from "@/server/errors";
 
+/** Path segments used by the customer portal, which therefore cannot be organization slugs. */
+export const RESERVED_SLUGS = new Set(["home", "invoices", "payments", "tickets", "profile", "logout", "login", "activate", "api", "admin"]);
+
 export const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: z
     .string()
     .trim()
     .toLowerCase()
-    .regex(/^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/, "use lowercase letters, numbers and hyphens"),
+    .regex(/^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/, "use lowercase letters, numbers and hyphens")
+    .refine((v) => !RESERVED_SLUGS.has(v), "this name is reserved"),
   currency: z.string().length(3).default("KES"),
   timezone: z.string().default("Africa/Nairobi"),
   branch: z.object({ name: z.string().trim().min(2).max(120), code: z.string().trim().toUpperCase().min(2).max(16) }),

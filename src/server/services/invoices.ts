@@ -11,6 +11,8 @@ import { addLocalDays, endOfLocalDay, localDateKey } from "@/server/domain/time"
 import { actorUserId, lockRow, nextCounter, searchTerm } from "@/server/services/common";
 import { postLedger } from "@/server/services/ledger";
 import { adjustInvoiceSettlementTx, autoAllocateForSubscriberTx, lockInvoice } from "@/server/services/settlement";
+import { queueSubscriberNotificationTx } from "@/server/services/notifications";
+import { formatDate, formatMoney } from "@/lib/utils";
 import type { Invoice, Prisma, Subscription } from "@/generated/prisma/client";
 
 const dec = (v: { toString(): string }) => new D(v.toString());
@@ -160,7 +162,17 @@ export async function issueInvoiceTx(tx: Tx, ctx: ActorContext, invoiceId: strin
     ],
   });
   await autoAllocateForSubscriberTx(tx, ctx, invoice.subscriberId);
-  return tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+  const final = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+  // Only invoices still owing something are announced (an invoice fully covered by existing credit is not).
+  if (final.status !== "PAID") {
+    await queueSubscriberNotificationTx(tx, ctx.organizationId, {
+      subscriberId: invoice.subscriberId,
+      key: "invoice.issued",
+      vars: { invoiceNumber, amount: formatMoney(final.balanceDue.toString(), final.currency), dueDate: formatDate(dueAt, org.timezone) },
+      dedupeBase: `invoice.issued:${invoiceId}`,
+    });
+  }
+  return final;
 }
 
 /** Invoice for one subscription period, built from the subscription's commercial snapshot. Idempotent per period. */

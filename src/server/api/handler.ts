@@ -4,7 +4,8 @@ import { z, ZodError, type ZodType } from "zod";
 import { AppError, isAppError, toEnvelope, type FieldIssue } from "@/server/errors";
 import { logger } from "@/server/observability/logger";
 import { resolveSession, SESSION_COOKIE } from "@/server/auth/session";
-import { loadStaffContext, requirePermission, type RequestMeta, type StaffContext } from "@/server/auth/context";
+import { loadStaffContext, requirePermission, type CustomerContext, type RequestMeta, type StaffContext } from "@/server/auth/context";
+import { PORTAL_COOKIE, resolveCustomerContext } from "@/server/portal/auth";
 import type { PermissionKey } from "@/server/auth/permissions";
 import { Prisma } from "@/generated/prisma/client";
 import { withIdempotency } from "@/server/api/idempotency";
@@ -164,6 +165,48 @@ export function staffRoute<B extends ZodType = ZodType<undefined>, Q extends Zod
       return errorResponse(err, meta.correlationId);
     }
   };
+}
+
+export interface CustomerArgs<B, Q, P> extends BaseArgs<B, Q, P> {
+  ctx: CustomerContext;
+}
+
+/**
+ * Customer-portal endpoint. The context is bound to one subscriber; handlers must scope every query by
+ * `ctx.subscriberId` and never accept a subscriber id from the request.
+ */
+export function customerRoute<B extends ZodType = ZodType<undefined>, Q extends ZodType = ZodType<unknown>, P extends ZodType = ZodType<unknown>>(
+  opts: Schemas<B, Q, P>,
+  fn: (args: CustomerArgs<z.output<B>, z.output<Q>, z.output<P>>) => Promise<Result>,
+) {
+  return async (req: NextRequest, routeCtx?: RouteParams): Promise<Response> => {
+    const meta = getRequestMeta(req);
+    try {
+      if (UNSAFE_METHODS.has(req.method)) assertSameOrigin(req);
+      const ctx = await resolveCustomerContext(req.cookies.get(PORTAL_COOKIE)?.value, meta);
+      if (!ctx) throw new AppError("UNAUTHENTICATED");
+      const { params, query, body } = await parseInputs(req, routeCtx, opts);
+      return toResponse(await fn({ req, meta, ctx, params, query, body }), meta.correlationId);
+    } catch (err) {
+      return errorResponse(err, meta.correlationId);
+    }
+  };
+}
+
+/** Read a single uploaded file from multipart form data with a hard size limit. */
+export async function readUploadedFile(req: Request, field = "file", maxBytes = 5 * 1024 * 1024 + 64 * 1024): Promise<{ name: string; data: Buffer }> {
+  const len = Number(req.headers.get("content-length") ?? 0);
+  if (len > maxBytes + 16 * 1024) throw new AppError("VALIDATION_ERROR", "Files must be 5 MB or smaller.");
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    throw new AppError("VALIDATION_ERROR", "Upload a file using multipart/form-data.");
+  }
+  const file = form.get(field);
+  if (!file || typeof file === "string") throw new AppError("VALIDATION_ERROR", "No file was uploaded.");
+  if (file.size > maxBytes) throw new AppError("VALIDATION_ERROR", "Files must be 5 MB or smaller.");
+  return { name: file.name, data: Buffer.from(await file.arrayBuffer()) };
 }
 
 /** Unauthenticated endpoint (login, health, webhooks). Callers must add their own protections. */

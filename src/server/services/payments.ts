@@ -9,6 +9,9 @@ import { actorUserId, nextCounter, searchTerm } from "@/server/services/common";
 import { cashAccountFor, postLedger } from "@/server/services/ledger";
 import { allocateTx, autoAllocateForSubscriberTx, lockPayment, reverseAllocationTx, unallocatedOf, type AllocationResult } from "@/server/services/settlement";
 import { getBillingSettings } from "@/server/services/invoices";
+import { queueSubscriberNotificationTx } from "@/server/services/notifications";
+import { subscriberLedgerBalance } from "@/server/services/ledger";
+import { formatMoney } from "@/lib/utils";
 import type { Payment, PaymentMethod, Prisma } from "@/generated/prisma/client";
 
 const dec = (v: { toString(): string }) => new D(v.toString());
@@ -113,6 +116,7 @@ export async function recordManualPayment(ctx: ActorContext, input: z.infer<type
         allocations = await autoAllocateForSubscriberTx(tx, ctx, input.subscriberId, payment.id);
       }
     }
+    if (input.subscriberId) await notifyPaymentReceivedTx(tx, ctx.organizationId, payment.id);
     return { payment: await tx.payment.findUniqueOrThrow({ where: { id: payment.id } }), allocations };
   });
   await audit(ctx, {
@@ -246,10 +250,25 @@ export async function reconcilePayment(ctx: ActorContext, paymentId: string, inp
       data: { organizationId: ctx.organizationId, paymentId, action: "matched", outcome: "assigned", details: { subscriberId: sub.id }, actorUserId: actorUserId(ctx) },
     });
     const allocations = input.autoAllocate ? await autoAllocateForSubscriberTx(tx, ctx, sub.id, paymentId) : [];
+    await notifyPaymentReceivedTx(tx, ctx.organizationId, paymentId);
     return { allocations };
   });
   await audit(ctx, { action: "payment.reconcile", entityType: "payment", entityId: paymentId, metadata: { subscriberId: input.subscriberId, allocations: result.allocations.length } });
   return result;
+}
+
+/** Queue the payment confirmation message (receipt number + resulting balance). Idempotent per payment. */
+export async function notifyPaymentReceivedTx(tx: Tx, organizationId: string, paymentId: string) {
+  const p = await tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  if (!p.subscriberId || p.status !== "CONFIRMED") return;
+  const bal = await subscriberLedgerBalance(tx, organizationId, p.subscriberId);
+  const balance = bal.net.gt(0) ? `${formatMoney(bal.net.toFixed(2), p.currency)} due` : bal.net.lt(0) ? `${formatMoney(bal.net.abs().toFixed(2), p.currency)} credit` : "fully paid";
+  await queueSubscriberNotificationTx(tx, organizationId, {
+    subscriberId: p.subscriberId,
+    key: "payment.received",
+    vars: { amount: formatMoney(p.amount.toString(), p.currency), receiptNumber: p.receiptNumber ?? "", balance },
+    dedupeBase: `payment.received:${paymentId}`,
+  });
 }
 
 async function assertVisible(ctx: ActorContext, paymentId: string) {

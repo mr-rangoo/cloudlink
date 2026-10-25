@@ -5,6 +5,9 @@ import { logger } from "@/server/observability/logger";
 import { systemContext } from "@/server/auth/context";
 import { expireDueSubscriptions } from "@/server/services/subscriptions";
 import { runRecurringBilling } from "@/server/services/invoices";
+import { deliverNotification } from "@/server/services/notifications";
+import { inviteLink, mintInviteToken } from "@/server/portal/auth";
+import { db } from "@/server/db/client";
 
 /**
  * Registry of background operation handlers shared by the worker and tests.
@@ -33,5 +36,21 @@ export const operationHandlers: OperationHandlers = {
     const result = await runRecurringBilling(ctx);
     if (result.created) logger.info({ organizationId: op.organizationId, ...result }, "recurring invoices generated");
     return result;
+  },
+
+  /** Deliver one notification through the configured adapter (mock / SMTP / SMS provider). */
+  "notifications.send": async (op) => {
+    const { notificationId } = op.payload as { notificationId?: string };
+    if (!notificationId) throw new PermanentError("notificationId missing", "BAD_PAYLOAD");
+    const n = await db.notification.findUnique({ where: { id: notificationId }, select: { templateKey: true, subscriberId: true, organizationId: true } });
+    if (n?.templateKey !== "portal.invite") return deliverNotification(notificationId);
+    // Portal invites: mint the single-use token now so it is never stored in plaintext.
+    await deliverNotification(notificationId, async (row) => {
+      const account = n.subscriberId ? await db.customerAccount.findUnique({ where: { subscriberId: n.subscriberId } }) : null;
+      if (!account || account.status === "DISABLED") throw new PermanentError("portal access disabled", "PORTAL_DISABLED");
+      const org = await db.organization.findUniqueOrThrow({ where: { id: n.organizationId }, select: { slug: true } });
+      const link = inviteLink(org.slug, await mintInviteToken(account.id));
+      return { send: row.body.replaceAll("{{link}}", link), store: row.body.replaceAll("{{link}}", "[secure link sent - not stored]") };
+    });
   },
 };
