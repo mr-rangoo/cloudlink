@@ -5,6 +5,7 @@ import { getInvoice } from "@/server/services/invoices";
 import { getPayment } from "@/server/services/payments";
 import { getBillingSettings } from "@/server/services/invoices";
 import { renderInvoicePdf, renderReceiptPdf } from "@/server/documents/pdf";
+import { activePaymentInstructions } from "@/server/services/payment-methods";
 
 async function orgHeader(organizationId: string) {
   const [org, settings] = await Promise.all([db.organization.findUniqueOrThrow({ where: { id: organizationId } }), getBillingSettings(db, organizationId)]);
@@ -29,6 +30,7 @@ export async function invoicePdf(ctx: ActorContext, id: string) {
     org: await orgHeader(ctx.organizationId),
     invoice: inv,
     subscriber: { ...inv.subscriber, address: addr ? [addr.line1, addr.area, addr.town].filter(Boolean).join(", ") : null },
+    howToPay: await activePaymentInstructions(ctx.organizationId, inv.subscriber.accountNumber),
   });
   return { pdf, filename: `${inv.invoiceNumber ?? "draft-invoice"}.pdf` };
 }

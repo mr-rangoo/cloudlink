@@ -12,6 +12,8 @@ import { formatDate, formatMoney } from "@/lib/utils";
 import { db } from "@/server/db/client";
 import { paymentAdapterMode } from "@/server/services/mpesa-config";
 import { PortalPayForm } from "../../pay-form";
+import { PaymentMethodsList } from "../../payment-methods";
+import { activePaymentInstructions } from "@/server/services/payment-methods";
 
 export const metadata: Metadata = { title: "Invoice · Customer portal" };
 
@@ -32,7 +34,8 @@ export default async function PortalInvoice({ params }: { params: Promise<{ id: 
   const paymentMode = paymentAdapterMode();
   const open = inv.status === "OPEN" || inv.status === "PARTIALLY_PAID";
   const payable = inv.status !== "VOID" && inv.status !== "DRAFT" && paymentMode !== "disabled" && inv.currency === "KES";
-  const payer = payable ? await db.subscriber.findUnique({ where: { id: ctx.subscriberId }, select: { phone: true } }) : null;
+  const payer = payable ? await db.subscriber.findUnique({ where: { id: ctx.subscriberId }, select: { phone: true, accountNumber: true } }) : null;
+  const methods = payer ? await activePaymentInstructions(ctx.organizationId, payer.accountNumber) : [];
 
   return (
     <div className="space-y-4">
@@ -81,6 +84,12 @@ export default async function PortalInvoice({ params }: { params: Promise<{ id: 
           </CardHeader>
           <CardContent>
             <PortalPayForm phone={payer?.phone ?? ""} amount={Math.ceil(Number(inv.balanceDue.toString()))} invoiceId={inv.id} simulated={paymentMode === "mock"} closed={!open} />
+            {open && methods.length ? (
+              <div className="mt-4 space-y-2 border-t border-border pt-4">
+                <p className="text-sm font-medium">Other ways to pay</p>
+                <PaymentMethodsList methods={methods} accountNumber={payer?.accountNumber ?? ""} />
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

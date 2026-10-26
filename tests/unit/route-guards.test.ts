@@ -22,6 +22,7 @@ const RAW_ROUTES: Record<string, string> = {
   "v1/health/ready/route.ts": "readiness, coarse statuses only",
   "v1/openapi.json/route.ts": "API contract, no tenant data",
   "v1/routers/setup/[token]/route.ts": "router setup script (single-use token, rate-limited)",
+  "v1/branding/[slug]/logo/route.ts": "organization logo image for portal/hotspot pages (public by design)",
 };
 
 function routeFiles(dir: string): string[] {

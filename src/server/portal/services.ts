@@ -5,6 +5,7 @@ import { notFound } from "@/server/errors";
 import { subscriberLedgerBalance } from "@/server/services/ledger";
 import { getBillingSettings } from "@/server/services/invoices";
 import { unallocatedOf } from "@/server/services/settlement";
+import { activePaymentInstructions } from "@/server/services/payment-methods";
 import { renderInvoicePdf, renderReceiptPdf } from "@/server/documents/pdf";
 
 /**
@@ -62,7 +63,12 @@ export async function customerInvoicePdf(ctx: CustomerContext, id: string) {
   const inv = await getCustomerInvoice(ctx, id);
   const sub = await db.subscriber.findUniqueOrThrow({ where: { id: ctx.subscriberId }, select: { displayName: true, accountNumber: true, phone: true, email: true, addresses: { take: 1 } } });
   const a = sub.addresses[0];
-  const pdf = await renderInvoicePdf({ org: await orgHeader(ctx.organizationId), invoice: inv, subscriber: { ...sub, address: a ? [a.line1, a.area, a.town].filter(Boolean).join(", ") : null } });
+  const pdf = await renderInvoicePdf({
+    org: await orgHeader(ctx.organizationId),
+    invoice: inv,
+    subscriber: { ...sub, address: a ? [a.line1, a.area, a.town].filter(Boolean).join(", ") : null },
+    howToPay: await activePaymentInstructions(ctx.organizationId, sub.accountNumber),
+  });
   return { pdf, filename: `${inv.invoiceNumber}.pdf` };
 }
 

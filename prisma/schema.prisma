@@ -1646,3 +1646,35 @@ model WebhookEvent {
   @@index([organizationId, receivedAt])
   @@index([status, receivedAt])
 }
+
+// ───────────────────────── Branding and customer payment methods ─────────────────────────
+
+// Look and feel chosen by the organization: theme preset, optional brand colour, default light/dark mode, logo.
+model OrganizationBranding {
+  organizationId  String    @id @db.Uuid
+  themePreset     String    @default("midnight")
+  customAccent    String? // #rrggbb, contrast-checked on save
+  defaultMode     String    @default("light") // light | dark | system
+  logoKey         String? // storage key; image sniffed as PNG/JPEG/WebP on upload
+  logoContentType String?
+  logoUpdatedAt   DateTime? @db.Timestamptz(6)
+  portalWelcome   String?
+  supportHours    String?
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+// How customers can pay, shown in the portal, on invoices and on the hotspot page.
+model CustomerPaymentMethod {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  kind           String // MPESA_PAYBILL | MPESA_TILL | BANK | CASH | OTHER
+  label          String
+  details        Json // validated per kind; no secrets
+  instructions   String?
+  active         Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([organizationId, active, sortOrder])
+}

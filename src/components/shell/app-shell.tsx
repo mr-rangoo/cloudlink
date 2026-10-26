@@ -29,6 +29,8 @@ export interface ShellProps {
   permissions: string[];
   theme: "light" | "dark" | "system";
   isDemo: boolean;
+  /** Organization logo for the sidebar; the Cloudlink wordmark is shown when there is none. */
+  brand?: { name: string; logoUrl: string | null };
   children: React.ReactNode;
 }
 
@@ -97,7 +99,7 @@ export function AppShell(props: ShellProps) {
         className={cn("sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 lg:flex", collapsed ? "w-[68px]" : "w-64")}
         aria-label="Primary"
       >
-        <SidebarContent items={items} collapsed={collapsed} pathname={pathname} />
+        <SidebarContent items={items} collapsed={collapsed} pathname={pathname} brand={props.brand} />
         <button
           type="button"
           onClick={toggleCollapsed}
@@ -117,7 +119,7 @@ export function AppShell(props: ShellProps) {
             <Dialog.Close className="absolute right-3 top-4 rounded-md p-1.5 text-sidebar-muted hover:text-white" aria-label="Close navigation">
               <X className="size-5" />
             </Dialog.Close>
-            <SidebarContent items={items} collapsed={false} pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+            <SidebarContent items={items} collapsed={false} pathname={pathname} brand={props.brand} onNavigate={() => setMobileOpen(false)} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
@@ -149,7 +151,7 @@ function PageTransition({ pathname, children }: { pathname: string; children: Re
   );
 }
 
-function SidebarContent({ items, collapsed, pathname, onNavigate }: { items: NavItem[]; collapsed: boolean; pathname: string; onNavigate?: () => void }) {
+function SidebarContent({ items, collapsed, pathname, onNavigate, brand }: { items: NavItem[]; collapsed: boolean; pathname: string; onNavigate?: () => void; brand?: ShellProps["brand"] }) {
   const groups = React.useMemo(() => {
     const map = new Map<string, NavItem[]>();
     for (const i of items) map.set(i.group, [...(map.get(i.group) ?? []), i]);
@@ -159,8 +161,16 @@ function SidebarContent({ items, collapsed, pathname, onNavigate }: { items: Nav
   return (
     <>
       <div className={cn("flex h-16 items-center border-b border-sidebar-border", collapsed ? "justify-center px-2" : "px-5")}>
-        <Link href="/dashboard" className="rounded-md" aria-label="Cloudlink dashboard">
-          <CloudlinkWordmark collapsed={collapsed} />
+        <Link href="/dashboard" className="rounded-md" aria-label={`${brand?.name ?? "Cloudlink"} dashboard`}>
+          {brand?.logoUrl ? (
+            <span className="flex items-center gap-2.5">
+              {/* eslint-disable-next-line @next/next/no-img-element -- organization logo served by the app */}
+              <img src={brand.logoUrl} alt="" className="size-8 rounded-md bg-white object-contain p-0.5" />
+              {collapsed ? <span className="sr-only">{brand.name}</span> : <span className="max-w-[10rem] truncate text-[15px] font-semibold tracking-tight text-white">{brand.name}</span>}
+            </span>
+          ) : (
+            <CloudlinkWordmark collapsed={collapsed} />
+          )}
         </Link>
       </div>
       <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Main navigation">

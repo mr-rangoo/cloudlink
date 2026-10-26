@@ -89,6 +89,8 @@ export interface InvoicePdfData {
     lines: Array<{ description: string; quantity: Money; unitPrice: Money; discount: Money; taxRate: Money; taxAmount: Money; lineTotal: Money }>;
   };
   subscriber: { displayName: string; accountNumber: string; phone: string; email: string | null; address?: string | null };
+  /** Active customer payment methods, already personalised with the account number. */
+  howToPay?: Array<{ label: string; lines: string[]; note?: string | null }>;
 }
 
 export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
@@ -141,6 +143,32 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
 
   if (inv.notes) {
     doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(inv.notes, 50, y + 10, { width: 260 });
+    y = Math.max(y, doc.y);
+  }
+  const methods = inv.status === "VOID" || inv.status === "PAID" ? [] : (data.howToPay ?? []);
+  if (methods.length) {
+    y += 24;
+    if (y > 680) {
+      doc.addPage();
+      y = 60;
+    }
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(MUTED).text("HOW TO PAY", 50, y);
+    y += 14;
+    const colWidth = 160;
+    let col = 0;
+    let rowTop = y;
+    let rowBottom = y;
+    for (const m of methods.slice(0, 6)) {
+      const x = 50 + col * (colWidth + 7);
+      doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a").text(m.label, x, rowTop, { width: colWidth });
+      doc.font("Helvetica").fontSize(8).fillColor("#334155").text([...m.lines, ...(m.note ? [m.note] : [])].join("\n"), x, doc.y + 2, { width: colWidth });
+      rowBottom = Math.max(rowBottom, doc.y);
+      col++;
+      if (col === 3) {
+        col = 0;
+        rowTop = rowBottom + 10;
+      }
+    }
   }
   footer(doc, org, `Pay with your account number ${subscriber.accountNumber} as the reference.`);
   return toBuffer(doc);

@@ -8,6 +8,9 @@ import { METHOD_LABEL, SubscriptionStatusBadge, formatInterval } from "@/compone
 import { formatDate, formatMoney } from "@/lib/utils";
 import { paymentAdapterMode } from "@/server/services/mpesa-config";
 import { PortalPayForm } from "../pay-form";
+import { brandingFor } from "@/server/services/branding";
+import { activePaymentInstructions } from "@/server/services/payment-methods";
+import { PaymentMethodsList } from "../payment-methods";
 
 export const metadata: Metadata = { title: "My account · Customer portal" };
 
@@ -17,6 +20,7 @@ export default async function PortalHome() {
   const cur = ctx.organization.currency;
   const tz = ctx.organization.timezone;
   const net = Number(o.balance.net);
+  const [{ portalWelcome: welcome }, methods] = await Promise.all([brandingFor(ctx.organizationId), activePaymentInstructions(ctx.organizationId, o.subscriber.accountNumber)]);
   const paymentMode = paymentAdapterMode();
   const payOnline = paymentMode !== "disabled" && cur === "KES";
 
@@ -25,6 +29,7 @@ export default async function PortalHome() {
       <div className="space-y-1">
         <h1 className="text-xl font-semibold">Hello, {o.subscriber.displayName.split(" ")[0]}</h1>
         <p className="text-sm text-muted-foreground">Account number {o.subscriber.accountNumber}</p>
+        {welcome ? <p className="pt-1 text-sm">{welcome}</p> : null}
       </div>
 
       <Card className={net > 0 ? "border-danger/30" : undefined}>
@@ -32,11 +37,9 @@ export default async function PortalHome() {
           <p className="text-sm text-muted-foreground">{net > 0 ? "Amount due" : net < 0 ? "Account credit" : "Balance"}</p>
           <p className={`tabular text-3xl font-semibold ${net > 0 ? "text-danger" : "text-success"}`}>{formatMoney(Math.abs(net).toFixed(2), cur)}</p>
           {net > 0 ? (
-            <div className="rounded-md bg-surface-muted p-3 text-sm">
+            <div className="space-y-2 rounded-md bg-surface-muted p-3 text-sm">
               <p className="font-medium">{payOnline ? "Other ways to pay" : "How to pay"}</p>
-              <p className="text-muted-foreground">
-                Pay by M-Pesa paybill or bank transfer using your account number <span className="font-mono font-semibold text-foreground">{o.subscriber.accountNumber}</span> as the reference. Payments appear here once your provider confirms them.
-              </p>
+              <PaymentMethodsList methods={methods} accountNumber={o.subscriber.accountNumber} />
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">You are all paid up. Thank you!</p>

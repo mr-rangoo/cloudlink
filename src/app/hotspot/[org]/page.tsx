@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Wifi } from "lucide-react";
-import { db } from "@/server/db/client";
+import { brandingForSlug } from "@/server/services/branding";
+import { BrandMark, DefaultMode } from "@/components/brand";
 import { HotspotForm } from "./form";
 
 export const metadata: Metadata = { title: "WiFi access", robots: { index: false } };
@@ -13,8 +14,8 @@ export const metadata: Metadata = { title: "WiFi access", robots: { index: false
 export default async function HotspotPage({ params, searchParams }: { params: Promise<{ org: string }>; searchParams: Promise<Record<string, string | undefined>> }) {
   const { org } = await params;
   if (!/^[a-z0-9-]{1,50}$/.test(org)) notFound();
-  const organization = await db.organization.findUnique({ where: { slug: org }, select: { name: true, status: true } });
-  if (!organization || organization.status !== "ACTIVE") notFound();
+  const organization = await brandingForSlug(org);
+  if (!organization) notFound();
   const sp = await searchParams;
   const mac = sp.mac && /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(sp.mac) ? sp.mac.toUpperCase() : null;
   const ip = sp.ip && /^\d{1,3}(\.\d{1,3}){3}$/.test(sp.ip) ? sp.ip : null;
@@ -22,12 +23,18 @@ export default async function HotspotPage({ params, searchParams }: { params: Pr
   const loginUrl = sp["link-login-only"] && /^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)[\d.]+(:\d+)?\/login$/.test(sp["link-login-only"]) ? sp["link-login-only"] : null;
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-sidebar to-[#122544] px-5 py-10">
+    <main className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-sidebar to-sidebar-active px-5 py-10">
+      <style>{organization.css}</style>
+      <DefaultMode mode={organization.defaultMode} />
       <div className="w-full max-w-sm space-y-6 rounded-2xl bg-surface p-6 shadow-(--shadow-pop)">
         <div className="flex items-center gap-3">
-          <div className="flex size-11 items-center justify-center rounded-full bg-accent-soft text-accent">
-            <Wifi className="size-5" aria-hidden />
-          </div>
+          {organization.logoUrl ? (
+            <BrandMark logoUrl={organization.logoUrl} className="size-11" />
+          ) : (
+            <div className="flex size-11 items-center justify-center rounded-full bg-accent-soft text-accent">
+              <Wifi className="size-5" aria-hidden />
+            </div>
+          )}
           <div>
             <h1 className="text-lg font-semibold leading-tight">{organization.name}</h1>
             <p className="text-sm text-muted-foreground">Enter your voucher code to get online</p>

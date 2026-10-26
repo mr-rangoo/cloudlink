@@ -21,6 +21,8 @@ import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from 
 import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
 import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } from "@/server/services/mobile-money";
 import { mpesaConfigInput } from "@/server/services/mpesa-config";
+import { brandingInput } from "@/server/services/branding";
+import { paymentMethodInput, paymentMethodUpdate } from "@/server/services/payment-methods";
 import { c2bConfirmationSchema, stkCallbackSchema } from "@/server/domain/mpesa";
 
 /**
@@ -236,6 +238,17 @@ export const operations: Operation[] = [
   { method: "post", path: "/subscriptions/:id/network", summary: "Provision or move PPPoE access (queues an operation)", tag: "Network", auth: "session", permission: "network.operate", body: provisionInput, responses: { "202": "Queued" } },
   { method: "post", path: "/subscriptions/:id/network/credentials", summary: "Reveal PPPoE credentials (audited, never cached or stored)", tag: "Network", auth: "session", permission: "network.operate" },
   { method: "post", path: "/subscriptions/:id/network/deprovision", summary: "Remove network access and stored credentials", tag: "Network", auth: "session", permission: "network.operate", body: deprovisionInput, responses: { "202": "Queued" } },
+  // Phase 10: branding and customer payment methods
+  { method: "get", path: "/settings/branding", summary: "Theme, brand colour, default appearance, logo and portal texts", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "put", path: "/settings/branding", summary: "Save branding (brand colour is contrast-checked)", tag: "Settings", auth: "session", permission: "settings.write", body: brandingInput },
+  { method: "post", path: "/settings/branding/logo", summary: "Upload the logo (multipart file; PNG/JPEG/WebP, 512 KB)", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "delete", path: "/settings/branding/logo", summary: "Remove the logo", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "get", path: "/branding/:slug/logo", summary: "Public organization logo", tag: "Settings", auth: "none" },
+  { method: "get", path: "/settings/payment-methods", summary: "Ways customers can pay", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "post", path: "/settings/payment-methods", summary: "Add a payment method (paybill, till, bank, cash, other)", tag: "Settings", auth: "session", permission: "settings.write", body: paymentMethodInput },
+  { method: "put", path: "/settings/payment-methods/:id", summary: "Replace a payment method", tag: "Settings", auth: "session", permission: "settings.write", body: paymentMethodInput },
+  { method: "patch", path: "/settings/payment-methods/:id", summary: "Show/hide or reorder", tag: "Settings", auth: "session", permission: "settings.write", body: paymentMethodUpdate },
+  { method: "delete", path: "/settings/payment-methods/:id", summary: "Remove a payment method", tag: "Settings", auth: "session", permission: "settings.write" },
   // Phase 8: M-Pesa (Daraja) payment requests, callbacks and configuration
   { method: "post", path: "/payments/mpesa/stk-push", summary: "Prompt a subscriber's phone to pay (STK Push); money is recorded only on a verified callback", tag: "Payments", auth: "session", permission: "payments.initiate", body: stkPushInput, idempotent: true, responses: { "202": "Request sent", "503": "M-Pesa not configured" } },
   { method: "get", path: "/payments/attempts", summary: "M-Pesa payment requests and outcomes", tag: "Payments", auth: "session", permission: "payments.read", query: attemptListQuery },

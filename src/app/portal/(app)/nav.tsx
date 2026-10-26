@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
-import { CloudlinkMark } from "@/components/shell/logo";
+import { BrandMark, ThemeToggle } from "@/components/brand";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
@@ -15,7 +15,7 @@ const LINKS = [
   { href: "/portal/profile", label: "Profile" },
 ];
 
-export function PortalNav({ organization, customer }: { organization: string; customer: string }) {
+export function PortalNav({ organization, customer, logoUrl, mode }: { organization: string; customer: string; logoUrl: string | null; mode: "light" | "dark" | "system" }) {
   const pathname = usePathname();
   const router = useRouter();
   const logout = async () => {
@@ -32,12 +32,15 @@ export function PortalNav({ organization, customer }: { organization: string; cu
         Skip to content
       </a>
       <div className="mx-auto flex h-14 max-w-4xl items-center gap-3 px-4 sm:px-6">
-        <CloudlinkMark className="size-7" />
+        <BrandMark logoUrl={logoUrl} className="size-7" />
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold leading-tight">{organization}</p>
           <p className="truncate text-xs text-muted-foreground">{customer}</p>
         </div>
-        <button type="button" onClick={logout} className="ml-auto inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-surface-muted hover:text-foreground">
+        <div className="ml-auto">
+          <ThemeToggle fallback={mode} />
+        </div>
+        <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-surface-muted hover:text-foreground">
           <LogOut className="size-4" aria-hidden /> Sign out
         </button>
       </div>
