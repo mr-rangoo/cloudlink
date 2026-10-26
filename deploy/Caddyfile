@@ -1,0 +1,15 @@
+# TLS termination and reverse proxy for Cloudlink (automatic HTTPS certificates).
+# Caddy replaces any X-Forwarded-For sent by clients, so Cloudlink sees the real client address
+# (used for rate limits, audit logs and the optional M-Pesa callback allowlist).
+{$CLOUDLINK_DOMAIN} {
+	encode zstd gzip
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy web:3000
+	header -Server
+	log {
+		output stdout
+		format json
+	}
+}

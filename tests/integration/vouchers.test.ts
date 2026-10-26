@@ -113,6 +113,15 @@ describe("redemption", () => {
     expect(limited).toBe(true);
   });
 
+  it("does not throttle many customers redeeming valid vouchers from one hotspot address", async () => {
+    const { org, ctx, pkg } = await setup();
+    const { codes } = await generateBatch(ctx, { packageId: pkg.id, quantity: 15, codeLength: 10 });
+    for (const code of codes) {
+      const r = await redeemFromPortal(org.organization.slug, { code }, meta("10.20.9.9"));
+      expect(r.redemptionId).toBeTruthy();
+    }
+  });
+
   it("marks activation FAILED with the reason when network automation is unavailable", async () => {
     const { ctx, pkg } = await setup();
     const { codes } = await generateBatch(ctx, { packageId: pkg.id, quantity: 1, codeLength: 10 });

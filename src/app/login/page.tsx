@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { resolveSession, SESSION_COOKIE } from "@/server/auth/session";
 import { CloudlinkMark } from "@/components/shell/logo";
 import { LoginForm } from "./login-form";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -13,7 +14,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (session && params.reason !== "access") redirect("/dashboard");
 
   // Only allow same-site relative redirects after login.
-  const next = params.next && params.next.startsWith("/") && !params.next.startsWith("//") ? params.next : "/dashboard";
+  const next = safeRedirectPath(params.next);
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">

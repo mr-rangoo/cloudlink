@@ -1,3 +1,15 @@
+# Cloudlink
+
+ISP billing, subscriber management, payments (M-Pesa) and MikroTik/RADIUS network operations for Kenya.
+This repository contains the application built from the kit below.
+
+- **Start here:** `docs/HANDOVER.md`, which covers what is built, what is verified, and what you need to provide next.
+- **Run locally:** `docs/LOCAL_SETUP.md`.
+- **Deploy and operate:** `docs/DEPLOYMENT_GUIDE.md` and `docs/OPERATIONS.md`.
+- **Progress and evidence:** `IMPLEMENTATION_PLAN.md`.
+
+---
+
 # Cloudlink — Agent Implementation Kit
 
 This kit guides Claude Code or OpenAI Codex through building **Cloudlink**, a full ISP billing, customer management, payments, and network operations platform.

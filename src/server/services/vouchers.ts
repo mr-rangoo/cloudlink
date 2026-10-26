@@ -12,7 +12,7 @@ import { normalizePhone } from "@/server/domain/contact";
 import { actorUserId, nextCounter } from "@/server/services/common";
 import { cashAccountFor, postLedger } from "@/server/services/ledger";
 import { defaultHotspotRouterId, dispatchNetworkOperations, requestNetworkOperationTx } from "@/server/services/network";
-import { consumeRateLimit, RATE_LIMITS } from "@/server/security/rate-limit";
+import { consumeRateLimit, RATE_LIMITS, refundRateLimit } from "@/server/security/rate-limit";
 import type { Prisma } from "@/generated/prisma/client";
 
 const dec = (v: { toString(): string }) => new D(v.toString());
@@ -341,17 +341,33 @@ export async function redeemVoucher(ctx: ActorContext, input: z.infer<typeof red
   return { redemptionId: result.redemption.id, packageName: result.batch.packageName, accessEndsAt: result.redemption.accessEndsAt, activationStatus: result.redemption.activationStatus };
 }
 
-/** Public captive-portal redemption: organization by slug, rate-limited per IP and per organization. */
+/**
+ * Public captive-portal redemption: organization by slug, rate-limited per IP and per organization.
+ * The per-IP budget counts failures only (a success gives its unit back): customers at one hotspot share the
+ * site's public address, while guessing codes is still throttled.
+ */
 export async function redeemFromPortal(orgSlug: string, input: z.infer<typeof redeemInput>, meta: { ipAddress: string | null; userAgent: string | null; correlationId: string }) {
-  await consumeRateLimit(RATE_LIMITS.voucherRedeem, `ip:${meta.ipAddress ?? "unknown"}`);
+  const ipKey = `ip:${meta.ipAddress ?? "unknown"}`;
+  await consumeRateLimit(RATE_LIMITS.voucherRedeem, ipKey);
   const org = await db.organization.findUnique({ where: { slug: orgSlug }, select: { id: true, status: true } });
   if (!org || org.status !== "ACTIVE") throw new AppError("NOT_FOUND", "Unknown hotspot.");
   await consumeRateLimit({ name: "voucher:org", limit: 600, windowSeconds: 60 }, org.id);
   const ctx = systemContext(org.id, "hotspot:portal", meta.correlationId);
-  return redeemVoucher({ ...ctx, ipAddress: meta.ipAddress, userAgent: meta.userAgent }, { ...input, ip: input.ip ?? meta.ipAddress }, "captive_portal");
+  const result = await redeemVoucher({ ...ctx, ipAddress: meta.ipAddress, userAgent: meta.userAgent }, { ...input, ip: input.ip ?? meta.ipAddress }, "captive_portal");
+  await refundRateLimit(RATE_LIMITS.voucherRedeem, ipKey);
+  return result;
 }
 
-/** Status poll for the captive portal; requires the voucher code as proof of possession. */
+/** Status poll for the captive portal; requires the voucher code as proof of possession. Failed checks are rate-limited. */
+export async function portalRedemptionStatusLimited(orgSlug: string, redemptionId: string, code: string, ipAddress: string | null) {
+  const rule = { name: "voucher:status", limit: 60, windowSeconds: 10 * 60 };
+  const key = `ip:${ipAddress ?? "unknown"}`;
+  await consumeRateLimit(rule, key);
+  const status = await portalRedemptionStatus(orgSlug, redemptionId, code);
+  await refundRateLimit(rule, key);
+  return status;
+}
+
 export async function portalRedemptionStatus(orgSlug: string, redemptionId: string, code: string) {
   const org = await db.organization.findUnique({ where: { slug: orgSlug }, select: { id: true } });
   if (!org) throw notFound("redemption");

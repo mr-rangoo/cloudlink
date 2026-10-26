@@ -66,6 +66,13 @@ export async function revokeAllUserSessions(userId: string, exceptSessionId?: st
   return res.count;
 }
 
+/** Clearing a cookie must repeat its Secure flag, or browsers ignore it for __Host- cookies. */
+export function clearedCookieOptions() {
+  const { expires: _unused, ...rest } = sessionCookieOptions(new Date(0));
+  void _unused;
+  return { ...rest, maxAge: 0 };
+}
+
 export function sessionCookieOptions(expiresAt: Date) {
   const secure = process.env.APP_ENV === "production" || (process.env.APP_URL ?? "").startsWith("https://");
   return {

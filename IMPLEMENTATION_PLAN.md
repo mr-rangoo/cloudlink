@@ -7,6 +7,7 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Existing work preserved. All kit documents kept; `.env.example` extended (not replaced in meaning); `.gitignore` extended.
 - [x] Architecture confirmed — see `docs/ARCHITECTURE.md`.
 - [x] Initial implementation plan reviewed.
+- [x] Phases 1–9 complete (2026-10-26). Remaining work needs external credentials, hardware or authorization — see the phase 9 work log and `docs/HANDOVER.md`.
 
 ## Integration status (truthful)
 | Integration | Status | Notes |
@@ -93,15 +94,15 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Additional gateway adapter interface — `PaymentGateway` (request, query, test credentials, register C2B) with Daraja and mock implementations; documented in `docs/PAYMENTS.md`.
 - [ ] Production verification — **blocked**: requires approved production credentials and a real payment.
 
-## Phase 9 — Release readiness
-- [ ] Full automated test suite passes.
-- [ ] Typecheck/lint/build pass.
-- [ ] Security review.
-- [ ] Tenant isolation verified.
-- [ ] Backup/restore tested.
-- [ ] Cloud deployment documented and executed if authorized.
-- [ ] Health checks and smoke tests pass.
-- [ ] Final handover completed.
+## Phase 9 — Release readiness ✅ (deployment not authorized; external verifications pending)
+- [x] Full automated test suite passes — unit 104, integration 152, e2e 22 (final run below).
+- [x] Typecheck/lint/build pass — plus the bundled worker (`npm run build:worker`).
+- [x] Security review — `docs/SECURITY_REVIEW.md`: 6 findings fixed (open redirect, CSP/HSTS, __Host- cookie clearing, hotspot rate limits, foreign router filters, monitoring alerts); `npm audit` 0 vulnerabilities. Not an external penetration test.
+- [x] Tenant isolation verified — static route-guard test (every route wrapped or allowlisted; staff mutations carry permissions) and a 25-probe cross-organization sweep (all 404, nothing changed).
+- [x] Backup/restore tested — `scripts/db-backup.mjs` / `scripts/db-restore.mjs`; restored into a new database: 70 tables, 829 rows, 0 mismatches, identical triggers/checks/indexes, migrate status up to date; overwrite refused. Repeat on the production provider.
+- [ ] Cloud deployment documented and executed if authorized — **documented** (`docs/DEPLOYMENT_GUIDE.md`, `Dockerfile`, `deploy/compose.production.yaml`, `deploy/Caddyfile`); **not executed**: no authorization or cloud account, and Docker unavailable on this machine (image not built).
+- [x] Health checks and smoke tests pass — production-mode run (`APP_ENV=production`, mocks off) on a fresh migrated database: `scripts/smoke.mjs` 11/11 (readiness, CSP nonce on all scripts, HSTS, auth refusal envelope, generic login errors, webhook/setup token rejection, worker readiness, sign-in → session → sign-out invalidation).
+- [x] Final handover completed — `docs/HANDOVER.md`, README pointer, `docs/OPERATIONS.md`.
 
 ## Work log
 
@@ -311,6 +312,31 @@ The user shared the command their current provider uses to connect MikroTik rout
 | `npm run test:e2e` | 22 passed |
 
 **Exact next task**: Phase 9 — release readiness (security review, backup/restore test, deployment artefacts and docs, smoke tests, handover).
+
+### 2026-10-26 — Phase 9 (Release readiness)
+**What was done**
+- Security review with fixes (see `docs/SECURITY_REVIEW.md`): `safeRedirectPath` for post-login redirects; nonce-based CSP and production HSTS in `src/proxy.ts`; `clearedCookieOptions()` for sign-out; failure-based captive-portal limits and a limited status endpoint; router filters must be in scope (404 otherwise); new alerts for stuck payment callbacks and job backlog.
+- Guard tests: `tests/unit/route-guards.test.ts`, `tests/unit/security-headers.test.ts`, `tests/integration/tenant-sweep.test.ts`, extra voucher test.
+- Operations: backup/restore scripts (checksums, refuse non-empty targets, row-count comparison), smoke test script, worker bundle (`esbuild` pinned 0.28.2), Dockerfile/compose/Caddy, `.dockerignore`, deployment and operations guides, handover.
+- Temporary databases `cloudlink_restore_check` and `cloudlink_smoke` were created for the restore and smoke tests and dropped afterwards; only `cloudlink`, `cloudlink_test`, `cloudlink_e2e` remain on the project-local cluster. The user's PostgreSQL service (port 8081) and port-3000 app were not touched.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` | exit 0 (after excluding the generated `dist/` bundle) |
+| `npm run typecheck` | exit 0 |
+| `npm run test` | 14 files, 104 tests passed |
+| `npm run test:integration` | 18 files, 152 tests passed |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 22 passed (with the CSP active) |
+| `npm audit` | 0 vulnerabilities |
+| `node scripts/db-backup.mjs` + `db-restore.mjs --create --compare-with` | 0 mismatches over 70 tables / 829 rows |
+| `node scripts/smoke.mjs` (production mode) | 11/11 passed |
+
+**Still mocked / blocked (needs the user)**
+- M-Pesa sandbox/production credentials; a MikroTik router over VPN; SMTP/SMS accounts; hosting authorization and domain; legal/privacy review and an external penetration test. See `docs/HANDOVER.md` → "What you need to provide next".
+
+**Exact next task**: when credentials or hardware arrive — (1) M-Pesa sandbox run per `docs/PAYMENTS.md` → Configuration; (2) real-router test per `docs/NETWORK.md` → "Testing against a real router"; (3) deployment per `docs/DEPLOYMENT_GUIDE.md`. Record each result here.
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

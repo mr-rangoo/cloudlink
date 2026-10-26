@@ -68,6 +68,20 @@ export async function staffAlerts(ctx: StaffContext): Promise<AlertItem[]> {
       ),
     );
   }
+  if (hasPermission(ctx, "payments.reconcile")) {
+    checks.push(
+      db.webhookEvent
+        .count({ where: { organizationId: org, receivedAt: { gte: weekAgo }, OR: [{ status: "FAILED" }, { status: "RECEIVED", receivedAt: { lt: new Date(now.getTime() - 15 * 60_000) } }] } })
+        .then((n) => (n ? { key: "callbacks-stuck", tone: "danger", title: "Payment callbacks not processed", detail: `${n} provider callback(s) failed or are waiting for verification`, href: "/payments/requests?status=OPEN", count: n } : null)),
+    );
+  }
+  if (hasPermission(ctx, "integrations.read")) {
+    checks.push(
+      db.backgroundOperation
+        .count({ where: { organizationId: org, status: { in: ["PENDING", "QUEUED", "FAILED"] }, runAfter: { lt: new Date(now.getTime() - 10 * 60_000) } } })
+        .then((n) => (n ? { key: "jobs-backlog", tone: "warning", title: "Background jobs are behind", detail: `${n} job(s) waiting more than 10 minutes. Check that the worker is running.`, href: "/integrations", count: n } : null)),
+    );
+  }
   if (hasPermission(ctx, "network.read")) {
     checks.push(
       db.routerAlert.count({ where: { organizationId: org, status: "OPEN" } }).then((n) =>

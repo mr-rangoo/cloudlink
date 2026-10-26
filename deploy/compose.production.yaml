@@ -1,0 +1,61 @@
+# Reference production stack for a single VM (see docs/DEPLOYMENT_GUIDE.md). Not executed by the build agent.
+# PostgreSQL and Redis are expected to be managed services reachable privately; set their URLs in .env.production.
+#   docker compose -f deploy/compose.production.yaml --env-file .env.production run --rm migrate
+#   docker compose -f deploy/compose.production.yaml --env-file .env.production up -d web worker caddy
+name: cloudlink
+
+x-app: &app
+  image: ${CLOUDLINK_IMAGE:-cloudlink:latest}
+  env_file: ../.env.production
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp"]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  migrate:
+    image: ${CLOUDLINK_MIGRATE_IMAGE:-cloudlink-migrate:latest}
+    env_file: ../.env.production
+    restart: "no"
+    profiles: ["release"]
+
+  web:
+    <<: *app
+    command: ["node_modules/.bin/next", "start", "-p", "3000"]
+    volumes:
+      - cloudlink_storage:/app/storage
+      - cloudlink_next_cache:/app/.next/cache
+    expose: ["3000"]
+
+  worker:
+    <<: *app
+    command: ["node", "--conditions=react-server", "dist/worker.mjs"]
+    environment:
+      WORKER_HEALTH_PORT: "3199"
+    volumes:
+      - cloudlink_storage:/app/storage
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3199/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Routers are reached over the host's VPN (WireGuard); host networking keeps that path simple and private.
+    network_mode: host
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      CLOUDLINK_DOMAIN: ${CLOUDLINK_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+
+volumes:
+  cloudlink_storage:
+  cloudlink_next_cache:
+  caddy_data:
+  caddy_config:

@@ -24,7 +24,12 @@
     "db:local:start": "node scripts/local-db.mjs start",
     "db:local:stop": "node scripts/local-db.mjs stop",
     "db:local:status": "node scripts/local-db.mjs status",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "build:worker": "esbuild src/worker/index.ts --bundle --platform=node --target=node22 --format=esm --conditions=react-server --packages=external --tsconfig=tsconfig.json --outfile=dist/worker.mjs --log-level=warning",
+    "start:worker": "node --conditions=react-server dist/worker.mjs",
+    "db:backup": "node scripts/db-backup.mjs",
+    "db:restore": "node scripts/db-restore.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",
@@ -61,6 +66,7 @@
     "@types/react-dom": "19.3.0",
     "@vitest/coverage-v8": "4.1.12",
     "dotenv": "18.0.9",
+    "esbuild": "0.28.2",
     "eslint": "9.39.5",
     "eslint-config-next": "16.4.3",
     "pino-pretty": "13.2.0",

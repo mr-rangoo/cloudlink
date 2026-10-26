@@ -550,6 +550,12 @@ export function publicOperation(op: NetworkOperation) {
   };
 }
 
+/** A router filter must name a router the caller can see (unknown or foreign ids are not found). */
+async function assertRouterVisible(ctx: StaffContext, routerId: string) {
+  const found = await db.router.findFirst({ where: { id: routerId, ...tenantWhere(ctx) }, select: { id: true } });
+  if (!found) throw notFound("router");
+}
+
 /** Router ids the caller can see (null = all routers of the organization). */
 async function visibleRouterIds(ctx: StaffContext): Promise<string[] | null> {
   if (!ctx.branchIds) return null;
@@ -577,7 +583,7 @@ export async function listNetworkOperations(ctx: StaffContext, query: z.infer<ty
     ...(query.type ? { type: query.type } : {}),
     ...(query.status === "ATTENTION" ? { status: { in: ["FAILED", "RETRYING"] } } : query.status !== "ALL" ? { status: query.status } : {}),
   };
-  if (visible && query.routerId && !visible.includes(query.routerId)) return { rows: [], total: 0, counts: {} as Partial<Record<NetworkOperationStatus, number>> };
+  if (query.routerId) await assertRouterVisible(ctx, query.routerId);
   const [rows, total, counts] = await Promise.all([
     db.networkOperation.findMany({ where, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
     db.networkOperation.count({ where }),
@@ -684,7 +690,7 @@ function publicSession(s: Prisma.NetworkSessionGetPayload<object>) {
 export async function listNetworkSessions(ctx: StaffContext, query: z.infer<typeof sessionListQuery>) {
   requirePermission(ctx, "network.read");
   const visible = await visibleRouterIds(ctx);
-  if (visible && query.routerId && !visible.includes(query.routerId)) throw notFound("router");
+  if (query.routerId) await assertRouterVisible(ctx, query.routerId);
   const q = searchTerm(query.q);
   const where: Prisma.NetworkSessionWhereInput = {
     organizationId: ctx.organizationId,

@@ -51,6 +51,8 @@ npm run test                  # unit
 npm run test:integration      # needs TEST_DATABASE_URL (name must end in _test); Redis test runs if TEST_REDIS_URL is reachable
 npm run build
 npm run test:e2e              # needs a production build and E2E_DATABASE_URL (name must end in _e2e); npx playwright install chromium once
+npm run build:worker          # bundles the worker to dist/worker.mjs (production: npm run start:worker)
+npm run smoke -- --base http://127.0.0.1:3100   # release smoke test against a running app
 ```
 
 ## Notes
