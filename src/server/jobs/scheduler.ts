@@ -20,7 +20,19 @@ export const RECURRING_JOBS: RecurringJob[] = [
   { type: "routers.healthcheck", everyMinutes: 15, scope: "routers" },
   { type: "network.sync_sessions", everyMinutes: 5, scope: "routers" },
   { type: "network.monitor", everyMinutes: 15, scope: "routers" },
+  { type: "maintenance.prune", everyMinutes: 24 * 60 },
 ];
+
+/** Routine operations that leave nothing worth keeping once they succeed. Failures are always kept. */
+const ROUTINE_TYPES = ["network.sync_sessions", "routers.healthcheck", "network.monitor", "maintenance.prune"];
+export const ROUTINE_RETENTION_DAYS = 14;
+
+/** Delete succeeded routine operations older than the retention window (live session views create one every 30 s). */
+export async function pruneRoutineOperations(organizationId: string, now = new Date()): Promise<{ deleted: number }> {
+  const cutoff = new Date(now.getTime() - ROUTINE_RETENTION_DAYS * 86_400_000);
+  const { count } = await db.backgroundOperation.deleteMany({ where: { organizationId, type: { in: ROUTINE_TYPES }, status: "SUCCEEDED", finishedAt: { lt: cutoff } } });
+  return { deleted: count };
+}
 
 export function bucketKey(now: Date, everyMinutes: number): string {
   const ms = everyMinutes * 60_000;

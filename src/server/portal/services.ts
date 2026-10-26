@@ -7,6 +7,7 @@ import { getBillingSettings } from "@/server/services/invoices";
 import { unallocatedOf } from "@/server/services/settlement";
 import { activePaymentInstructions } from "@/server/services/payment-methods";
 import { renderInvoicePdf, renderReceiptPdf } from "@/server/documents/pdf";
+import { lastSessionSync } from "@/server/services/network";
 
 /**
  * Customer-portal reads. Every query is scoped by the subscriber bound to the customer session —
@@ -25,6 +26,42 @@ export async function customerOverview(ctx: CustomerContext) {
     db.payment.findMany({ where: { subscriberId: ctx.subscriberId, status: { in: ["CONFIRMED", "REVERSED"] } }, orderBy: { receivedAt: "desc" }, take: 5, select: { id: true, receiptNumber: true, amount: true, currency: true, method: true, receivedAt: true, status: true } }),
   ]);
   return { subscriber, subscriptions, balance: { owed: balance.receivable.toFixed(2), credit: balance.credit.toFixed(2), net: balance.net.toFixed(2) }, openInvoices, recentPayments };
+}
+
+/** Older than this, a connection status is shown as possibly out of date (sessions sync every few minutes). */
+export const CONNECTION_STALE_MS = 15 * 60_000;
+
+/**
+ * The customer's own internet connection, from the latest session sync. Never asks the router directly:
+ * customers cannot cause router traffic, and the answer says how fresh it is.
+ */
+export async function customerConnection(ctx: CustomerContext, now = new Date()) {
+  const [lines, sessions, lastSync] = await Promise.all([
+    db.subscription.count({ where: { organizationId: ctx.organizationId, subscriberId: ctx.subscriberId, status: { not: "CANCELLED" }, networkUsername: { not: null } } }),
+    db.networkSession.findMany({
+      where: { organizationId: ctx.organizationId, subscriberId: ctx.subscriberId },
+      orderBy: [{ endedAt: { sort: "desc", nulls: "first" } }, { lastSeenAt: "desc" }],
+      take: 10,
+      select: { endedAt: true, startedAt: true, lastSeenAt: true, uptimeSeconds: true, address: true, bytesIn: true, bytesOut: true, source: true },
+    }),
+    lastSessionSync(ctx.organizationId),
+  ]);
+  const active = sessions.filter((x) => !x.endedAt);
+  const current = active[0];
+  const lastEnded = sessions.find((x) => x.endedAt);
+  const checkedAt = current?.lastSeenAt ?? lastSync;
+  return {
+    status: current ? ("ONLINE" as const) : lines ? ("OFFLINE" as const) : ("NOT_SET_UP" as const),
+    connections: active.length,
+    since: current ? (current.startedAt ?? (current.uptimeSeconds != null ? new Date(current.lastSeenAt.getTime() - current.uptimeSeconds * 1000) : null)) : null,
+    address: current?.address ?? null,
+    downloadedBytes: current?.bytesOut?.toString() ?? null,
+    uploadedBytes: current?.bytesIn?.toString() ?? null,
+    lastOnlineAt: current ? null : (lastEnded?.endedAt ?? null),
+    checkedAt,
+    stale: !checkedAt || now.getTime() - checkedAt.getTime() > CONNECTION_STALE_MS,
+    simulated: current ? current.source === "mock" : false,
+  };
 }
 
 export async function listCustomerInvoices(ctx: CustomerContext) {

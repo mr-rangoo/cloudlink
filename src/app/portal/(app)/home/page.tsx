@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getCustomerContext } from "@/server/portal/page";
-import { customerOverview } from "@/server/portal/services";
+import { customerConnection, customerOverview } from "@/server/portal/services";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/feedback";
 import { METHOD_LABEL, SubscriptionStatusBadge, formatInterval } from "@/components/status";
@@ -11,6 +11,7 @@ import { PortalPayForm } from "../pay-form";
 import { brandingFor } from "@/server/services/branding";
 import { activePaymentInstructions } from "@/server/services/payment-methods";
 import { PaymentMethodsList } from "../payment-methods";
+import { ConnectionCard } from "../connection-card";
 
 export const metadata: Metadata = { title: "My account · Customer portal" };
 
@@ -20,7 +21,7 @@ export default async function PortalHome() {
   const cur = ctx.organization.currency;
   const tz = ctx.organization.timezone;
   const net = Number(o.balance.net);
-  const [{ portalWelcome: welcome }, methods] = await Promise.all([brandingFor(ctx.organizationId), activePaymentInstructions(ctx.organizationId, o.subscriber.accountNumber)]);
+  const [{ portalWelcome: welcome }, methods, connection] = await Promise.all([brandingFor(ctx.organizationId), activePaymentInstructions(ctx.organizationId, o.subscriber.accountNumber), customerConnection(ctx)]);
   const paymentMode = paymentAdapterMode();
   const payOnline = paymentMode !== "disabled" && cur === "KES";
 
@@ -58,6 +59,8 @@ export default async function PortalHome() {
           </CardContent>
         </Card>
       ) : null}
+
+      <ConnectionCard c={connection} tz={tz} />
 
       <Card>
         <CardHeader>

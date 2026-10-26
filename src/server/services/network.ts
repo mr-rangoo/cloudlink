@@ -7,7 +7,7 @@ import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { decryptSecret, encryptSecret } from "@/server/security/crypto";
 import { dispatchOperation, enqueueOperation, PermanentError, RetryableError } from "@/server/jobs/operations";
-import { kbpsToRate, networkAdapter, networkAdapterName, type ActiveSession, type NetworkAdapter, type OpResult } from "@/server/integrations/network";
+import { kbpsToRate, networkAdapter, networkAdapterName, type ActiveSession, type NetworkAdapter, type OpResult, type SessionHint } from "@/server/integrations/network";
 import { radiusActiveSessions, radiusConfigured, radiusRemoveUser, radiusUpsertUser } from "@/server/integrations/radius";
 import { assertExecutable, openAlert, routerTarget } from "@/server/services/routers";
 import { actorType, actorUserId, lockRow, searchTerm } from "@/server/services/common";
@@ -704,15 +704,18 @@ export async function listNetworkSessions(ctx: StaffContext, query: z.infer<type
     db.networkSession.findMany({ where, orderBy: [{ endedAt: { sort: "desc", nulls: "first" } }, { lastSeenAt: "desc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
     db.networkSession.count({ where }),
   ]);
-  const [routers, subscribers, lastSync] = await Promise.all([
+  const [routers, subscribers, lastSync, online] = await Promise.all([
     db.router.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.routerId))] } }, select: { id: true, name: true } }),
     db.subscriber.findMany({ where: { id: { in: rows.map((r) => r.subscriberId).filter((x): x is string => Boolean(x)) } }, select: { id: true, displayName: true, accountNumber: true } }),
-    db.backgroundOperation.findFirst({ where: { organizationId: ctx.organizationId, type: "network.sync_sessions", status: "SUCCEEDED" }, orderBy: { finishedAt: "desc" }, select: { finishedAt: true } }),
+    lastSessionSync(ctx.organizationId),
+    db.networkSession.groupBy({ by: ["kind"], where: { organizationId: ctx.organizationId, endedAt: null, ...(visible ? { routerId: { in: visible } } : {}) }, _count: { _all: true } }),
   ]);
+  const count = (kind: string) => online.find((o) => o.kind === kind)?._count._all ?? 0;
   return {
     rows: rows.map((s) => ({ ...publicSession(s), routerName: routers.find((r) => r.id === s.routerId)?.name ?? null, subscriber: subscribers.find((x) => x.id === s.subscriberId) ?? null })),
     total,
-    lastSyncedAt: lastSync?.finishedAt ?? null,
+    online: { pppoe: count("PPPOE"), hotspot: count("HOTSPOT") },
+    lastSyncedAt: lastSync,
     adapter: networkAdapterName(),
   };
 }
@@ -725,14 +728,38 @@ export async function requestSessionRefresh(ctx: StaffContext) {
   return { queued: true, operationId: op.id };
 }
 
+/** When the last successful session sync finished (scheduled or requested), or null if never. */
+export async function lastSessionSync(organizationId: string): Promise<Date | null> {
+  const op = await db.backgroundOperation.findFirst({ where: { organizationId, type: "network.sync_sessions", status: "SUCCEEDED" }, orderBy: { finishedAt: "desc" }, select: { finishedAt: true } });
+  return op?.finishedAt ?? null;
+}
+
+/** Mock adapter only: who Cloudlink has (simulated as) enabled on this router, so sessions can be simulated for them. */
+async function simulationHint(router: Router): Promise<SessionHint> {
+  const now = new Date();
+  const [subscriptions, redemptions] = await Promise.all([
+    db.subscription.findMany({ where: { organizationId: router.organizationId, networkRouterId: router.id, networkStatus: "SIMULATED_ACTIVE" }, select: { networkUsername: true } }),
+    db.voucherRedemption.findMany({ where: { organizationId: router.organizationId, activationStatus: "SIMULATED", accessEndsAt: { gt: now } }, include: { voucher: { select: { codeHint: true } } }, take: 500 }),
+  ]);
+  const onRouter = redemptions.length
+    ? new Set((await db.networkOperation.findMany({ where: { routerId: router.id, type: "hotspot.user.upsert", redemptionId: { in: redemptions.map((r) => r.id) } }, select: { redemptionId: true } })).map((o) => o.redemptionId))
+    : new Set<string | null>();
+  return {
+    pppoe: subscriptions.map((s) => s.networkUsername).filter((u): u is string => Boolean(u)),
+    // The real hotspot username is the voucher code; the simulation never stores codes, only the hint.
+    hotspot: redemptions.filter((r) => onRouter.has(r.id)).map((r) => ({ id: r.id, username: `voucher …${r.voucher.codeHint}`, macAddress: r.clientMac, address: r.clientIp, since: r.activatedAt ?? r.createdAt, until: r.accessEndsAt })),
+  };
+}
+
 async function routerSessions(router: Router, adapter: NetworkAdapter): Promise<{ sessions: ActiveSession[]; source: string }> {
   const target = await routerTarget(router);
+  if (adapter.name === "mock") return { sessions: await adapter.listSessions(target, await simulationHint(router)), source: "mock" };
   if (router.pppoeAuth === "RADIUS" && adapter.name === "routeros" && radiusConfigured()) {
     const radius = await radiusActiveSessions(router.host);
     const hotspot = router.hotspotEnabled ? (await adapter.listSessions(target)).filter((s) => s.kind === "HOTSPOT") : [];
     return { sessions: [...radius, ...hotspot], source: "radius_accounting" };
   }
-  return { sessions: await adapter.listSessions(target), source: adapter.name === "mock" ? "mock" : "router_api" };
+  return { sessions: await adapter.listSessions(target), source: "router_api" };
 }
 
 /** Worker: pull active sessions from every router (or RADIUS accounting) and close sessions no longer present. */

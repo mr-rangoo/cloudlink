@@ -74,6 +74,15 @@ export interface ActiveSession {
   startedAt?: Date;
 }
 
+/**
+ * Who the billing system believes is enabled on a router. Real adapters ignore it (they report what the router
+ * says); the mock adapter uses it to simulate sessions so live views can be exercised without hardware.
+ */
+export interface SessionHint {
+  pppoe: string[];
+  hotspot: Array<{ id: string; username: string; macAddress: string | null; address: string | null; since: Date; until: Date }>;
+}
+
 export interface NetworkAdapter {
   name: "mock" | "routeros" | "disabled";
   upsertPppoeSecret(r: RouterTarget, s: PppoeSecret, x: ExecContext): Promise<OpResult>;
@@ -81,7 +90,7 @@ export interface NetworkAdapter {
   upsertHotspotUser(r: RouterTarget, u: HotspotUser, x: ExecContext): Promise<OpResult>;
   disconnectSession(r: RouterTarget, kind: "PPPOE" | "HOTSPOT", username: string, x: ExecContext): Promise<OpResult>;
   health(r: RouterTarget): Promise<RouterHealth>;
-  listSessions(r: RouterTarget): Promise<ActiveSession[]>;
+  listSessions(r: RouterTarget, hint?: SessionHint): Promise<ActiveSession[]>;
 }
 
 // ───────── Error classification ─────────
@@ -130,9 +139,67 @@ class MockNetworkAdapter implements NetworkAdapter {
     if (r.name.includes("[offline]")) return { online: false, simulated: true, detail: "Mock router is offline (simulated)" };
     return { online: true, simulated: true, detail: "Mock adapter: simulated health check. No router was contacted." };
   }
-  async listSessions(): Promise<ActiveSession[]> {
-    return [];
+  async listSessions(r: RouterTarget, hint?: SessionHint): Promise<ActiveSession[]> {
+    if (r.name.includes("[offline]")) throw new RetryableError("Mock router is offline (simulated timeout)", "ROUTER_TIMEOUT");
+    return hint ? simulatedSessions(hint, new Date()) : [];
   }
+}
+
+/** Simulated PPPoE users reconnect every three days, so uptime grows and resets like a real line. */
+const SIM_CYCLE_SECONDS = 3 * 24 * 3600;
+
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Deterministic fake sessions for the mock adapter (same input and time → same output). Addresses come from
+ * 10.64.0.0/10 and MACs are locally administered, so they cannot be mistaken for real equipment.
+ */
+export function simulatedSessions(hint: SessionHint, now: Date): ActiveSession[] {
+  const t = Math.floor(now.getTime() / 1000);
+  const mac = (h: number) => ["02", ...[h >>> 24, h >>> 16, h >>> 8, h, h >>> 4].map((b) => (b & 0xff).toString(16).padStart(2, "0"))].join(":").toUpperCase();
+  const pppoe = hint.pppoe.map((username): ActiveSession => {
+    const h = fnv1a(username);
+    const uptime = (((t - (h % SIM_CYCLE_SECONDS)) % SIM_CYCLE_SECONDS) + SIM_CYCLE_SECONDS) % SIM_CYCLE_SECONDS;
+    const started = t - uptime;
+    const down = 20_000 + (h % 180_000); // average bytes per second towards the customer
+    return {
+      kind: "PPPOE",
+      externalId: `*sim-${h.toString(16)}-${started}`,
+      username,
+      address: `10.${64 + (h % 64)}.${(h >>> 8) & 0xff}.${2 + ((h >>> 16) % 250)}`,
+      macAddress: mac(h),
+      uptimeSeconds: uptime,
+      bytesIn: BigInt(uptime * Math.floor(down / 8)),
+      bytesOut: BigInt(uptime * down),
+      startedAt: new Date(started * 1000),
+    };
+  });
+  const hotspot = hint.hotspot
+    .filter((u) => u.since <= now && u.until > now)
+    .map((u): ActiveSession => {
+      const h = fnv1a(u.id);
+      const uptime = Math.max(0, t - Math.floor(u.since.getTime() / 1000));
+      const down = 10_000 + (h % 90_000);
+      return {
+        kind: "HOTSPOT",
+        externalId: `*sim-hs-${h.toString(16)}`,
+        username: u.username,
+        address: u.address ?? `10.${64 + (h % 64)}.${(h >>> 8) & 0xff}.${2 + ((h >>> 16) % 250)}`,
+        macAddress: u.macAddress ?? mac(h),
+        uptimeSeconds: uptime,
+        bytesIn: BigInt(uptime * Math.floor(down / 8)),
+        bytesOut: BigInt(uptime * down),
+        startedAt: u.since,
+      };
+    });
+  return [...pppoe, ...hotspot];
 }
 
 // ───────── RouterOS ─────────
@@ -147,6 +214,11 @@ export function parseUptime(v: string | undefined): number | undefined {
   if (!m) return undefined;
   const [w, d, h, mi, s] = m.slice(1).map((x) => Number(x ?? 0)) as [number, number, number, number, number];
   return w * 604800 + d * 86400 + h * 3600 + mi * 60 + s;
+}
+
+/** RouterOS byte counter ("123456") → bigint; anything else is treated as unknown. */
+export function counter(v: string | undefined): bigint | undefined {
+  return v && /^\d{1,20}$/.test(v) ? BigInt(v) : undefined;
 }
 
 export function rosDuration(seconds: number): string {
@@ -281,7 +353,8 @@ class RouterOsAdapter implements NetworkAdapter {
         });
         return [
           ...ppp.map((a) => ({ kind: "PPPOE" as const, externalId: a[".id"]!, username: a.name ?? "", address: a.address, macAddress: a["caller-id"], uptimeSeconds: parseUptime(a.uptime) })),
-          ...hs.map((a) => ({ kind: "HOTSPOT" as const, externalId: a[".id"]!, username: a.user ?? "", address: a.address, macAddress: a["mac-address"], uptimeSeconds: parseUptime(a.uptime) })),
+          // Hotspot counters are from the client's side: bytes-in = uploaded by the client, bytes-out = downloaded.
+          ...hs.map((a) => ({ kind: "HOTSPOT" as const, externalId: a[".id"]!, username: a.user ?? "", address: a.address, macAddress: a["mac-address"], uptimeSeconds: parseUptime(a.uptime), bytesIn: counter(a["bytes-in"]), bytesOut: counter(a["bytes-out"]) })),
         ];
       });
     } catch (err) {

@@ -7,14 +7,14 @@ import { listNetworkOperations, listNetworkSessions, operationListQuery, session
 import { alertListQuery, listRouterAlerts } from "@/server/services/routers";
 import { networkAdapterName } from "@/server/integrations/network";
 import { Card } from "@/components/ui/card";
-import { Badge, EmptyState, PageHeader } from "@/components/ui/feedback";
+import { Alert, Badge, EmptyState, PageHeader } from "@/components/ui/feedback";
 import { Pagination, Table, TBody, Td, Th, THead, Tr, buildHref } from "@/components/ui/table";
 import { FilterTabs, SearchForm } from "@/components/list-toolbar";
 import { OperationStatusBadge } from "@/components/status";
 import { AdapterNotice, formatBytes, formatDuration } from "@/components/network-notice";
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDateTime } from "@/lib/utils";
-import { RefreshSessionsButton, ResolveAlertButton } from "./client";
+import { LiveSessionsControl, RefreshSessionsButton, ResolveAlertButton } from "./client";
 
 export const metadata: Metadata = { title: "Network sessions" };
 
@@ -57,84 +57,117 @@ export default async function NetworkPage({ searchParams }: { searchParams: Prom
 async function SessionsTab({ ctx, sp, adapter }: TabProps & { adapter: string }) {
   const parsed = sessionListQuery.safeParse(sp);
   const query = parsed.success ? parsed.data : sessionListQuery.parse({});
-  const { rows, total, lastSyncedAt } = await listNetworkSessions(ctx, query);
+  const { rows, total, lastSyncedAt, online } = await listNetworkSessions(ctx, query);
   const tz = ctx.organization.timezone;
   const current = { q: sp.q, state: sp.state, routerId: sp.routerId };
+  // Twice the scheduled sync interval: older data means the worker is not running or cannot reach the routers.
+  const staleMinutes = minutesSince(lastSyncedAt);
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Stat label="Online now" value={online.pppoe + online.hotspot} />
+        <Stat label="PPPoE" value={online.pppoe} />
+        <Stat label="Hotspot" value={online.hotspot} />
+      </div>
+      {adapter !== "disabled" && staleMinutes !== null && staleMinutes >= 10 ? (
+        <Alert tone="warning" title="Session data may be out of date">
+          The last successful sync was {staleMinutes} minutes ago. Check that the background worker is running and can reach your routers.
+        </Alert>
+      ) : null}
+      <Card>
+        <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
+          <FilterTabs
+            label="Session state"
+            active={query.state}
+            items={(["active", "ended", "all"] as const).map((s) => ({ value: s, label: s === "active" ? "Active" : s === "ended" ? "Ended" : "All", href: buildHref("/sessions", current, { state: s === "active" ? undefined : s, page: undefined }) }))}
+          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <LiveSessionsControl lastSyncedAt={lastSyncedAt?.toISOString() ?? null} />
+            <SearchForm action="/sessions" q={sp.q} placeholder="Username, IP or MAC" hidden={{ state: sp.state, routerId: sp.routerId }} />
+          </div>
+        </div>
+        {rows.length === 0 ? (
+          <EmptyState
+            icon={Activity}
+            title={query.state === "active" ? "Nobody is online" : "No sessions recorded"}
+            description={
+              adapter === "mock"
+                ? "Test mode simulates sessions for subscribers whose network access was enabled, and for active hotspot vouchers. No router is contacted."
+                : "Sessions appear after the next sync from your routers or RADIUS accounting."
+            }
+          />
+        ) : (
+          <>
+            <Table>
+              <THead>
+                <tr>
+                  <Th>User</Th>
+                  <Th>Router</Th>
+                  <Th>Address / MAC</Th>
+                  <Th>Uptime</Th>
+                  <Th>Traffic in / out</Th>
+                  <Th>Source</Th>
+                  <Th>Last seen</Th>
+                </tr>
+              </THead>
+              <TBody>
+                {rows.map((s) => (
+                  <Tr key={s.id}>
+                    <Td label="User">
+                      <div className="min-w-0 text-right md:text-left">
+                        <span className="font-mono text-xs">{s.username}</span> <Badge tone="neutral">{s.kind === "PPPOE" ? "PPPoE" : "Hotspot"}</Badge>
+                        {s.subscriber ? (
+                          <Link href={`/subscribers/${s.subscriber.id}`} className="block text-xs text-accent hover:underline">
+                            {s.subscriber.displayName} · {s.subscriber.accountNumber}
+                          </Link>
+                        ) : null}
+                      </div>
+                    </Td>
+                    <Td label="Router">
+                      <Link href={`/routers/${s.routerId}`} className="hover:underline">
+                        {s.routerName ?? "—"}
+                      </Link>
+                    </Td>
+                    <Td label="Address / MAC" className="font-mono text-xs">
+                      <div className="min-w-0 text-right md:text-left">
+                        {s.address ?? "—"}
+                        {s.macAddress ? <span className="block text-muted-foreground">{s.macAddress}</span> : null}
+                      </div>
+                    </Td>
+                    <Td label="Uptime">{formatDuration(s.uptimeSeconds)}</Td>
+                    <Td label="Traffic in / out" className="tabular">
+                      {formatBytes(s.bytesIn)} / {formatBytes(s.bytesOut)}
+                    </Td>
+                    <Td label="Source">{s.source === "radius_accounting" ? "RADIUS accounting" : s.source === "router_api" ? "Router API" : <Badge tone="warning">Simulated</Badge>}</Td>
+                    <Td label="Last seen">
+                      <div className="min-w-0 text-right md:text-left">
+                        {formatDateTime(s.lastSeenAt, tz)}
+                        {s.endedAt ? <span className="block text-xs text-muted-foreground">Ended {formatDateTime(s.endedAt, tz)}</span> : null}
+                      </div>
+                    </Td>
+                  </Tr>
+                ))}
+              </TBody>
+            </Table>
+            <Pagination page={query.page} totalPages={Math.max(1, Math.ceil(total / query.pageSize))} total={total} hrefFor={(p) => buildHref("/sessions", current, { page: p })} />
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function minutesSince(at: Date | null): number | null {
+  return at ? Math.floor((Date.now() - at.getTime()) / 60_000) : null;
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
   return (
     <Card>
-      <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
-        <FilterTabs
-          label="Session state"
-          active={query.state}
-          items={(["active", "ended", "all"] as const).map((s) => ({ value: s, label: s === "active" ? "Active" : s === "ended" ? "Ended" : "All", href: buildHref("/sessions", current, { state: s === "active" ? undefined : s, page: undefined }) }))}
-        />
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <p className="text-xs text-muted-foreground">{lastSyncedAt ? `Last synced ${formatDateTime(lastSyncedAt, tz)}` : "Not synced yet"}</p>
-          <SearchForm action="/sessions" q={sp.q} placeholder="Username, IP or MAC" hidden={{ state: sp.state, routerId: sp.routerId }} />
-        </div>
+      <div className="px-4 py-3">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="tabular text-2xl font-semibold">{value.toLocaleString("en-KE")}</p>
       </div>
-      {rows.length === 0 ? (
-        <EmptyState
-          icon={Activity}
-          title="No sessions recorded"
-          description={adapter === "mock" ? "The mock adapter does not read sessions from routers, so none are shown." : "Sessions appear after the next sync from your routers or RADIUS accounting."}
-        />
-      ) : (
-        <>
-          <Table>
-            <THead>
-              <tr>
-                <Th>User</Th>
-                <Th>Router</Th>
-                <Th>Address / MAC</Th>
-                <Th>Uptime</Th>
-                <Th>Traffic in / out</Th>
-                <Th>Source</Th>
-                <Th>Last seen</Th>
-              </tr>
-            </THead>
-            <TBody>
-              {rows.map((s) => (
-                <Tr key={s.id}>
-                  <Td label="User">
-                    <div className="min-w-0 text-right md:text-left">
-                      <span className="font-mono text-xs">{s.username}</span> <Badge tone="neutral">{s.kind === "PPPOE" ? "PPPoE" : "Hotspot"}</Badge>
-                      {s.subscriber ? (
-                        <Link href={`/subscribers/${s.subscriber.id}`} className="block text-xs text-accent hover:underline">
-                          {s.subscriber.displayName} · {s.subscriber.accountNumber}
-                        </Link>
-                      ) : null}
-                    </div>
-                  </Td>
-                  <Td label="Router">
-                    <Link href={`/routers/${s.routerId}`} className="hover:underline">
-                      {s.routerName ?? "—"}
-                    </Link>
-                  </Td>
-                  <Td label="Address / MAC" className="font-mono text-xs">
-                    <div className="min-w-0 text-right md:text-left">
-                      {s.address ?? "—"}
-                      {s.macAddress ? <span className="block text-muted-foreground">{s.macAddress}</span> : null}
-                    </div>
-                  </Td>
-                  <Td label="Uptime">{formatDuration(s.uptimeSeconds)}</Td>
-                  <Td label="Traffic in / out" className="tabular">
-                    {formatBytes(s.bytesIn)} / {formatBytes(s.bytesOut)}
-                  </Td>
-                  <Td label="Source">{s.source === "radius_accounting" ? "RADIUS accounting" : s.source === "router_api" ? "Router API" : "Simulated"}</Td>
-                  <Td label="Last seen">
-                    <div className="min-w-0 text-right md:text-left">
-                      {formatDateTime(s.lastSeenAt, tz)}
-                      {s.endedAt ? <span className="block text-xs text-muted-foreground">Ended {formatDateTime(s.endedAt, tz)}</span> : null}
-                    </div>
-                  </Td>
-                </Tr>
-              ))}
-            </TBody>
-          </Table>
-          <Pagination page={query.page} totalPages={Math.max(1, Math.ceil(total / query.pageSize))} total={total} hrefFor={(p) => buildHref("/sessions", current, { page: p })} />
-        </>
-      )}
     </Card>
   );
 }

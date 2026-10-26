@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { attr, decodeLength, encodeLength, encodeSentence, parseAttributes, query, RouterOsInputError, SentenceReader } from "@/server/integrations/routeros/protocol";
 import { checkRouterHost, isPrivateNetwork, parseCidr, parseCidrList } from "@/server/domain/network-address";
-import { classify, kbpsToRate, parseUptime, rosDuration } from "@/server/integrations/network";
+import { classify, counter, kbpsToRate, parseUptime, rosDuration, simulatedSessions } from "@/server/integrations/network";
+import { relativeAge } from "@/components/live";
 import { RouterOsConnectionError, RouterOsTrapError } from "@/server/integrations/routeros/client";
 import { PermanentError, RetryableError } from "@/server/jobs/operations";
 import { parseEnv } from "@/server/env";
@@ -149,5 +150,57 @@ describe("adapter helpers", () => {
     expect(run(new RouterOsTrapError("input does not match any value of profile"))).toBeInstanceOf(PermanentError);
     expect(run(new RouterOsInputError("x"))).toMatchObject({ code: "INVALID_INPUT" });
     expect(run(new Error("boom"))).toBeInstanceOf(RetryableError);
+  });
+});
+
+describe("simulated sessions (mock adapter)", () => {
+  const hint = { pppoe: ["jane.home", "acme-office"], hotspot: [] };
+
+  it("is deterministic and looks nothing like real equipment", () => {
+    const now = new Date("2026-10-26T09:00:00Z");
+    const a = simulatedSessions(hint, now);
+    expect(simulatedSessions(hint, now)).toEqual(a);
+    expect(a).toHaveLength(2);
+    for (const s of a) {
+      expect(s.kind).toBe("PPPOE");
+      expect(s.externalId).toMatch(/^\*sim-/);
+      expect(s.address).toMatch(/^10\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/); // 10.64.0.0/10
+      expect(s.macAddress).toMatch(/^02:/); // locally administered
+      expect(s.uptimeSeconds).toBeGreaterThanOrEqual(0);
+      expect(s.uptimeSeconds).toBeLessThan(3 * 86400);
+      expect(s.bytesOut! > s.bytesIn!).toBe(s.uptimeSeconds! > 0);
+      expect(s.startedAt!.getTime()).toBe(now.getTime() - s.uptimeSeconds! * 1000);
+    }
+  });
+
+  it("grows uptime over time and reconnects with a new session id after the cycle", () => {
+    const t0 = new Date("2026-10-26T09:00:00Z");
+    const [first] = simulatedSessions({ pppoe: ["jane.home"], hotspot: [] }, t0);
+    const later = simulatedSessions({ pppoe: ["jane.home"], hotspot: [] }, new Date(t0.getTime() + 60_000))[0]!;
+    if (first!.uptimeSeconds! < 3 * 86400 - 60) {
+      expect(later.uptimeSeconds).toBe(first!.uptimeSeconds! + 60);
+      expect(later.externalId).toBe(first!.externalId);
+    }
+    const next = simulatedSessions({ pppoe: ["jane.home"], hotspot: [] }, new Date(first!.startedAt!.getTime() + 3 * 86400_000))[0]!;
+    expect(next.uptimeSeconds).toBe(0);
+    expect(next.externalId).not.toBe(first!.externalId);
+  });
+
+  it("only shows hotspot users inside their access window", () => {
+    const since = new Date("2026-10-26T08:00:00Z");
+    const until = new Date("2026-10-26T10:00:00Z");
+    const u = { id: "r1", username: "voucher …X7K", macAddress: "AA:BB:CC:DD:EE:01", address: null, since, until };
+    expect(simulatedSessions({ pppoe: [], hotspot: [u] }, new Date("2026-10-26T07:59:00Z"))).toEqual([]);
+    const [s] = simulatedSessions({ pppoe: [], hotspot: [u] }, new Date("2026-10-26T09:00:00Z"));
+    expect(s).toMatchObject({ kind: "HOTSPOT", username: "voucher …X7K", macAddress: "AA:BB:CC:DD:EE:01", uptimeSeconds: 3600, startedAt: since });
+    expect(simulatedSessions({ pppoe: [], hotspot: [u] }, until)).toEqual([]);
+  });
+
+  it("parses RouterOS byte counters and formats ages", () => {
+    expect(counter("123456")).toBe(123456n);
+    expect(counter(undefined)).toBeUndefined();
+    expect(counter("12k")).toBeUndefined();
+    expect(counter("1".repeat(21))).toBeUndefined();
+    expect([0, 4_000, 42_000, 300_000, 3 * 3600_000, 2 * 86400_000].map(relativeAge)).toEqual(["just now", "just now", "42 s ago", "5 min ago", "3 h ago", "2 d ago"]);
   });
 });
