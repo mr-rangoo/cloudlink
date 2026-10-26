@@ -13,6 +13,7 @@ import { ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperatio
 import { runRouterHealthChecks } from "@/server/services/routers";
 import { processStkEvent, runStatusQuery } from "@/server/services/mobile-money";
 import { pruneRoutineOperations } from "@/server/jobs/scheduler";
+import { pruneAssistantConversations } from "@/server/assistant/service";
 
 /**
  * Registry of background operation handlers shared by the worker and tests.
@@ -91,10 +92,12 @@ export const operationHandlers: OperationHandlers = {
     await processStkEvent(eventId, { final: op.attempts >= op.maxAttempts });
   },
 
-  /** Daily: remove old succeeded routine operations (session syncs, health checks). */
+  /** Daily: remove old succeeded routine operations (session syncs, health checks) and expired assistant chats. */
   "maintenance.prune": async (op) => {
     if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
-    return pruneRoutineOperations(op.organizationId);
+    const operations = await pruneRoutineOperations(op.organizationId);
+    const chats = await pruneAssistantConversations(op.organizationId);
+    return { operations: operations.deleted, assistantChats: chats.deleted };
   },
 
   /** Alert on network operations that stopped progressing. */

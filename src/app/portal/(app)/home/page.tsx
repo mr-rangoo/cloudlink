@@ -12,6 +12,9 @@ import { brandingFor } from "@/server/services/branding";
 import { activePaymentInstructions } from "@/server/services/payment-methods";
 import { PaymentMethodsList } from "../payment-methods";
 import { ConnectionCard } from "../connection-card";
+import { assistantSettings } from "@/server/assistant/service";
+import { assistantAdapterName } from "@/server/assistant/model";
+import { MessageCircle } from "lucide-react";
 
 export const metadata: Metadata = { title: "My account · Customer portal" };
 
@@ -21,7 +24,13 @@ export default async function PortalHome() {
   const cur = ctx.organization.currency;
   const tz = ctx.organization.timezone;
   const net = Number(o.balance.net);
-  const [{ portalWelcome: welcome }, methods, connection] = await Promise.all([brandingFor(ctx.organizationId), activePaymentInstructions(ctx.organizationId, o.subscriber.accountNumber), customerConnection(ctx)]);
+  const [{ portalWelcome: welcome }, methods, connection, assistant] = await Promise.all([
+    brandingFor(ctx.organizationId),
+    activePaymentInstructions(ctx.organizationId, o.subscriber.accountNumber),
+    customerConnection(ctx),
+    assistantSettings(ctx.organizationId),
+  ]);
+  const chat = assistant.enabled && assistantAdapterName() !== "disabled";
   const paymentMode = paymentAdapterMode();
   const payOnline = paymentMode !== "disabled" && cur === "KES";
 
@@ -32,6 +41,16 @@ export default async function PortalHome() {
         <p className="text-sm text-muted-foreground">Account number {o.subscriber.accountNumber}</p>
         {welcome ? <p className="pt-1 text-sm">{welcome}</p> : null}
       </div>
+
+      {chat ? (
+        <Link href="/portal/assistant" className="flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-sm hover:bg-surface-muted">
+          <MessageCircle className="size-5 shrink-0 text-accent" aria-hidden />
+          <span>
+            <span className="font-medium">Questions? Chat with {assistant.name}</span>
+            <span className="block text-xs text-muted-foreground">Balance, invoices, payments and connection status, any time.</span>
+          </span>
+        </Link>
+      ) : null}
 
       <Card className={net > 0 ? "border-danger/30" : undefined}>
         <CardContent className="space-y-3 py-5">

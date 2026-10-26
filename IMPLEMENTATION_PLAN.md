@@ -8,6 +8,7 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Architecture confirmed — see `docs/ARCHITECTURE.md`.
 - [x] Initial implementation plan reviewed.
 - [x] Phases 1–9 complete (2026-10-26). Remaining work needs external credentials, hardware or authorization — see the phase 9 work log and `docs/HANDOVER.md`.
+- [x] Phase 10 (user request: themes, payment methods, live sessions, AI chat) complete (2026-10-26) — see the phase 10 work log.
 
 ## Integration status (truthful)
 | Integration | Status | Notes |
@@ -19,6 +20,7 @@ Coding agent: update this file continuously. Do not mark items complete without 
 | SMS | mock (dev) | Africa's Talking adapter implemented from public docs, not verified. |
 | Object storage | local disk (dev) | Ticket attachments; S3 adapter not implemented (reports unavailable). |
 | Redis/BullMQ | verified locally | Portable Redis 8.10.2 (dev only) on 127.0.0.1:6379; BullMQ dispatch test passes. |
+| Claude API (portal assistant) | implemented, test mode in dev | Official `@anthropic-ai/sdk` 1.3.0, model `claude-opus-5-5`. Tested in test mode and against an in-process fake Messages API only. **Not verified with a real API key** (none supplied). |
 
 ## Phase 1 — Foundation ✅
 - [x] App shell and Cloudlink design tokens — `src/app/globals.css` (light/dark tokens), `src/components/shell/app-shell.tsx` (collapsible sidebar, mobile drawer, org/branch selector, breadcrumbs, Ctrl+K command menu, theme selector, user menu, skip link, reduced-motion support). Unbuilt modules route to an explicit "not yet available (phase N)" page. Screenshots reviewed at 1440px and 390px.
@@ -103,6 +105,13 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [ ] Cloud deployment documented and executed if authorized — **documented** (`docs/DEPLOYMENT_GUIDE.md`, `Dockerfile`, `deploy/compose.production.yaml`, `deploy/Caddyfile`); **not executed**: no authorization or cloud account, and Docker unavailable on this machine (image not built).
 - [x] Health checks and smoke tests pass — production-mode run (`APP_ENV=production`, mocks off) on a fresh migrated database: `scripts/smoke.mjs` 11/11 (readiness, CSP nonce on all scripts, HSTS, auth refusal envelope, generic login errors, webhook/setup token rejection, worker readiness, sign-in → session → sign-out invalidation).
 - [x] Final handover completed — `docs/HANDOVER.md`, README pointer, `docs/OPERATIONS.md`.
+
+## Phase 10 — Personalisation, live sessions and AI assistant ✅ (real Claude key not verified)
+- [x] Branding: 7 WCAG-checked theme presets, contrast-checked brand colour, light/dark/system default, logo upload, portal welcome/support hours — applied to staff app, portal, sign-in and hotspot pages.
+- [x] Customer payment methods (paybill, till, bank, cash, other), personalised per account in the portal, invoice page and invoice PDFs.
+- [x] Live sessions: live mode on the sessions page (30 s de-duplicated sync requests, 10 s refresh, online counts, stale warning); customer "My connection" card and API; deterministic simulated sessions in test mode only; daily pruning of routine jobs.
+- [x] AI assistant: Claude chat in the portal with six customer-scoped tools, one ticket per chat, append-only replay, refusal/limit handling, rate limits, disclosure, staff transcripts (branch-scoped), settings tab, 180-day retention, production env guards.
+- [ ] Verify the assistant with a real Anthropic API key on staging — **blocked**: no key supplied.
 
 ## Work log
 
@@ -337,6 +346,33 @@ The user shared the command their current provider uses to connect MikroTik rout
 - M-Pesa sandbox/production credentials; a MikroTik router over VPN; SMTP/SMS accounts; hosting authorization and domain; legal/privacy review and an external penetration test. See `docs/HANDOVER.md` → "What you need to provide next".
 
 **Exact next task**: when credentials or hardware arrive — (1) M-Pesa sandbox run per `docs/PAYMENTS.md` → Configuration; (2) real-router test per `docs/NETWORK.md` → "Testing against a real router"; (3) deployment per `docs/DEPLOYMENT_GUIDE.md`. Record each result here.
+
+### 2026-10-26 — Phase 10 (user request: "change theme, add payment method, AI integrated for chats, show live sessions")
+The user pointed at another vendor's settings page (behind a login, not accessible, and not to be copied per AGENTS.md); these are Cloudlink's own designs.
+
+**What was done** (commits a7a2227, b86f9b4, and the phase 10d commit)
+- 10a/10b — `src/lib/themes.ts`, `src/server/services/branding.ts`, `src/server/services/payment-methods.ts`, settings tabs, portal/PDF instructions; migration `20261026120000_branding_payment_methods`.
+- 10c — live sessions: `LiveSessionsControl`, `src/components/live.tsx`, `customerConnection`, mock `simulatedSessions`, RouterOS hotspot byte counters, `maintenance.prune`.
+- 10d — AI assistant: `src/server/assistant/{model,tools,service}.ts`, portal `/portal/assistant`, staff `/support/assistant`, Settings → AI assistant; migration `20261026140000_ai_assistant` (one open chat per customer via partial unique index; role/status/source checks). Claude request: `claude-opus-5-5`, effort `low`, `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`), top-level `cache_control`, strict tools. Env: `ASSISTANT_ADAPTER` (default disabled; mock refused in production), `ANTHROPIC_API_KEY` (required for anthropic in production), `ASSISTANT_MODEL`, `ASSISTANT_EFFORT`, `ASSISTANT_BASE_URL` (test-only).
+- Fix found by the E2E run: the worker failed to start (`react.createContext is not a function`) because server code imported a UI component file; formatters moved to `src/lib/format.ts` and a unit guard now forbids `@/components` imports under `src/server` and `src/worker`.
+- Visual checks (screenshots against a production build on :3102 with the E2E database): settings tabs, themed dashboard, payment methods, live sessions (worker-synced, "Synced 12 s ago"), portal connection card, assistant chat (desktop and 390 px), staff transcript.
+- Docs: `docs/PERSONALISATION.md`, `docs/ASSISTANT.md`; updates to `docs/HANDOVER.md`, `docs/DEPLOYMENT_GUIDE.md`, `docs/SECURITY_REVIEW.md`, `.env.example`.
+
+**Commands and results (final run)**
+| Command | Result |
+| --- | --- |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 15 files, 121 tests passed |
+| `npm run test:integration` | 21 files, 167 tests passed (assistant and live-sessions files re-run after the formatter move: 11 passed) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 23 passed (includes `assistant.spec.ts`) |
+| `npm audit` | 0 vulnerabilities |
+
+**Still mocked / blocked**
+- Claude: no API key — test mode and fake-server tests only. Customer data sent to Anthropic must be covered by the privacy review.
+- Live sessions on real routers depend on the RouterOS verification already pending from phase 7.
+
+**Exact next task**: with an Anthropic API key, run the staging check in `docs/ASSISTANT.md` → Testing, and record it here; otherwise continue with the phase 9 next tasks (M-Pesa sandbox, real router, deployment).
 
 ## Resume instruction
 When resuming, inspect Git status, read this checklist and recent work log, verify the current app state, and continue from the first incomplete item. Do not repeat completed work unless a regression requires it.

@@ -1678,3 +1678,54 @@ model CustomerPaymentMethod {
 
   @@index([organizationId, active, sortOrder])
 }
+
+// AI support assistant for the customer portal (off until an administrator enables it).
+model AssistantSettings {
+  organizationId String   @id @db.Uuid
+  enabled        Boolean  @default(false)
+  name           String   @default("Support assistant")
+  instructions   String? // extra guidance from the organization, appended to the system prompt
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+}
+
+// One customer chat. Messages are append-only and replayed to the model exactly as stored.
+model AssistantConversation {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  organizationId    String   @db.Uuid
+  branchId          String?  @db.Uuid // the customer's branch when the chat started (staff branch scoping)
+  subscriberId      String   @db.Uuid
+  customerAccountId String   @db.Uuid
+  status            String   @default("OPEN") // OPEN | CLOSED
+  source            String // anthropic | mock (a conversation never mixes the two)
+  model             String?
+  ticketId          String?  @db.Uuid // support ticket opened from this chat
+  turns             Int      @default(0) // customer messages answered
+  messageCount      Int      @default(0)
+  inputTokens       Int      @default(0)
+  outputTokens      Int      @default(0)
+  lastMessageAt     DateTime @db.Timestamptz(6)
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(6)
+
+  messages AssistantMessage[]
+
+  @@index([organizationId, lastMessageAt])
+  @@index([subscriberId, status])
+}
+
+model AssistantMessage {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  conversationId String   @db.Uuid
+  organizationId String   @db.Uuid
+  seq            Int
+  role           String // user | assistant (sent to the model) | notice (shown to the customer only)
+  content        Json // Messages API content blocks as sent/received
+  text           String? // visible text: what the customer typed, the assistant's reply, or the notice
+  tools          String[] // tools called (assistant) or answered (user tool results)
+  replay         Boolean  @default(true) // false: kept for the transcript but never sent to the model again (refused turn)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, seq])
+}

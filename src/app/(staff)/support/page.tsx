@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { LifeBuoy } from "lucide-react";
+import { LifeBuoy, MessageCircle } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 import { getStaffContextWith } from "@/server/auth/page";
 import { listTickets, ticketListQuery } from "@/server/services/tickets";
 import { listAssignableStaff } from "@/server/services/leads";
@@ -31,7 +32,15 @@ export default async function SupportPage({ searchParams }: { searchParams: Prom
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Support" description="Customer tickets from the portal, phone and walk-ins." actions={canWrite ? <NewTicketDialog staff={staff} currentUserId={ctx.userId} /> : null} />
+      <PageHeader title="Support" description="Customer tickets from the portal, phone and walk-ins." actions={
+          <div className="flex flex-wrap gap-2">
+            <Link href="/support/assistant" className={buttonVariants({ variant: "secondary" })}>
+              <MessageCircle /> Assistant chats
+            </Link>
+            {canWrite ? <NewTicketDialog staff={staff} currentUserId={ctx.userId} /> : null}
+          </div>
+        }
+      />
       <Card>
         <div className="flex flex-col gap-3 border-b border-border p-4">
           <FilterTabs

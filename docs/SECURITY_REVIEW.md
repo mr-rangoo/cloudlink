@@ -56,3 +56,15 @@ Internal code review by the build agent against `SECURITY.md`. It is **not** an 
 - **Router setup over plain `fetch`.** On older RouterOS, `fetch` may not validate TLS certificates. The single use and 30-minute lifetime limit exposure.
 - **`APP_ENCRYPTION_KEY` cannot be rotated in place.** Plan a re-encryption tool if rotation is required.
 - **Rate limits use client IPs from X-Forwarded-For.** Deploy behind a proxy that replaces client-supplied values; the Caddy setup in `deploy/` does.
+
+## Phase 10 additions (2026-10-26)
+- **Branding uploads.** Logo files are identified by their content, so PNG, JPEG and WebP are accepted and SVG is not. The size limit is 512 KB. Logos are served with `nosniff` and `default-src 'none'`. Brand colours are limited to `#rrggbb` by a database check and are contrast-checked before being written into CSS.
+- **AI assistant.**
+  - The model never chooses whose data it reads: every tool takes its scope from the customer session, and tool inputs are validated with zod.
+  - The only write is one support ticket per chat.
+  - The API key is server-only (env), never sent to browsers, and redacted from logs. Provider errors become fixed messages.
+  - Customer messages, and organization guidance, cannot change these rules. Prompt injection can at worst produce a wrong reply about the customer's own data, which the UI discloses can happen.
+  - Rate limits apply per customer and per organization.
+  - Production refuses `mock` and requires a key with `anthropic`. `ASSISTANT_BASE_URL` is test-only.
+  - Residual risks: customer data is processed by Anthropic, so this needs the privacy review. Real-key behaviour has not been verified yet.
+- **Live sessions.** Customers read only their own sessions and cannot trigger router reads. Staff live refreshes are de-duplicated every 30 seconds and need `network.read`.

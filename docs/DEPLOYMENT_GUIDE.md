@@ -41,6 +41,9 @@ Start from `.env.example`. Production requires:
 | `NETWORK_ADAPTER` | `routeros` or `disabled` (never `mock`). With `routeros`, `MIKROTIK_ALLOWED_NETWORKS` is mandatory. |
 | `MIKROTIK_CONNECTION_MODE` | `api-ssl` recommended |
 | `MESSAGING_ADAPTER` | `smtp` (with SMTP settings) or `disabled` |
+| `ASSISTANT_ADAPTER` | `anthropic` (with `ANTHROPIC_API_KEY`) or `disabled` (default). `mock` is refused. See `docs/ASSISTANT.md` |
+| `ANTHROPIC_API_KEY` | Claude API key for the portal assistant, kept in the secret store |
+| `ASSISTANT_MODEL` / `ASSISTANT_EFFORT` | Optional; defaults `claude-opus-5-5` / `low` |
 | `ENABLE_DEMO_SEED` | `false` |
 | `MPESA_VERIFY_CALLBACKS` | `true` (enforced) |
 | `MPESA_BASE_URL`, `OPERATION_BACKOFF_BASE_MS` | Empty (test-only) |

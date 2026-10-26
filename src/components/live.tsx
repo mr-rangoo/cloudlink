@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { formatDuration } from "@/components/network-notice";
+import { formatDuration } from "@/lib/format";
 
 /** "just now", "42 s ago", "5 min ago", "3 h ago", "2 d ago". */
 export function relativeAge(ms: number): string {

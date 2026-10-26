@@ -238,7 +238,7 @@ export async function updateTicket(ctx: StaffContext, id: string, input: z.infer
 
 // ───────── Customer portal ─────────
 
-export async function createCustomerTicket(ctx: CustomerContext, input: z.infer<typeof customerTicketInput>) {
+export async function createCustomerTicket(ctx: CustomerContext, input: z.infer<typeof customerTicketInput>, opts: { channel?: "portal" | "ai_assistant" } = {}) {
   const sub = await db.subscriber.findUniqueOrThrow({ where: { id: ctx.subscriberId }, select: { branchId: true } });
   const open = await db.supportTicket.count({ where: { organizationId: ctx.organizationId, subscriberId: ctx.subscriberId, status: { in: ACTIVE_STATUSES } } });
   if (open >= 10) throw new AppError("INVALID_STATE", "You have too many open tickets. Please reply to an existing ticket.");
@@ -253,12 +253,12 @@ export async function createCustomerTicket(ctx: CustomerContext, input: z.infer<
         description: input.description,
         category: input.category,
         priority: input.category === "CONNECTIVITY" ? "HIGH" : "NORMAL",
-        channel: "portal",
+        channel: opts.channel ?? "portal",
         createdByCustomerId: ctx.customerAccountId,
       },
     });
     await tx.ticketEvent.create({ data: { organizationId: ctx.organizationId, ticketId: ticket.id, actorType: "customer", type: "created", toValue: "OPEN" } });
-    await tx.subscriberActivity.create({ data: { organizationId: ctx.organizationId, subscriberId: ctx.subscriberId, type: "ticket.created", message: `Ticket ${ticket.ticketNumber} opened from the portal: ${ticket.subject}` } });
+    await tx.subscriberActivity.create({ data: { organizationId: ctx.organizationId, subscriberId: ctx.subscriberId, type: "ticket.created", message: `Ticket ${ticket.ticketNumber} opened from the portal${opts.channel === "ai_assistant" ? " (AI assistant)" : ""}: ${ticket.subject}` } });
     return ticket;
   });
   await audit(ctx, { action: "portal.ticket_create", entityType: "ticket", entityId: t.id });

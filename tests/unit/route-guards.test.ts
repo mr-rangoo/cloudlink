@@ -60,6 +60,13 @@ describe("API route guards", () => {
     for (const rel of [...Object.keys(PUBLIC_ROUTES), ...WEBHOOK_ROUTES, ...Object.keys(RAW_ROUTES)]) expect(rels.has(rel), rel).toBe(true);
   });
 
+  it("keeps UI components out of server and worker code (the worker runs under the react-server condition)", () => {
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [path.join(dir, e.name)] : []));
+    const src = path.resolve(import.meta.dirname, "../../src");
+    const offenders = [...walk(path.join(src, "server")), ...walk(path.join(src, "worker"))].filter((f) => /from "@\/components\//.test(fs.readFileSync(f, "utf8"))).map((f) => path.relative(src, f));
+    expect(offenders).toEqual([]);
+  });
+
   it("checks permissions on staff mutations", () => {
     const missing = files
       .filter(({ src }) => /staffRoute\(\{[^}]*\}/.test(src))

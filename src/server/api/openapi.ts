@@ -23,6 +23,7 @@ import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } f
 import { mpesaConfigInput } from "@/server/services/mpesa-config";
 import { brandingInput } from "@/server/services/branding";
 import { paymentMethodInput, paymentMethodUpdate } from "@/server/services/payment-methods";
+import { assistantMessageInput, assistantSettingsInput, conversationListQuery } from "@/server/assistant/service";
 import { c2bConfirmationSchema, stkCallbackSchema } from "@/server/domain/mpesa";
 
 /**
@@ -250,6 +251,14 @@ export const operations: Operation[] = [
   { method: "put", path: "/settings/payment-methods/:id", summary: "Replace a payment method", tag: "Settings", auth: "session", permission: "settings.write", body: paymentMethodInput },
   { method: "patch", path: "/settings/payment-methods/:id", summary: "Show/hide or reorder", tag: "Settings", auth: "session", permission: "settings.write", body: paymentMethodUpdate },
   { method: "delete", path: "/settings/payment-methods/:id", summary: "Remove a payment method", tag: "Settings", auth: "session", permission: "settings.write" },
+  // Phase 10: customer-portal AI assistant
+  { method: "get", path: "/settings/assistant", summary: "Assistant settings and deployment status (adapter, model; no secrets)", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "put", path: "/settings/assistant", summary: "Turn the portal assistant on/off, name it, add organization guidance", tag: "Settings", auth: "session", permission: "settings.write", body: assistantSettingsInput },
+  { method: "get", path: "/assistant/conversations", summary: "Customer chats with the assistant (branch-scoped)", tag: "Support", auth: "session", permission: "support.read", query: conversationListQuery },
+  { method: "get", path: "/assistant/conversations/:id", summary: "Chat transcript with the tools the assistant used (results summarised)", tag: "Support", auth: "session", permission: "support.read" },
+  { method: "get", path: "/customer/assistant", summary: "Whether the assistant is available, its name, and the open chat", tag: "Customer portal", auth: "session" },
+  { method: "post", path: "/customer/assistant/messages", summary: "Ask the assistant; it may look up only this customer's records or open one ticket per chat (rate-limited)", tag: "Customer portal", auth: "session", body: assistantMessageInput, responses: { "429": "Too many messages", "503": "Assistant unavailable" } },
+  { method: "post", path: "/customer/assistant/end", summary: "End the open chat", tag: "Customer portal", auth: "session" },
   // Phase 8: M-Pesa (Daraja) payment requests, callbacks and configuration
   { method: "post", path: "/payments/mpesa/stk-push", summary: "Prompt a subscriber's phone to pay (STK Push); money is recorded only on a verified callback", tag: "Payments", auth: "session", permission: "payments.initiate", body: stkPushInput, idempotent: true, responses: { "202": "Request sent", "503": "M-Pesa not configured" } },
   { method: "get", path: "/payments/attempts", summary: "M-Pesa payment requests and outcomes", tag: "Payments", auth: "session", permission: "payments.read", query: attemptListQuery },

@@ -12,6 +12,8 @@ import { Forbidden } from "@/components/shell/forbidden";
 import { SettingsForm } from "./form";
 import { BrandingForm } from "./branding-form";
 import { PaymentMethodsPanel } from "./payment-methods-panel";
+import { AssistantForm } from "./assistant-form";
+import { assistantSettings, assistantStatus } from "@/server/assistant/service";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -19,6 +21,7 @@ const TABS = [
   ["general", "General"],
   ["branding", "Branding & theme"],
   ["payments", "Payment methods"],
+  ["assistant", "AI assistant"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -30,9 +33,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <PageHeader title="Settings" description="Organization details, billing defaults, look and feel, and how customers pay. Changes are recorded in the audit log." />
+      <PageHeader title="Settings" description="Organization details, billing defaults, look and feel, how customers pay, and the portal assistant. Changes are recorded in the audit log." />
       <FilterTabs label="Settings sections" active={tab} items={TABS.map(([t, label]) => ({ value: t, label, href: t === "general" ? "/settings" : `/settings?tab=${t}` }))} />
-      {tab === "general" ? <GeneralTab ctx={ctx} /> : tab === "branding" ? <BrandingTab ctx={ctx} /> : <PaymentsTab ctx={ctx} />}
+      {tab === "general" ? <GeneralTab ctx={ctx} /> : tab === "branding" ? <BrandingTab ctx={ctx} /> : tab === "payments" ? <PaymentsTab ctx={ctx} /> : <AssistantTab ctx={ctx} />}
       <Card>
         <CardContent className="flex flex-wrap gap-x-5 gap-y-2 py-4 text-sm">
           <span className="text-muted-foreground">More settings:</span>
@@ -107,4 +110,9 @@ async function PaymentsTab({ ctx }: { ctx: Ctx }) {
       methods={rows.map((m) => ({ id: m.id, kind: m.kind, label: m.label, details: (m.details ?? {}) as Record<string, string | null>, instructions: m.instructions, active: m.active, preview: instructionsFor(m, "A000123").lines }))}
     />
   );
+}
+
+async function AssistantTab({ ctx }: { ctx: Ctx }) {
+  const settings = await assistantSettings(ctx.organizationId);
+  return <AssistantForm initial={settings} status={assistantStatus()} organizationName={ctx.organization.name} />;
 }

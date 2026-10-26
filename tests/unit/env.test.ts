@@ -58,6 +58,25 @@ describe("environment validation", () => {
     expect(env.APP_ENV).toBe("production");
   });
 
+  it("guards the AI assistant settings in production", () => {
+    const prod = { ...base, APP_ENV: "production", APP_URL: "https://billing.example.co.ke", PAYMENT_ADAPTER: "disabled", NETWORK_ADAPTER: "disabled", MESSAGING_ADAPTER: "disabled" };
+    expect(parseEnv(prod).ASSISTANT_ADAPTER).toBe("disabled"); // off unless configured
+    const issues = (src: Record<string, string>) => {
+      try {
+        parseEnv(src);
+        return "";
+      } catch (err) {
+        return (err as EnvValidationError).issues.join("\n");
+      }
+    };
+    expect(issues({ ...prod, ASSISTANT_ADAPTER: "mock" })).toMatch(/ASSISTANT_ADAPTER: mock assistant is not allowed/);
+    expect(issues({ ...prod, ASSISTANT_ADAPTER: "anthropic" })).toMatch(/ANTHROPIC_API_KEY: is required/);
+    expect(issues({ ...prod, ASSISTANT_ADAPTER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-x", ASSISTANT_BASE_URL: "http://127.0.0.1:9" })).toMatch(/ASSISTANT_BASE_URL/);
+    expect(issues({ ...prod, ASSISTANT_ADAPTER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-secret-value", ASSISTANT_MODEL: "gpt-4" })).toMatch(/ASSISTANT_MODEL: must be a Claude model id/);
+    expect(issues({ ...prod, ASSISTANT_ADAPTER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-secret-value", ASSISTANT_MODEL: "gpt-4" })).not.toContain("sk-ant-secret-value");
+    expect(parseEnv({ ...prod, ASSISTANT_ADAPTER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-x" })).toMatchObject({ ASSISTANT_MODEL: "claude-opus-5-5", ASSISTANT_EFFORT: "low" });
+  });
+
   it("rejects placeholder secrets in production", () => {
     expect(() =>
       parseEnv({

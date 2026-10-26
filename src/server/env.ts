@@ -72,6 +72,13 @@ export const envSchema = z
     PAYMENT_ADAPTER: z.enum(["mock", "daraja", "disabled"]).default("mock"),
     NETWORK_ADAPTER: z.enum(["mock", "routeros", "disabled"]).default("mock"),
     MESSAGING_ADAPTER: z.enum(["mock", "smtp", "disabled"]).default("mock"),
+    /** Customer-portal AI assistant: anthropic (Claude API), mock (simulated replies, non-production only), disabled. */
+    ASSISTANT_ADAPTER: z.enum(["anthropic", "mock", "disabled"]).default("disabled"),
+    ANTHROPIC_API_KEY: z.string().optional().default(""),
+    ASSISTANT_MODEL: z.string().regex(/^claude-[a-z0-9-]+$/, "must be a Claude model id").default("claude-opus-5-5"),
+    ASSISTANT_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
+    /** Non-production only: point the Claude adapter at a fake server (tests). */
+    ASSISTANT_BASE_URL: z.string().optional().default(""),
     STORAGE_ADAPTER: z.enum(["local", "s3"]).default("local"),
     STORAGE_LOCAL_DIR: z.string().default("storage"),
     ENABLE_DEMO_SEED: bool,
@@ -105,6 +112,9 @@ export const envSchema = z
     if (env.MIKROTIK_CONNECTION_MODE === "mock" && env.NETWORK_ADAPTER === "routeros")
       fail("MIKROTIK_CONNECTION_MODE", "must not be mock when NETWORK_ADAPTER=routeros");
     if (env.MESSAGING_ADAPTER === "mock") fail("MESSAGING_ADAPTER", "mock messaging adapter is not allowed in production");
+    if (env.ASSISTANT_ADAPTER === "mock") fail("ASSISTANT_ADAPTER", "mock assistant is not allowed in production");
+    if (env.ASSISTANT_ADAPTER === "anthropic" && !env.ANTHROPIC_API_KEY) fail("ANTHROPIC_API_KEY", "is required when ASSISTANT_ADAPTER=anthropic");
+    if (env.ASSISTANT_BASE_URL) fail("ASSISTANT_BASE_URL", "is a test-only override and must be empty in production");
     if (env.ENABLE_DEMO_SEED) fail("ENABLE_DEMO_SEED", "demo seed must be disabled in production");
     if (!env.APP_URL.startsWith("https://")) fail("APP_URL", "must use https in production");
     if (/replace-with|changeme|example/i.test(env.AUTH_SECRET)) fail("AUTH_SECRET", "placeholder secret detected");

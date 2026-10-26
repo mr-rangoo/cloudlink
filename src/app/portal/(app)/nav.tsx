@@ -15,7 +15,8 @@ const LINKS = [
   { href: "/portal/profile", label: "Profile" },
 ];
 
-export function PortalNav({ organization, customer, logoUrl, mode }: { organization: string; customer: string; logoUrl: string | null; mode: "light" | "dark" | "system" }) {
+export function PortalNav({ organization, customer, logoUrl, mode, assistant }: { organization: string; customer: string; logoUrl: string | null; mode: "light" | "dark" | "system"; assistant: string | null }) {
+  const links = assistant ? [...LINKS.slice(0, 3), { href: "/portal/assistant", label: assistant }, ...LINKS.slice(3)] : LINKS;
   const pathname = usePathname();
   const router = useRouter();
   const logout = async () => {
@@ -46,7 +47,7 @@ export function PortalNav({ organization, customer, logoUrl, mode }: { organizat
       </div>
       <nav aria-label="Portal" className="mx-auto max-w-4xl overflow-x-auto px-2 sm:px-4">
         <ul className="flex gap-1 pb-2">
-          {LINKS.map((l) => {
+          {links.map((l) => {
             const active = pathname === l.href || pathname.startsWith(`${l.href}/`);
             return (
               <li key={l.href}>

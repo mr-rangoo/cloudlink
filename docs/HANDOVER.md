@@ -2,7 +2,7 @@
 
 Cloudlink is a multi-tenant ISP billing and network-operations platform for Kenya (KES, Africa/Nairobi). It is a Next.js web app plus a separately run worker, on PostgreSQL, with Redis optional.
 
-## What is built (phases 1–9)
+## What is built (phases 1–10)
 | Area | Highlights | Docs |
 | --- | --- | --- |
 | Foundation | Staff authentication and sessions, 47 permissions and 8 role templates, organization and branch scoping, audit log, idempotent APIs, durable background jobs, OpenAPI (`/api/v1/openapi.json`) | `docs/ARCHITECTURE.md` |
@@ -14,6 +14,8 @@ Cloudlink is a multi-tenant ISP billing and network-operations platform for Keny
 | Network | MikroTik RouterOS API adapter, PPPoE and hotspot operations with read-back verification, FreeRADIUS SQL provisioning, durable operations with retries and alerts, sessions, health checks, one-time router setup command | `docs/NETWORK.md` |
 | Payments | M-Pesa Daraja STK Push and C2B, verified and deduplicated callbacks, payment requests for staff and portal, gateway interface | `docs/PAYMENTS.md` |
 | Release | Security review, CSP and HSTS, tenant sweep, backup and restore scripts with a tested restore, Docker and compose artefacts, deployment and operations guides, smoke test | `docs/SECURITY_REVIEW.md`, `docs/DEPLOYMENT_GUIDE.md`, `docs/OPERATIONS.md` |
+| Personalisation | Theme presets and brand colour, light/dark mode, logo, portal texts, customer payment methods (portal and invoice PDFs), live sessions view, customer "My connection" | `docs/PERSONALISATION.md` |
+| AI assistant | Portal chat on Claude with customer-scoped tools (balance, invoices, payments, connection, how to pay, open a ticket), staff transcripts, test mode | `docs/ASSISTANT.md` |
 
 ## What is verified, and what is not
 | Integration | Status |
@@ -24,6 +26,7 @@ Cloudlink is a multi-tenant ISP billing and network-operations platform for Keny
 | FreeRADIUS | **Not verified with a live server.** Tested against compatible SQL tables. |
 | Email (SMTP), SMS (Africa's Talking) | Implemented; not verified with real sends |
 | Object storage | Local disk only; S3 adapter not implemented |
+| Claude (portal assistant) | **Not verified with a real API key.** Tested in test mode and against a fake Messages API only. |
 | Cloud deployment | Documented; **not executed** (not authorized; Docker unavailable on the build machine) |
 
 The Integrations page shows these statuses live. It marks something tested or verified only after a real successful run.
@@ -53,12 +56,14 @@ npm run test:e2e
 2. **A MikroTik router reachable over a VPN** from the server, and a decision on a WireGuard hub. Then use the router's **Setup command** and follow "Testing against a real router" in `docs/NETWORK.md`.
 3. **SMTP and SMS provider accounts**, if you want real messages.
 4. **Hosting authorization:** an AWS (or other) account and a domain. Follow `docs/DEPLOYMENT_GUIDE.md`.
-5. **Legal and privacy review** (Kenya Data Protection Act) and an **external penetration test** before going live.
+5. **An Anthropic API key**, if you want the portal assistant to use Claude. Set `ASSISTANT_ADAPTER=anthropic` and `ANTHROPIC_API_KEY`, then switch it on under Settings → AI assistant. Customer questions and the account details needed to answer them are sent to Anthropic, so include this in the privacy review.
+6. **Legal and privacy review** (Kenya Data Protection Act) and an **external penetration test** before going live.
 
 ## Known limitations
 - No B2C refunds to M-Pesa, no C2B transaction-status verification, and no online hotspot voucher purchase.
 - No S3 storage adapter, no RADIUS CoA, and no in-place `APP_ENCRYPTION_KEY` rotation.
-- Session data is polled every 5 minutes. Network usage records live on sessions.
+- Sessions sync every 5 minutes, and every 30 seconds while someone has the sessions page open in live mode. Usage figures cover the current session only, with no monthly usage history.
+- The assistant cannot take payments or change services. It answers from account data and opens tickets.
 
 ## Where things are
 - **Code:** `src/server/services` (business logic), `src/server/integrations` (provider adapters), `src/app` (pages and API routes), `src/worker` (background worker).

@@ -35,6 +35,10 @@ export const REDACT_PATHS = [
   "*.PhoneNumber",
   "*.phone",
   "*.msisdn",
+  "apiKey",
+  "*.apiKey",
+  "*.api_key",
+  "*.x-api-key",
 ];
 
 const level = process.env.LOG_LEVEL ?? (process.env.NODE_ENV === "test" ? "silent" : "info");
