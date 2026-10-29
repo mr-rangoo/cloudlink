@@ -9,7 +9,7 @@ import { deliverNotification } from "@/server/services/notifications";
 import { inviteLink, mintInviteToken } from "@/server/portal/auth";
 import { db } from "@/server/db/client";
 import { generateExport } from "@/server/services/exports";
-import { ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperations, syncNetworkSessions } from "@/server/services/network";
+import { enforcePlanSchedules, ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperations, syncNetworkSessions } from "@/server/services/network";
 import { runRouterHealthChecks } from "@/server/services/routers";
 import { processStkEvent, runStatusQuery } from "@/server/services/mobile-money";
 import { pruneRoutineOperations } from "@/server/jobs/scheduler";
@@ -98,6 +98,12 @@ export const operationHandlers: OperationHandlers = {
     const operations = await pruneRoutineOperations(op.organizationId);
     const chats = await pruneAssistantConversations(op.organizationId);
     return { operations: operations.deleted, assistantChats: chats.deleted };
+  },
+
+  /** Switch scheduled plans (e.g. night plans) on or off at their time-window boundaries. */
+  "plans.enforce_schedules": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    return enforcePlanSchedules(op.organizationId);
   },
 
   /** Alert on network operations that stopped progressing. */

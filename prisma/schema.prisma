@@ -439,6 +439,8 @@ model Subscriber {
   idNumber        String? // national ID or KRA PIN
   status          SubscriberStatus @default(ACTIVE)
   notes           String?
+  /// How the account was created: staff | hotspot (self-service purchase on the captive portal) | import | lead.
+  source          String           @default("staff")
   createdById     String?          @db.Uuid
   createdAt       DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
@@ -544,6 +546,8 @@ model Subscription {
   networkPasswordEnc String? // AES-GCM envelope; plaintext only exists in memory while provisioning
   networkStatus      String             @default("NOT_PROVISIONED") // NOT_PROVISIONED | PENDING | ACTIVE | DISABLED | SIMULATED | ERROR
   networkUpdatedAt   DateTime?          @db.Timestamptz(6)
+  /// Hotspot: the device the plan was bought on; device (TV) plans: the device given access by MAC.
+  networkMac         String?
   graceDays          Int                @default(0)
   autoRenew          Boolean            @default(true)
   activatedAt        DateTime?          @db.Timestamptz(6)
@@ -1487,6 +1491,8 @@ model Router {
   pppoeAuth       PppoeAuthMode @default(LOCAL)
   hotspotEnabled  Boolean       @default(false)
   pppoeEnabled    Boolean       @default(true)
+  /// Host name of the hotspot login page (e.g. "wifi.login"); the captive portal only posts logins to this host or a private address.
+  hotspotDnsName  String?
   status          RouterStatus  @default(UNKNOWN)
   identity        String?
   routerOsVersion String?
@@ -1652,6 +1658,17 @@ model PaymentAttempt {
   requestedById     String?              @db.Uuid
   requestedBy       String // user | customer | system
   detail            String? // latest human-readable explanation
+  /// account = pay towards the account / an invoice; hotspot_purchase = buy a plan on the captive portal.
+  purpose           String               @default("account")
+  packageId         String?              @db.Uuid
+  routerId          String?              @db.Uuid
+  clientMac         String?
+  clientIp          String?
+  /// SHA-256 of the token the captive portal holds to follow this purchase (and receive login details).
+  portalTokenHash   String?              @unique
+  subscriptionId    String?              @db.Uuid
+  /// When network access for the purchase was confirmed (activation time = activatedAt − completedAt).
+  activatedAt       DateTime?            @db.Timestamptz(6)
   submittedAt       DateTime?            @db.Timestamptz(6)
   completedAt       DateTime?            @db.Timestamptz(6)
   lastQueriedAt     DateTime?            @db.Timestamptz(6)
@@ -1664,6 +1681,7 @@ model PaymentAttempt {
   @@unique([provider, checkoutRequestId])
   @@index([organizationId, status, createdAt])
   @@index([subscriberId, status])
+  @@index([subscriptionId])
 }
 
 enum WebhookEventStatus {

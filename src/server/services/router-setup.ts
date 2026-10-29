@@ -90,7 +90,17 @@ export async function serveSetupScript(token: string, meta: { ipAddress: string 
       hotspotHost = null;
     }
   }
-  const script = buildSetupScript({ routerName: router.name, apiPort: router.apiPort, useTls: router.useTls, password, managementSources: managementSources().sources, radius, hotspotHost, generatedAt: now });
+  const script = buildSetupScript({
+    routerName: router.name,
+    apiPort: router.apiPort,
+    useTls: router.useTls,
+    password,
+    managementSources: managementSources().sources,
+    radius,
+    hotspotHost,
+    hotspotLoginUrl: hotspotHost ? `${baseUrl()}/api/v1/hotspot-files/${router.id}/login.html` : null,
+    generatedAt: now,
+  });
 
   const ctx = systemContext(router.organizationId, "router:setup", meta.correlationId);
   await audit(ctx, { action: "router.setup_command.used", entityType: "router", entityId: router.id, metadata: { sourceIp: meta.ipAddress, credentialsRotated: true, radius: Boolean(radius) } });

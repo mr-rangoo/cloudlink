@@ -15,6 +15,12 @@ const PUBLIC_ROUTES: Record<string, string> = {
   "v1/customer/auth/activate/route.ts": "customer activation link (single-use token, rate-limited)",
   "v1/hotspot/[org]/redeem/route.ts": "captive portal redemption (rate-limited)",
   "v1/hotspot/[org]/status/route.ts": "captive portal status (needs the voucher code, rate-limited)",
+  "v1/hotspot/[org]/plans/route.ts": "captive portal plan list (public prices only)",
+  "v1/hotspot/[org]/purchase/route.ts": "captive portal M-Pesa purchase / free trial (rate-limited, same-origin)",
+  "v1/hotspot/[org]/purchase/status/route.ts": "purchase progress (needs the purchase token, rate-limited)",
+  "v1/hotspot/[org]/purchase/simulate/route.ts": "test-mode payment simulation (refused in production and for real gateways)",
+  "v1/hotspot/[org]/access/route.ts": "router readiness for a login the caller holds (rate-limited)",
+  "v1/hotspot/[org]/reconnect/route.ts": "re-issue login details with M-Pesa code + phone (failure rate-limited)",
 };
 const WEBHOOK_ROUTES = ["v1/webhooks/mobile-money/stk/[token]/route.ts", "v1/webhooks/mobile-money/c2b/[token]/confirmation/route.ts", "v1/webhooks/mobile-money/c2b/[token]/validation/route.ts"];
 const RAW_ROUTES: Record<string, string> = {
@@ -23,6 +29,7 @@ const RAW_ROUTES: Record<string, string> = {
   "v1/openapi.json/route.ts": "API contract, no tenant data",
   "v1/routers/setup/[token]/route.ts": "router setup script (single-use token, rate-limited)",
   "v1/branding/[slug]/logo/route.ts": "organization logo image for portal/hotspot pages (public by design)",
+  "v1/hotspot-files/[routerId]/login.html/route.ts": "router hotspot login page that redirects to the captive portal (no secrets, rate-limited)",
 };
 
 function routeFiles(dir: string): string[] {

@@ -139,37 +139,65 @@ export async function initiateStkPush(ctx: ActorContext, raw: z.input<typeof stk
 
   await consumeRateLimit(RATE_LIMITS.paymentInitiation, `${ctx.organizationId}:phone:${phone}`);
   await consumeRateLimit(RATE_LIMITS.paymentInitiation, `${ctx.organizationId}:subscriber:${subscriber.id}`);
+  const attempt = await submitPaymentAttempt(ctx, { subscriber, invoiceId: input.invoiceId ?? null, phone, amount: input.amount, currency: org.currency, channel: opts.channel, idempotencyKey: key });
+  if (ctx.kind === "staff") {
+    await audit(ctx, { action: "payment.mpesa.request", entityType: "payment_attempt", entityId: attempt.id, metadata: { subscriberId: subscriber.id, invoiceId: input.invoiceId ?? null, amount: attempt.amount.toString(), phone: maskMsisdn(phone), status: attempt.status } });
+  }
+  return publicAttempt(attempt);
+}
+
+export interface SubmitPaymentArgs {
+  subscriber: { id: string; accountNumber: string };
+  invoiceId: string | null;
+  /** MSISDN (2547XXXXXXXX). */
+  phone: string;
+  /** Whole shillings, already validated. */
+  amount: number;
+  currency: string;
+  channel: "staff" | "portal" | "hotspot";
+  /** Namespaced idempotency key, unique per organization. */
+  idempotencyKey: string;
+  /** Captive-portal plan purchase: what to grant once the payment is confirmed. */
+  purchase?: { packageId: string; routerId: string | null; clientMac: string | null; clientIp: string | null; portalTokenHash: string };
+}
+
+/**
+ * Create the payment request and ask the gateway to prompt the payer. Callers validate the subscriber, amount and
+ * rate limits first. The returned attempt is PENDING/SUBMITTED/FAILED/UNKNOWN; money is recorded only by a verified callback.
+ */
+export async function submitPaymentAttempt(ctx: ActorContext, args: SubmitPaymentArgs): Promise<PaymentAttempt> {
   const gw = await resolveGateway(ctx.organizationId);
   const token = randomToken(24);
   let attempt = await db.paymentAttempt
     .create({
       data: {
         organizationId: ctx.organizationId,
-        subscriberId: subscriber.id,
-        invoiceId: input.invoiceId ?? null,
+        subscriberId: args.subscriber.id,
+        invoiceId: args.invoiceId,
         provider: gw.provider,
-        channel: opts.channel,
-        amount: String(input.amount),
-        currency: org.currency,
-        phone,
-        accountReference: stkReference(subscriber.accountNumber),
-        idempotencyKey: key,
+        channel: args.channel,
+        amount: String(args.amount),
+        currency: args.currency,
+        phone: args.phone,
+        accountReference: stkReference(args.subscriber.accountNumber),
+        idempotencyKey: args.idempotencyKey,
         callbackTokenHash: sha256(token),
         requestedById: ctx.kind === "staff" ? ctx.userId : null,
-        requestedBy: ctx.kind === "staff" ? "user" : ctx.kind === "customer" ? "customer" : "system",
+        requestedBy: ctx.kind === "staff" ? "user" : ctx.kind === "customer" || args.channel === "hotspot" ? "customer" : "system",
         detail: "Sending the request to M-Pesa",
         metadata: { environment: gw.environment },
+        ...(args.purchase ? { purpose: "hotspot_purchase", ...args.purchase } : {}),
       },
     })
     .catch(async (err) => {
-      if ((err as { code?: string }).code === "P2002") return db.paymentAttempt.findUniqueOrThrow({ where: { organizationId_idempotencyKey: { organizationId: ctx.organizationId, idempotencyKey: key } } });
+      if ((err as { code?: string }).code === "P2002") return db.paymentAttempt.findUniqueOrThrow({ where: { organizationId_idempotencyKey: { organizationId: ctx.organizationId, idempotencyKey: args.idempotencyKey } } });
       throw err;
     });
-  if (attempt.status !== "PENDING" || attempt.checkoutRequestId) return publicAttempt(attempt);
+  if (attempt.status !== "PENDING" || attempt.checkoutRequestId) return attempt;
 
   const callbackUrl = `${callbackBaseUrl()}/api/v1/webhooks/mobile-money/stk/${token}`;
   try {
-    const res = await gw.gateway.requestPayment({ amount: input.amount, phone, accountReference: attempt.accountReference, description: "Internet", callbackUrl });
+    const res = await gw.gateway.requestPayment({ amount: args.amount, phone: args.phone, accountReference: attempt.accountReference, description: args.purchase ? "WiFi" : "Internet", callbackUrl });
     attempt = await db.paymentAttempt.update({
       where: { id: attempt.id },
       data: {
@@ -195,10 +223,7 @@ export async function initiateStkPush(ctx: ActorContext, raw: z.input<typeof stk
       if (!(err instanceof RetryableError)) logger.error({ attemptId: attempt.id, err: err instanceof Error ? err.name : "unknown" }, "unexpected error requesting STK push");
     }
   }
-  if (ctx.kind === "staff") {
-    await audit(ctx, { action: "payment.mpesa.request", entityType: "payment_attempt", entityId: attempt.id, metadata: { subscriberId: subscriber.id, invoiceId: input.invoiceId ?? null, amount: attempt.amount.toString(), phone: maskMsisdn(phone), status: attempt.status } });
-  }
-  return publicAttempt(attempt);
+  return attempt;
 }
 
 /** Portal: the signed-in customer pays (part of) their own balance or one of their own invoices. */
@@ -438,12 +463,13 @@ async function confirmAttempt(attemptId: string, details: StkSuccessDetails, eve
     db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "PaymentAttempt" WHERE "id" = ${attemptId}::uuid FOR UPDATE`;
       const attempt = await tx.paymentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
-      if (attempt.status === "CONFIRMED" && attempt.paymentId) return { paymentId: attempt.paymentId, allocations: [] as AllocationResult[], created: false, attempt };
+      if (attempt.status === "CONFIRMED" && attempt.paymentId) return { paymentId: attempt.paymentId, allocations: [] as AllocationResult[], created: false, attempt, purchaseSubscriptionId: null };
       const ctx = systemContext(attempt.organizationId, "webhook:mpesa", eventId);
       const existing = await findLivePaymentByReference(tx, attempt.organizationId, details.receipt);
       let paymentId: string;
       let allocations: AllocationResult[] = [];
       let created = false;
+      let purchaseSubscriptionId: string | null = null;
       if (existing) {
         paymentId = existing.id; // already recorded (C2B report or manual entry): link, never duplicate
       } else {
@@ -464,7 +490,12 @@ async function confirmAttempt(attemptId: string, details: StkSuccessDetails, eve
         });
         paymentId = payment.id;
         created = true;
-        if (payment.subscriberId) {
+        if (payment.subscriberId && attempt.purpose === "hotspot_purchase") {
+          // Imported lazily: hotspot sales build on this module (import cycle otherwise).
+          const { applyHotspotPurchaseTx } = await import("@/server/services/hotspot-sales");
+          purchaseSubscriptionId = (await applyHotspotPurchaseTx(tx, ctx, attempt, payment)).subscriptionId;
+          await notifyPaymentReceivedTx(tx, attempt.organizationId, payment.id);
+        } else if (payment.subscriberId) {
           if (attempt.invoiceId) {
             const invoice = await tx.invoice.findUnique({ where: { id: attempt.invoiceId }, select: { id: true, subscriberId: true, status: true, balanceDue: true, currency: true } });
             if (invoice && invoice.subscriberId === payment.subscriberId && invoice.currency === payment.currency && (invoice.status === "OPEN" || invoice.status === "PARTIALLY_PAID")) {
@@ -476,11 +507,21 @@ async function confirmAttempt(attemptId: string, details: StkSuccessDetails, eve
           await notifyPaymentReceivedTx(tx, attempt.organizationId, payment.id);
         }
       }
+      const fresh = await tx.paymentAttempt.findUniqueOrThrow({ where: { id: attemptId }, select: { detail: true } });
       const updated = await tx.paymentAttempt.update({
         where: { id: attemptId },
-        data: { status: "CONFIRMED", paymentId, providerReceipt: details.receipt, resultCode: "0", completedAt: new Date(), detail: existing ? `Payment received (already recorded as ${existing.receiptNumber}).` : "Payment received." },
+        data: {
+          status: "CONFIRMED",
+          paymentId,
+          providerReceipt: details.receipt,
+          resultCode: "0",
+          completedAt: new Date(),
+          ...(purchaseSubscriptionId ? { subscriptionId: purchaseSubscriptionId } : {}),
+          // A purchase that could not be applied keeps its explanation (set by applyHotspotPurchaseTx).
+          detail: existing ? `Payment received (already recorded as ${existing.receiptNumber}).` : attempt.purpose === "hotspot_purchase" && !purchaseSubscriptionId ? fresh.detail : "Payment received.",
+        },
       });
-      return { paymentId, allocations, created, attempt: updated };
+      return { paymentId, allocations, created, attempt: updated, purchaseSubscriptionId };
     });
   let result;
   try {
@@ -491,6 +532,7 @@ async function confirmAttempt(attemptId: string, details: StkSuccessDetails, eve
     else throw err;
   }
   if (result.allocations.some((a) => a.subscription === "renewed")) await dispatchNetworkOperations(result.attempt.organizationId);
+  if (result.purchaseSubscriptionId) await dispatchNetworkOperations(result.attempt.organizationId, { subscriptionId: result.purchaseSubscriptionId });
   if (result.created) {
     await audit(systemContext(result.attempt.organizationId, "webhook:mpesa", eventId), {
       action: "payment.mpesa.confirmed",
@@ -744,6 +786,17 @@ export async function simulateMockResponse(ctx: StaffContext, id: string, raw: z
   if (process.env.APP_ENV === "production") throw new AppError("FORBIDDEN", "Simulation is never available in production.");
   const { outcome } = simulateInput.parse(raw);
   const a = await visibleAttempt(ctx, id);
+  await playSimulatedResponse(a, outcome, ctx.correlationId);
+  await audit(ctx, { action: "payment.mpesa.simulate", entityType: "payment_attempt", entityId: a.id, metadata: { outcome } });
+  return getAttempt(ctx, a.id);
+}
+
+/**
+ * Mock adapter only, never in production: send a simulated customer response through the real callback pipeline
+ * (validation, storage, verification, confirmation). Used by staff and by the captive portal in test mode.
+ */
+export async function playSimulatedResponse(a: PaymentAttempt, outcome: z.infer<typeof simulateInput>["outcome"], correlationId: string) {
+  if (process.env.APP_ENV === "production") throw new AppError("FORBIDDEN", "Simulation is never available in production.");
   if (a.provider !== "mock") throw new AppError("INVALID_STATE", "Only requests made with the mock payment adapter can be simulated.");
   if (!a.checkoutRequestId || a.status !== "SUBMITTED") throw new AppError("INVALID_STATE", "This request is no longer waiting for the customer.");
   const resultCode = SIMULATED_CODE[outcome];
@@ -772,9 +825,7 @@ export async function simulateMockResponse(ctx: StaffContext, id: string, raw: z
       },
     },
   };
-  await ingestStkCallback(attempt, JSON.stringify(body), { ipAddress: null, correlationId: ctx.correlationId });
-  await audit(ctx, { action: "payment.mpesa.simulate", entityType: "payment_attempt", entityId: a.id, metadata: { outcome } });
-  return getAttempt(ctx, a.id);
+  await ingestStkCallback(attempt, JSON.stringify(body), { ipAddress: null, correlationId });
 }
 
 /** Number of requests whose outcome is unknown (shown as payment exceptions). */

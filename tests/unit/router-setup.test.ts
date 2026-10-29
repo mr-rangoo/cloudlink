@@ -25,6 +25,14 @@ describe("router setup script", () => {
     expect(s).toContain(`/radius add service=ppp address=10.8.0.5 secret="pa\\"ss\\$word\\\\x"`);
     expect(s).toContain(`/ppp aaa set use-radius=yes accounting=yes interim-update=5m`);
     expect(s).toContain(`walled-garden add dst-host="billing.example.co.ke"`);
+    expect(s).toContain(`walled-garden ip add dst-host="billing.example.co.ke" action=accept`);
+    expect(s).not.toContain("login.html"); // no login page without its URL
+  });
+
+  it("installs the captive-portal login page on hotspot routers", () => {
+    const s = buildSetupScript({ ...base, hotspotHost: "billing.example.co.ke", hotspotLoginUrl: "https://billing.example.co.ke/api/v1/hotspot-files/r1/login.html" });
+    expect(s).toContain(`/tool fetch url="https://billing.example.co.ke/api/v1/hotspot-files/r1/login.html" dst-path=($dir . "/login.html")`);
+    expect(s).toContain("login-by=cookie,http-chap,http-pap");
   });
 
   it("escapes RouterOS strings and keeps router names out of commands", () => {

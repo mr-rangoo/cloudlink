@@ -59,7 +59,7 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
             {canOperate ? <HealthCheckButton routerId={router.id} /> : null}
             {canWrite ? (
               <RouterFormDialog
-                router={{ id: router.id, name: router.name, host: router.host, apiPort: router.apiPort, useTls: router.useTls, pppoeAuth: router.pppoeAuth, pppoeEnabled: router.pppoeEnabled, hotspotEnabled: router.hotspotEnabled, branchId: router.branchId, notes: router.notes }}
+                router={{ id: router.id, name: router.name, host: router.host, apiPort: router.apiPort, useTls: router.useTls, pppoeAuth: router.pppoeAuth, pppoeEnabled: router.pppoeEnabled, hotspotEnabled: router.hotspotEnabled, hotspotDnsName: router.hotspotDnsName, branchId: router.branchId, notes: router.notes }}
                 branches={branches.map((b) => ({ id: b.id, name: b.name }))}
               />
             ) : null}

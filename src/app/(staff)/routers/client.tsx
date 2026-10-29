@@ -22,6 +22,7 @@ export interface RouterFormValues {
   hotspotEnabled: boolean;
   branchId: string | null;
   notes: string | null;
+  hotspotDnsName: string | null;
 }
 
 /** Register or edit a router. Credentials are only collected on creation (rotation has its own dialog). */
@@ -41,6 +42,7 @@ export function RouterFormDialog({ router, branches }: { router?: RouterFormValu
       hotspotEnabled: v.hotspotEnabled === "on",
       branchId: v.branchId ?? null,
       notes: v.notes ?? null,
+      hotspotDnsName: v.hotspotDnsName ?? null,
       ...(router ? {} : { username: v.username, password: v.password }),
     };
     const ok = await mutate(router ? `/routers/${router.id}` : "/routers", { method: router ? "PATCH" : "POST", body }, { success: router ? "Router updated" : "Router registered" });
@@ -91,6 +93,15 @@ export function RouterFormDialog({ router, branches }: { router?: RouterFormValu
             </Field>
             <Field id={`r-notes-${p}`} label="Notes" error={errors.notes}>
               <Input name="notes" defaultValue={router?.notes ?? ""} />
+            </Field>
+            <Field
+              id={`r-hsdns-${p}`}
+              label="Hotspot login address (optional)"
+              error={errors.hotspotDnsName}
+              hint="The DNS name of the router's hotspot, e.g. wifi.login. The captive portal logs devices in only at this name or a private IP."
+              className="sm:col-span-2"
+            >
+              <Input name="hotspotDnsName" defaultValue={router?.hotspotDnsName ?? ""} placeholder="wifi.login" autoComplete="off" spellCheck={false} />
             </Field>
           </div>
           <fieldset className="flex flex-wrap gap-x-6 gap-y-2 text-sm">

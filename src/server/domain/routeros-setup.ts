@@ -8,7 +8,8 @@
  *  2. enables the API service (plain API, or API-SSL with a self-signed certificate) restricted to those addresses;
  *  3. adds a firewall rule dropping API traffic from anywhere else;
  *  4. for RADIUS routers, points PPP authentication and accounting at the RADIUS server;
- *  5. for hotspot routers, adds Cloudlink's host to the walled garden (captive portal);
+ *  5. for hotspot routers, adds Cloudlink's host to the walled garden (captive portal over HTTP and HTTPS), installs
+ *     Cloudlink's login page (a redirect to the captive portal) and allows plain-password login on the hotspot profiles;
  *  6. deletes the downloaded script file, which contains the password.
  * It never opens the API to the internet, never changes routing, and never touches unrelated configuration.
  */
@@ -30,6 +31,8 @@ export interface SetupScriptInput {
   managementSources: string[];
   radius?: { address: string; secret: string } | null;
   hotspotHost?: string | null;
+  /** Hotspot routers: Cloudlink's login page for this router (redirects to the captive portal). */
+  hotspotLoginUrl?: string | null;
   generatedAt: Date;
 }
 
@@ -80,9 +83,16 @@ export function buildSetupScript(input: SetupScriptInput): string {
   if (input.hotspotHost) {
     lines.push(
       "",
-      "# 5. Let hotspot users reach the Cloudlink captive portal before logging in",
+      "# 5. Let hotspot users reach the Cloudlink captive portal before logging in (HTTP and HTTPS)",
       `:do { /ip hotspot walled-garden remove [find comment="cloudlink"]; /ip hotspot walled-garden add dst-host=${rosString(input.hotspotHost)} comment="cloudlink" } on-error={ :log warning "Cloudlink setup: hotspot not configured on this router" }`,
+      `:do { /ip hotspot walled-garden ip remove [find comment="cloudlink"]; /ip hotspot walled-garden ip add dst-host=${rosString(input.hotspotHost)} action=accept comment="cloudlink" } on-error={}`,
     );
+    if (input.hotspotLoginUrl) {
+      lines.push(
+        "# 5b. Cloudlink's login page in every hotspot profile, and plain-password login so the portal can sign devices in",
+        `:foreach p in=[/ip hotspot profile find] do={ :local dir [/ip hotspot profile get $p html-directory]; :if ([:len $dir] = 0) do={ :set dir "hotspot" }; :do { /tool fetch url=${rosString(input.hotspotLoginUrl)} dst-path=($dir . "/login.html") } on-error={ :log warning "Cloudlink setup: could not download the login page" }; /ip hotspot profile set $p login-by=cookie,http-chap,http-pap }`,
+      );
+    }
   }
   lines.push(
     "",

@@ -2,7 +2,7 @@ import "server-only";
 import { randomInt, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db, type Tx } from "@/server/db/client";
-import { requirePermission, tenantWhere, type ActorContext, type StaffContext } from "@/server/auth/context";
+import { requirePermission, systemContext, tenantWhere, type ActorContext, type StaffContext } from "@/server/auth/context";
 import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { decryptSecret, encryptSecret } from "@/server/security/crypto";
@@ -11,7 +11,7 @@ import { networkAdapter, networkAdapterName, type ActiveSession, type NetworkAda
 import { routerRateLimit, type RateSpec } from "@/lib/plans";
 import { radiusActiveSessions, radiusConfigured, radiusRemoveUser, radiusUpsertUser } from "@/server/integrations/radius";
 import { assertExecutable, openAlert, routerTarget } from "@/server/services/routers";
-import { assertPlanAllowedOnRouter } from "@/server/services/plan-rules";
+import { assertPlanAllowedOnRouter, planOpenAt } from "@/server/services/plan-rules";
 import { actorType, actorUserId, lockRow, searchTerm } from "@/server/services/common";
 import { logger } from "@/server/observability/logger";
 import type { NetworkOperation, NetworkOperationStatus, Prisma, Router, Subscription } from "@/generated/prisma/client";
@@ -29,9 +29,22 @@ import type { NetworkOperation, NetworkOperationStatus, Prisma, Router, Subscrip
  * Billing state (Subscription.status) and network state (Subscription.networkStatus) are kept separate.
  */
 
-export const NETWORK_OPERATION_TYPES = ["pppoe.enable", "pppoe.disable", "pppoe.remove", "session.disconnect", "hotspot.user.upsert", "profile.sync"] as const;
+export const NETWORK_OPERATION_TYPES = [
+  "pppoe.enable",
+  "pppoe.disable",
+  "pppoe.remove",
+  "session.disconnect",
+  "hotspot.user.upsert",
+  "profile.sync",
+  "hotspot.access.enable",
+  "hotspot.access.disable",
+  "device.binding.enable",
+  "device.binding.disable",
+] as const;
 export type NetworkOperationType = (typeof NETWORK_OPERATION_TYPES)[number];
-const STATE_TYPES: NetworkOperationType[] = ["pppoe.enable", "pppoe.disable"];
+/** Operations that set a subscription's access state; only the newest one decides its network status. */
+const STATE_TYPES: NetworkOperationType[] = ["pppoe.enable", "pppoe.disable", "hotspot.access.enable", "hotspot.access.disable", "device.binding.enable", "device.binding.disable"];
+const isEnableType = (t: string) => t.endsWith(".enable");
 const TERMINAL: NetworkOperationStatus[] = ["SUCCEEDED", "SIMULATED", "FAILED", "CANCELLED"];
 export const NETWORK_MAX_ATTEMPTS = 5;
 const STALE_RUNNING_MS = 10 * 60_000;
@@ -43,7 +56,36 @@ export const OPERATION_LABEL: Record<NetworkOperationType, string> = {
   "session.disconnect": "Disconnect session",
   "hotspot.user.upsert": "Activate hotspot voucher",
   "profile.sync": "Push plan to router",
+  "hotspot.access.enable": "Enable hotspot access",
+  "hotspot.access.disable": "Disable hotspot access",
+  "device.binding.enable": "Let device through (MAC)",
+  "device.binding.disable": "Remove device access (MAC)",
 };
+
+/** How a subscription reaches the network: PPPoE secret, hotspot login, or a device bound by MAC. */
+export type AccessKind = "pppoe" | "hotspot" | "device";
+
+export function accessKindOf(serviceType: string, packageKind: string | null | undefined): AccessKind | null {
+  if (serviceType === "PPPOE") return "pppoe";
+  if (serviceType === "HOTSPOT") return packageKind === "DEVICE" ? "device" : "hotspot";
+  return null;
+}
+
+function stateTypeFor(kind: AccessKind, desired: "enabled" | "disabled"): NetworkOperationType {
+  const on = desired === "enabled";
+  if (kind === "hotspot") return on ? "hotspot.access.enable" : "hotspot.access.disable";
+  if (kind === "device") return on ? "device.binding.enable" : "device.binding.disable";
+  return on ? "pppoe.enable" : "pppoe.disable";
+}
+
+/** Network passwords (PPPoE secrets, hotspot logins) are encrypted per subscription. */
+export function sealNetworkPassword(subscriptionId: string, password: string): string {
+  return encryptSecret(password, `pppoe:${subscriptionId}`);
+}
+
+export function openNetworkPassword(subscriptionId: string, envelope: string): string {
+  return decryptSecret(envelope, `pppoe:${subscriptionId}`);
+}
 
 export const PPPOE_USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 const SESSION_USERNAME_RE = /^[A-Za-z0-9._@:-]{1,64}$/;
@@ -143,15 +185,25 @@ export async function dispatchNetworkOperations(organizationId: string, filter: 
  */
 export async function queueLifecycleNetworkTx(tx: Tx, ctx: ActorContext, before: Subscription, after: Subscription): Promise<NetworkOperation | null> {
   if (!after.networkRouterId || !after.networkUsername) return null;
+  const pkg = await tx.package.findUnique({ where: { id: after.packageId }, select: { kind: true } });
+  const kind = accessKindOf(after.serviceType, pkg?.kind);
+  if (!kind) return null;
   const desired = desiredOf(after.status);
   const settled = desired === "enabled" ? ["ACTIVE", "SIMULATED_ACTIVE", "PENDING"] : ["DISABLED", "SIMULATED_DISABLED", "PENDING"];
-  if (desired === desiredOf(before.status) && settled.includes(after.networkStatus)) return null;
+  // Hotspot logins carry the period (router-side time and data limits), so a new period is pushed even when the
+  // subscription stays active (e.g. a second purchase extends it).
+  const newPeriod = kind !== "pppoe" && (after.currentPeriodEnd?.getTime() !== before.currentPeriodEnd?.getTime() || after.packageId !== before.packageId);
+  if (desired === desiredOf(before.status) && settled.includes(after.networkStatus) && !(desired === "enabled" && newPeriod)) return null;
   const op = await requestNetworkOperationTx(tx, ctx, {
-    type: stateType(desired),
+    type: stateTypeFor(kind, desired),
     routerId: after.networkRouterId,
     subscriptionId: after.id,
     subscriberId: after.subscriberId,
-    params: { username: after.networkUsername, reason: `Subscription ${after.status.toLowerCase()}` },
+    params: {
+      username: after.networkUsername,
+      reason: newPeriod && desired === "enabled" ? "New period" : `Subscription ${after.status.toLowerCase()}`,
+      ...(kind === "hotspot" && pkg?.kind === "DATA" && newPeriod ? { resetCounters: true } : {}),
+    },
     idempotencyKey: `lifecycle:${after.id}:${randomUUID()}`,
   });
   await tx.subscription.update({ where: { id: after.id }, data: { networkStatus: "PENDING", networkUpdatedAt: new Date() } });
@@ -458,6 +510,38 @@ async function perform(op: NetworkOperation, attempt: number): Promise<Outcome> 
     }
     case "session.disconnect":
       return adapter.disconnectSession(target, params.kind === "HOTSPOT" ? "HOTSPOT" : "PPPOE", username, x);
+    case "hotspot.access.enable":
+    case "hotspot.access.disable":
+    case "device.binding.enable":
+    case "device.binding.disable": {
+      const sub = op.subscriptionId
+        ? await db.subscription.findUnique({ where: { id: op.subscriptionId }, include: { package: { select: { networkProfile: true, name: true, kind: true, dataQuotaMb: true } } } })
+        : null;
+      const enable = isEnableType(op.type);
+      // Enabling must target the subscription's current router; disabling may also clean up a router it moved away from.
+      if (!sub || sub.networkUsername !== username || (enable && sub.networkRouterId !== router.id)) return { cancelled: "The subscription's network access changed after this operation was requested" };
+      if (op.type.startsWith("device.")) {
+        if (!sub.networkMac) throw new PermanentError("The device's MAC address is missing", "DEVICE_MAC_MISSING");
+        return adapter.setDeviceBinding(target, { macAddress: sub.networkMac, enabled: enable, comment: `cloudlink ${sub.id}` }, x);
+      }
+      if (!sub.networkPasswordEnc) throw new PermanentError("The hotspot login has no password", "HOTSPOT_PASSWORD_MISSING");
+      const remaining = sub.currentPeriodEnd ? Math.floor((sub.currentPeriodEnd.getTime() - Date.now()) / 1000) : 0;
+      if (enable && remaining <= 0) return { cancelled: "The paid period ended before access could be enabled" };
+      return adapter.setHotspotAccess(
+        target,
+        {
+          username,
+          password: openNetworkPassword(sub.id, sub.networkPasswordEnc),
+          profile: sub.package.networkProfile || sub.packageName,
+          disabled: !enable,
+          uptimeLimitSeconds: enable ? remaining : null,
+          limitBytesTotal: sub.package.kind === "DATA" && sub.package.dataQuotaMb ? sub.package.dataQuotaMb * 1024 * 1024 : null,
+          resetCounters: enable && params.resetCounters === true,
+          comment: `cloudlink ${sub.id}`,
+        },
+        x,
+      );
+    }
     default:
       throw new PermanentError("This operation type is not allowed", "TYPE_NOT_ALLOWED");
   }
@@ -476,9 +560,13 @@ async function applyOutcomeTx(tx: Tx, op: NetworkOperation, outcome: "succeeded"
     // Only the newest state operation decides the displayed network status.
     const newer = await tx.networkOperation.count({ where: { subscriptionId: op.subscriptionId, type: { in: STATE_TYPES }, createdAt: { gt: op.createdAt }, status: { not: "CANCELLED" } } });
     if (newer === 0) {
-      const enabled = op.type === "pppoe.enable";
+      const enabled = isEnableType(op.type);
       const networkStatus = outcome === "failed" ? "ERROR" : outcome === "simulated" ? (enabled ? "SIMULATED_ACTIVE" : "SIMULATED_DISABLED") : enabled ? "ACTIVE" : "DISABLED";
       await tx.subscription.updateMany({ where: { id: op.subscriptionId, networkRouterId: op.routerId }, data: { networkStatus, networkUpdatedAt: new Date() } });
+      if (enabled && outcome !== "failed") {
+        // Activation time of self-service purchases: payment confirmed → access confirmed on the router.
+        await tx.paymentAttempt.updateMany({ where: { subscriptionId: op.subscriptionId, status: "CONFIRMED", activatedAt: null }, data: { activatedAt: new Date() } });
+      }
     }
   }
 }
@@ -781,16 +869,25 @@ export async function lastSessionSync(organizationId: string): Promise<Date | nu
 async function simulationHint(router: Router): Promise<SessionHint> {
   const now = new Date();
   const [subscriptions, redemptions] = await Promise.all([
-    db.subscription.findMany({ where: { organizationId: router.organizationId, networkRouterId: router.id, networkStatus: "SIMULATED_ACTIVE" }, select: { networkUsername: true } }),
+    db.subscription.findMany({
+      where: { organizationId: router.organizationId, networkRouterId: router.id, networkStatus: "SIMULATED_ACTIVE" },
+      select: { id: true, serviceType: true, networkUsername: true, networkMac: true, currentPeriodStart: true, currentPeriodEnd: true, package: { select: { kind: true } } },
+    }),
     db.voucherRedemption.findMany({ where: { organizationId: router.organizationId, activationStatus: "SIMULATED", accessEndsAt: { gt: now } }, include: { voucher: { select: { codeHint: true } } }, take: 500 }),
   ]);
   const onRouter = redemptions.length
     ? new Set((await db.networkOperation.findMany({ where: { routerId: router.id, type: "hotspot.user.upsert", redemptionId: { in: redemptions.map((r) => r.id) } }, select: { redemptionId: true } })).map((o) => o.redemptionId))
     : new Set<string | null>();
+  const kindOf = (s: (typeof subscriptions)[number]) => accessKindOf(s.serviceType, s.package.kind);
+  const period = (s: (typeof subscriptions)[number]) => ({ since: s.currentPeriodStart ?? now, until: s.currentPeriodEnd ?? now });
   return {
-    pppoe: subscriptions.map((s) => s.networkUsername).filter((u): u is string => Boolean(u)),
-    // The real hotspot username is the voucher code; the simulation never stores codes, only the hint.
-    hotspot: redemptions.filter((r) => onRouter.has(r.id)).map((r) => ({ id: r.id, username: `voucher …${r.voucher.codeHint}`, macAddress: r.clientMac, address: r.clientIp, since: r.activatedAt ?? r.createdAt, until: r.accessEndsAt })),
+    pppoe: subscriptions.filter((s) => kindOf(s) === "pppoe").map((s) => s.networkUsername).filter((u): u is string => Boolean(u)),
+    hotspot: [
+      // The real hotspot username of a voucher is its code; the simulation never stores codes, only the hint.
+      ...redemptions.filter((r) => onRouter.has(r.id)).map((r) => ({ id: r.id, username: `voucher …${r.voucher.codeHint}`, macAddress: r.clientMac, address: r.clientIp, since: r.activatedAt ?? r.createdAt, until: r.accessEndsAt })),
+      ...subscriptions.filter((s) => kindOf(s) === "hotspot" && s.networkUsername).map((s) => ({ id: s.id, username: s.networkUsername!, macAddress: s.networkMac, address: null, ...period(s) })),
+    ],
+    bindings: subscriptions.filter((s) => kindOf(s) === "device" && s.networkMac).map((s) => ({ id: s.id, macAddress: s.networkMac!, ...period(s) })),
   };
 }
 
@@ -822,12 +919,20 @@ export async function syncNetworkSessions(organizationId: string) {
       logger.warn({ routerId: router.id, organizationId, code: (err as { code?: string }).code }, "session sync failed for router");
       continue; // unknown state: keep existing sessions open rather than guessing
     }
-    const usernames = [...new Set(result.sessions.filter((s) => s.kind === "PPPOE").map((s) => s.username))];
-    const owners = usernames.length
-      ? await db.subscription.findMany({ where: { organizationId, networkUsername: { in: usernames } }, select: { networkUsername: true, subscriberId: true } })
+    // Owners: PPPoE and hotspot logins by username, bound devices by MAC (voucher logins have no subscriber).
+    const usernames = [...new Set(result.sessions.filter((s) => s.kind !== "BINDING").map((s) => s.username))];
+    const macs = [...new Set(result.sessions.filter((s) => s.kind === "BINDING" && s.macAddress).map((s) => s.macAddress!.toUpperCase()))];
+    const owners = usernames.length || macs.length
+      ? await db.subscription.findMany({
+          where: { organizationId, OR: [...(usernames.length ? [{ networkUsername: { in: usernames } }] : []), ...(macs.length ? [{ networkMac: { in: macs }, status: { not: "CANCELLED" as const } }] : [])] },
+          select: { networkUsername: true, networkMac: true, subscriberId: true },
+        })
       : [];
     for (const s of result.sessions) {
-      const subscriberId = s.kind === "PPPOE" ? (owners.find((o) => o.networkUsername === s.username)?.subscriberId ?? null) : null;
+      const subscriberId =
+        s.kind === "BINDING"
+          ? (owners.find((o) => o.networkMac && o.networkMac === s.macAddress?.toUpperCase())?.subscriberId ?? null)
+          : (owners.find((o) => o.networkUsername === s.username)?.subscriberId ?? null);
       const startedAt = s.startedAt ?? (s.uptimeSeconds !== undefined ? new Date(syncStart.getTime() - s.uptimeSeconds * 1000) : null);
       await db.networkSession.upsert({
         where: { routerId_kind_externalId: { routerId: router.id, kind: s.kind, externalId: s.externalId } },
@@ -879,6 +984,48 @@ export async function monitorNetworkOperations(organizationId: string, now = new
     await openAlert(organizationId, { routerId: op.routerId, operationId: op.id, type: "OPERATION_STUCK", severity: "warning", message: `${label} has been ${op.status.toLowerCase()} since ${op.updatedAt.toISOString()}` });
   }
   return { stuck: stuck.length };
+}
+
+/**
+ * Scheduled plans (e.g. a night plan): access is on only inside the plan's time window. Runs every minute.
+ * Only settled states are flipped; pending or failed operations are left to the normal retry rules.
+ */
+export async function enforcePlanSchedules(organizationId: string, now = new Date()) {
+  const org = await db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
+  const subs = await db.subscription.findMany({
+    where: { organizationId, status: "ACTIVE", networkRouterId: { not: null }, networkUsername: { not: null }, package: { scheduleEnabled: true } },
+    include: { package: { select: { kind: true, scheduleEnabled: true, scheduleStartMinute: true, scheduleEndMinute: true, scheduleDays: true } } },
+    take: 2000,
+  });
+  const ctx = systemContext(organizationId, "worker:schedules", `schedules:${now.toISOString()}`);
+  const bucket = Math.floor(now.getTime() / 60_000);
+  const ids: string[] = [];
+  for (const s of subs) {
+    const kind = accessKindOf(s.serviceType, s.package.kind);
+    if (!kind) continue;
+    const open = planOpenAt(s.package, now, org.timezone);
+    const on = s.networkStatus === "ACTIVE" || s.networkStatus === "SIMULATED_ACTIVE";
+    const off = s.networkStatus === "DISABLED" || s.networkStatus === "SIMULATED_DISABLED";
+    if ((open && !off) || (!open && !on)) continue;
+    const op = await db.$transaction(async (tx) => {
+      await lockRow(tx, "Subscription", s.id);
+      const cur = await tx.subscription.findUniqueOrThrow({ where: { id: s.id } });
+      if (cur.status !== "ACTIVE" || cur.networkStatus !== s.networkStatus || !cur.networkRouterId || !cur.networkUsername) return null;
+      const created = await requestNetworkOperationTx(tx, ctx, {
+        type: stateTypeFor(kind, open ? "enabled" : "disabled"),
+        routerId: cur.networkRouterId,
+        subscriptionId: cur.id,
+        subscriberId: cur.subscriberId,
+        params: { username: cur.networkUsername, reason: open ? "Plan time window opened" : "Plan time window closed" },
+        idempotencyKey: `schedule:${cur.id}:${open ? "open" : "close"}:${bucket}`,
+      });
+      await tx.subscription.update({ where: { id: cur.id }, data: { networkStatus: "PENDING", networkUpdatedAt: now } });
+      return created;
+    });
+    if (op) ids.push(op.id);
+  }
+  if (ids.length) await dispatchNetworkOperations(organizationId, { ids });
+  return { checked: subs.length, switched: ids.length };
 }
 
 /** Legacy "hotspot.activate" jobs (queued before network operations existed) become network operations. */

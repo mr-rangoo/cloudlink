@@ -30,6 +30,18 @@ const routerFields = {
   hotspotEnabled: z.boolean(),
   branchId: z.uuid().nullable(),
   notes: z.string().trim().max(500).nullable(),
+  /** DNS name of the router's hotspot login page; the captive portal posts logins only there or to a private IP. */
+  hotspotDnsName: z
+    .union([
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .max(253)
+        .regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/, "Enter a host name such as wifi.login"),
+      z.literal("").transform(() => null),
+    ])
+    .nullable(),
 };
 
 const apiUsername = z.string().trim().min(1).max(64).refine(noControl, "Invalid characters").refine((v) => !/\s/.test(v), "Must not contain spaces");
@@ -45,6 +57,7 @@ export const routerInput = z.object({
   hotspotEnabled: routerFields.hotspotEnabled.default(false),
   branchId: routerFields.branchId.optional(),
   notes: routerFields.notes.optional(),
+  hotspotDnsName: routerFields.hotspotDnsName.optional(),
   username: apiUsername,
   password: apiPassword,
 });
@@ -60,6 +73,7 @@ export const routerUpdateInput = z
     hotspotEnabled: routerFields.hotspotEnabled.optional(),
     branchId: routerFields.branchId.optional(),
     notes: routerFields.notes.optional(),
+    hotspotDnsName: routerFields.hotspotDnsName.optional(),
     username: apiUsername.optional(),
     password: apiPassword.optional(),
   })
@@ -89,6 +103,7 @@ export const routerPublicSelect = {
   pppoeAuth: true,
   pppoeEnabled: true,
   hotspotEnabled: true,
+  hotspotDnsName: true,
   status: true,
   identity: true,
   routerOsVersion: true,
@@ -179,6 +194,7 @@ export async function createRouter(ctx: StaffContext, raw: z.input<typeof router
           pppoeAuth: input.pppoeAuth,
           pppoeEnabled: input.pppoeEnabled,
           hotspotEnabled: input.hotspotEnabled,
+          hotspotDnsName: input.hotspotDnsName ?? null,
           notes: input.notes ?? null,
         },
         select: routerPublicSelect,
@@ -207,7 +223,7 @@ export async function updateRouter(ctx: StaffContext, id: string, raw: z.input<t
   if (input.host !== undefined || input.useTls !== undefined) assertConnectionPolicy(host, useTls);
   if (input.branchId !== undefined) await assertBranchAccess(ctx, input.branchId);
   const data: Prisma.RouterUpdateInput = {};
-  for (const key of ["name", "host", "apiPort", "useTls", "pppoeAuth", "pppoeEnabled", "hotspotEnabled", "branchId", "notes"] as const) {
+  for (const key of ["name", "host", "apiPort", "useTls", "pppoeAuth", "pppoeEnabled", "hotspotEnabled", "hotspotDnsName", "branchId", "notes"] as const) {
     if (input[key] !== undefined) (data as Record<string, unknown>)[key] = input[key];
   }
   const rotated = input.username !== undefined && input.password !== undefined;

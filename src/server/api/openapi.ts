@@ -25,6 +25,7 @@ import { brandingInput } from "@/server/services/branding";
 import { paymentMethodInput, paymentMethodUpdate } from "@/server/services/payment-methods";
 import { assistantMessageInput, assistantSettingsInput, conversationListQuery } from "@/server/assistant/service";
 import { c2bConfirmationSchema, stkCallbackSchema } from "@/server/domain/mpesa";
+import { accessStatusInput, purchaseInput, purchaseSimulateInput, purchaseStatusInput, reconnectInput } from "@/server/services/hotspot-sales";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -220,6 +221,13 @@ export const operations: Operation[] = [
   { method: "post", path: "/agents/:id/remittances", summary: "Record cash received from an agent (≤ owed)", tag: "Vouchers", auth: "session", permission: "payments.record", body: remittanceInput, idempotent: true },
   { method: "post", path: "/hotspot/:org/redeem", summary: "Captive-portal redemption (public, rate-limited, same-origin)", tag: "Hotspot", auth: "none", body: redeemInput, responses: { "409": "Already used", "429": "Rate limited" } },
   { method: "post", path: "/hotspot/:org/status", summary: "Activation status (requires the voucher code)", tag: "Hotspot", auth: "none" },
+  { method: "get", path: "/hotspot/:org/plans", summary: "Live hotspot plans with the price the customer pays (optionally ?router=)", tag: "Hotspot", auth: "none" },
+  { method: "post", path: "/hotspot/:org/purchase", summary: "Buy a plan with M-Pesa (STK Push) or claim a free trial; returns a purchase token", tag: "Hotspot", auth: "none", body: purchaseInput, responses: { "201": "Request sent", "409": "Trial already used", "429": "Rate limited" } },
+  { method: "post", path: "/hotspot/:org/purchase/status", summary: "Purchase progress; login details once the payment is confirmed (token holder only)", tag: "Hotspot", auth: "none", body: purchaseStatusInput },
+  { method: "post", path: "/hotspot/:org/purchase/simulate", summary: "Test mode only: simulate the customer's M-Pesa response", tag: "Hotspot", auth: "none", body: purchaseSimulateInput },
+  { method: "post", path: "/hotspot/:org/access", summary: "Whether the router is ready for the login the caller holds", tag: "Hotspot", auth: "none", body: accessStatusInput },
+  { method: "post", path: "/hotspot/:org/reconnect", summary: "Already paid: M-Pesa code + paying phone returns the login details again", tag: "Hotspot", auth: "none", body: reconnectInput, responses: { "404": "No active plan for that code and phone" } },
+  { method: "get", path: "/hotspot-files/:routerId/login.html", summary: "Router hotspot login page (redirects to the captive portal)", tag: "Hotspot", auth: "none", responses: { "200": "text/html" } },
   // Phase 7: routers, network operations, sessions, RADIUS-backed provisioning
   { method: "get", path: "/routers", summary: "Router inventory with status, sessions and open alerts", tag: "Network", auth: "session", permission: "routers.read", query: routerListQuery },
   { method: "post", path: "/routers", summary: "Register a router (private/VPN IP only; credentials write-only, encrypted)", tag: "Network", auth: "session", permission: "routers.write", body: routerInput },

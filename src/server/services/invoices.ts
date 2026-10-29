@@ -12,7 +12,7 @@ import { actorUserId, lockRow, nextCounter, searchTerm } from "@/server/services
 import { postLedger } from "@/server/services/ledger";
 import { adjustInvoiceSettlementTx, autoAllocateForSubscriberTx, lockInvoice } from "@/server/services/settlement";
 import { queueSubscriberNotificationTx } from "@/server/services/notifications";
-import { formatDate, formatMoney } from "@/lib/utils";
+import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
 import type { Invoice, Prisma, Subscription } from "@/generated/prisma/client";
 
 const dec = (v: { toString(): string }) => new D(v.toString());
@@ -67,6 +67,15 @@ interface CreateArgs {
   generationKey?: string | null;
   source: "manual" | "recurring" | "activation" | "renewal";
   issue: boolean;
+  /** Issue options; see issueInvoiceTx. */
+  issueOptions?: IssueOptions;
+}
+
+export interface IssueOptions {
+  /** Apply the subscriber's unallocated credit (oldest invoice first). Default true. */
+  autoAllocate?: boolean;
+  /** Announce the invoice to the customer when it is not paid by credit. Default true. */
+  notify?: boolean;
 }
 
 /**
@@ -131,11 +140,11 @@ export async function createInvoiceTx(tx: Tx, ctx: ActorContext, args: CreateArg
     },
   });
   if (!args.issue) return { invoice, created: true };
-  return { invoice: await issueInvoiceTx(tx, ctx, invoice.id), created: true };
+  return { invoice: await issueInvoiceTx(tx, ctx, invoice.id, args.issueOptions), created: true };
 }
 
 /** DRAFT → OPEN: assign the gapless number, set dates, post to the ledger, then apply any customer credit. */
-export async function issueInvoiceTx(tx: Tx, ctx: ActorContext, invoiceId: string): Promise<Invoice> {
+export async function issueInvoiceTx(tx: Tx, ctx: ActorContext, invoiceId: string, opts: IssueOptions = {}): Promise<Invoice> {
   const invoice = await lockInvoice(tx, ctx.organizationId, invoiceId);
   if (invoice.status !== "DRAFT") throw new AppError("INVALID_STATE", "Only draft invoices can be issued.");
   if (dec(invoice.total).lte(0)) throw new AppError("INVALID_STATE", "An invoice must have a total greater than zero to be issued.");
@@ -161,10 +170,10 @@ export async function issueInvoiceTx(tx: Tx, ctx: ActorContext, invoiceId: strin
       { account: "TAX_PAYABLE", credit: dec(invoice.taxTotal) },
     ],
   });
-  await autoAllocateForSubscriberTx(tx, ctx, invoice.subscriberId);
+  if (opts.autoAllocate !== false) await autoAllocateForSubscriberTx(tx, ctx, invoice.subscriberId);
   const final = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
   // Only invoices still owing something are announced (an invoice fully covered by existing credit is not).
-  if (final.status !== "PAID") {
+  if (final.status !== "PAID" && opts.notify !== false) {
     await queueSubscriberNotificationTx(tx, ctx.organizationId, {
       subscriberId: invoice.subscriberId,
       key: "invoice.issued",
@@ -176,9 +185,13 @@ export async function issueInvoiceTx(tx: Tx, ctx: ActorContext, invoiceId: strin
 }
 
 /** Invoice for one subscription period, built from the subscription's commercial snapshot. Idempotent per period. */
-export async function createPeriodInvoiceTx(tx: Tx, ctx: ActorContext, sub: Subscription, period: { start: Date; end: Date }, source: CreateArgs["source"]) {
+export async function createPeriodInvoiceTx(tx: Tx, ctx: ActorContext, sub: Subscription, period: { start: Date; end: Date }, source: CreateArgs["source"], issueOptions?: IssueOptions) {
   const tz = (await tx.organization.findUniqueOrThrow({ where: { id: sub.organizationId }, select: { timezone: true } })).timezone;
+  // Plans shorter than a day are described with times (a 1-hour plan would otherwise read "30 Oct to 30 Oct").
+  const short = sub.billingUnit === "MINUTE" || sub.billingUnit === "HOUR";
+  const when = (d: Date) => (short ? formatDateTime(d, tz) : localDateKey(d, tz));
   const { invoice, created } = await createInvoiceTx(tx, ctx, {
+    issueOptions,
     subscriberId: sub.subscriberId,
     subscriptionId: sub.id,
     periodStart: period.start,
@@ -188,7 +201,7 @@ export async function createPeriodInvoiceTx(tx: Tx, ctx: ActorContext, sub: Subs
     issue: true,
     lines: [
       {
-        description: `${sub.packageName} (${localDateKey(period.start, tz)} to ${localDateKey(period.end, tz)})`,
+        description: `${sub.packageName} (${when(period.start)} to ${when(period.end)})`,
         quantity: "1",
         unitPrice: dec(sub.price).toFixed(2),
         taxRate: dec(sub.taxRate).toFixed(2),

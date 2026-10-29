@@ -156,6 +156,16 @@ Order: 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 
 
 Fixes made during the phase: required-field asterisks are hidden from assistive technology (the input's `required` already announces it); tests that relied on one-letter plan names, raw `P2002` errors or binary (1024) rate units were updated to the new behaviour. Visual check: plans list and form at 1440 px and 390 px against a production build.
 
+### Phase 12 — Hotspot self-service sales ✅ (real M-Pesa and router not verified)
+- [x] Migration `20261030120000_hotspot_sales`: purchase fields on `PaymentAttempt` (purpose, plan, router, device MAC/IP, purchase-token hash, subscription, activation time), `Subscriber.source`, `Subscription.networkMac`, `Router.hotspotDnsName` (with CHECK constraints).
+- [x] Captive-portal purchase with M-Pesa: `src/server/services/hotspot-sales.ts`, public routes under `/api/v1/hotspot/:org/` (plans, purchase, purchase/status, purchase/simulate, access, reconnect), shared STK submission (`submitPaymentAttempt`), purchase applied only inside the verified-callback transaction (`applyHotspotPurchaseTx`).
+- [x] Hotspot subscriptions on routers: `hotspot.access.enable/disable` (user, profile, time and data limits, logout + cookie removal), `device.binding.enable/disable` (MAC bypass for TV plans); lifecycle hook pushes a new period while active; disables may clean up a router the customer moved from.
+- [x] Free trials (once per phone and device per cool-down), TV/device plans, "Already paid?" reconnect with move between hotspots, price-change and suspended-account safety (money kept as credit).
+- [x] Minute-level expiry and schedule enforcement jobs (`subscriptions.expire_due` and `plans.enforce_schedules` every minute; pruned as routine).
+- [x] Router login page (`/api/v1/hotspot-files/:routerId/login.html`), setup script installs it, adds the HTTPS walled garden and PAP login; router "Hotspot login address" limits where the portal posts logins (`safeRouterLoginUrl`).
+- [x] Captive portal UI: buy / voucher / already-paid tabs, plan groups, M-Pesa wait with test-mode simulation, automatic router login; invoice lines for sub-day plans show times.
+- Docs: `docs/HOTSPOT_SALES.md`.
+
 ## Work log
 
 ### 2026-10-25 — Phase 1 (Foundation)

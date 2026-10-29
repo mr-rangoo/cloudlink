@@ -14,7 +14,17 @@ export interface FakeRouterOptions {
 }
 
 export class FakeRouterOs {
-  readonly tables: Record<string, Row[]> = { "/ppp/secret": [], "/ppp/active": [], "/ppp/profile": [], "/ip/hotspot/user": [], "/ip/hotspot/user/profile": [], "/ip/hotspot/active": [] };
+  readonly tables: Record<string, Row[]> = {
+    "/ppp/secret": [],
+    "/ppp/active": [],
+    "/ppp/profile": [],
+    "/ip/hotspot/user": [],
+    "/ip/hotspot/user/profile": [],
+    "/ip/hotspot/active": [],
+    "/ip/hotspot/cookie": [],
+    "/ip/hotspot/ip-binding": [],
+    "/ip/hotspot/host": [],
+  };
   readonly log: string[][] = [];
   private nextId = 1;
   private server?: net.Server;
@@ -43,6 +53,12 @@ export class FakeRouterOs {
   /** Commands received (first word of each sentence), for asserting what was sent. */
   commands(): string[] {
     return this.log.map((w) => w.join(" "));
+  }
+
+  /** Simulate a logged-in hotspot device (session + login cookie). */
+  addActiveHotspot(user: string, mac = "AA:BB:CC:00:00:09") {
+    this.tables["/ip/hotspot/active"]!.push({ ".id": `*${this.nextId++}`, user, address: "10.5.50.9", "mac-address": mac, uptime: "5m", "bytes-in": "1000", "bytes-out": "9000" });
+    this.tables["/ip/hotspot/cookie"]!.push({ ".id": `*${this.nextId++}`, user, "mac-address": mac });
   }
 
   /** Simulate a router-side session for a PPPoE user (as if the CPE dialled in). */
@@ -117,6 +133,12 @@ export class FakeRouterOs {
       const i = table.findIndex((r) => r[".id"] === attrs[".id"]);
       if (i < 0) return [["!trap", "=message=no such item"], ["!done"]];
       table.splice(i, 1);
+      return [["!done"]];
+    }
+    if (verb === "reset-counters") {
+      const row = table.find((r) => r[".id"] === attrs[".id"]);
+      if (!row) return [["!trap", "=message=no such item"], ["!done"]];
+      Object.assign(row, { "bytes-in": "0", "bytes-out": "0", "counters-reset": String(Number(row["counters-reset"] ?? 0) + 1) });
       return [["!done"]];
     }
     return [["!trap", `=message=unknown command ${verb}`], ["!done"]];

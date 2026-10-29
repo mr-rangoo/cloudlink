@@ -16,15 +16,17 @@ export interface RecurringJob {
 
 export const RECURRING_JOBS: RecurringJob[] = [
   { type: "billing.run_recurring", everyMinutes: 60 },
-  { type: "subscriptions.expire_due", everyMinutes: 60 },
+  // Every minute: hotspot plans last minutes or hours and must end on time.
+  { type: "subscriptions.expire_due", everyMinutes: 1 },
   { type: "routers.healthcheck", everyMinutes: 15, scope: "routers" },
   { type: "network.sync_sessions", everyMinutes: 5, scope: "routers" },
   { type: "network.monitor", everyMinutes: 15, scope: "routers" },
+  { type: "plans.enforce_schedules", everyMinutes: 1, scope: "routers" },
   { type: "maintenance.prune", everyMinutes: 24 * 60 },
 ];
 
 /** Routine operations that leave nothing worth keeping once they succeed. Failures are always kept. */
-const ROUTINE_TYPES = ["network.sync_sessions", "routers.healthcheck", "network.monitor", "maintenance.prune"];
+const ROUTINE_TYPES = ["network.sync_sessions", "routers.healthcheck", "network.monitor", "maintenance.prune", "subscriptions.expire_due", "plans.enforce_schedules"];
 export const ROUTINE_RETENTION_DAYS = 14;
 
 /** Delete succeeded routine operations older than the retention window (live session views create one every 30 s). */

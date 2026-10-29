@@ -25,6 +25,7 @@ test("generate vouchers, redeem one on the captive portal, and see honest activa
   // Customer on the hotspot (fresh browser, no staff session)
   const guest = await (await browser.newContext()).newPage();
   await guest.goto("/hotspot/alpha-e2e?mac=AA:BB:CC:DD:EE:42&ip=10.5.50.20");
+  await guest.getByRole("button", { name: "Voucher", exact: true }).click();
   await guest.getByLabel("Voucher code").fill(codes[0]!.toLowerCase());
   await guest.getByRole("button", { name: "Connect" }).click();
   await expect(guest.getByText("Voucher accepted (test mode)")).toBeVisible({ timeout: 30_000 });
@@ -33,6 +34,7 @@ test("generate vouchers, redeem one on the captive portal, and see honest activa
   // Reuse is rejected
   const again = await (await browser.newContext()).newPage();
   await again.goto("/hotspot/alpha-e2e");
+  await again.getByRole("button", { name: "Voucher", exact: true }).click();
   await again.getByLabel("Voucher code").fill(codes[0]!);
   await again.getByRole("button", { name: "Connect" }).click();
   await expect(again.getByRole("alert").filter({ hasText: "already been used" })).toBeVisible();

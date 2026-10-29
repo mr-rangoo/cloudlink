@@ -47,6 +47,28 @@ export interface HotspotUser {
   comment?: string;
 }
 
+/** A hotspot subscription's login on the router (created, updated, or disabled with its sessions and cookies removed). */
+export interface HotspotAccess {
+  username: string;
+  password: string;
+  profile: string;
+  disabled: boolean;
+  /** Router-side backstop for the paid period (Cloudlink disables the user at the period end). */
+  uptimeLimitSeconds: number | null;
+  /** Data bundles: total bytes allowed in the period. */
+  limitBytesTotal: number | null;
+  /** New period of a data bundle: start counting usage again. */
+  resetCounters: boolean;
+  comment?: string;
+}
+
+/** A device (TV, streaming box) let through the hotspot by MAC address, without a login page. */
+export interface DeviceBinding {
+  macAddress: string;
+  enabled: boolean;
+  comment: string;
+}
+
 /** A plan's speed settings as a RouterOS PPP profile or hotspot user profile (created or updated by name). */
 export interface ServiceProfile {
   kind: "PPPOE" | "HOTSPOT";
@@ -84,7 +106,8 @@ export interface RouterHealth {
 }
 
 export interface ActiveSession {
-  kind: "PPPOE" | "HOTSPOT";
+  /** BINDING = a device let through by MAC (no login), seen in the hotspot host table. */
+  kind: "PPPOE" | "HOTSPOT" | "BINDING";
   externalId: string;
   username: string;
   address?: string;
@@ -102,6 +125,7 @@ export interface ActiveSession {
 export interface SessionHint {
   pppoe: string[];
   hotspot: Array<{ id: string; username: string; macAddress: string | null; address: string | null; since: Date; until: Date }>;
+  bindings?: Array<{ id: string; macAddress: string; since: Date; until: Date }>;
 }
 
 export interface NetworkAdapter {
@@ -111,6 +135,8 @@ export interface NetworkAdapter {
   upsertHotspotUser(r: RouterTarget, u: HotspotUser, x: ExecContext): Promise<OpResult>;
   disconnectSession(r: RouterTarget, kind: "PPPOE" | "HOTSPOT", username: string, x: ExecContext): Promise<OpResult>;
   upsertProfile(r: RouterTarget, p: ServiceProfile, x: ExecContext): Promise<OpResult>;
+  setHotspotAccess(r: RouterTarget, a: HotspotAccess, x: ExecContext): Promise<OpResult>;
+  setDeviceBinding(r: RouterTarget, b: DeviceBinding, x: ExecContext): Promise<OpResult>;
   health(r: RouterTarget): Promise<RouterHealth>;
   listSessions(r: RouterTarget, hint?: SessionHint): Promise<ActiveSession[]>;
 }
@@ -161,6 +187,14 @@ class MockNetworkAdapter implements NetworkAdapter {
     this.gate(r, x);
     const what = [p.rateLimit ? `rate-limit ${p.rateLimit}` : null, p.kind === "HOTSPOT" && p.sharedUsers ? `shared-users ${p.sharedUsers}` : null].filter(Boolean).join(", ");
     return this.sim(`${p.kind === "PPPOE" ? "PPP" : "hotspot user"} profile ${p.name} would be set${what ? ` (${what})` : ""}`);
+  }
+  async setHotspotAccess(r: RouterTarget, a: HotspotAccess, x: ExecContext) {
+    this.gate(r, x);
+    return this.sim(`hotspot user ${a.username} would be ${a.disabled ? "disabled and logged out" : `enabled with profile ${a.profile}`}`);
+  }
+  async setDeviceBinding(r: RouterTarget, b: DeviceBinding, x: ExecContext) {
+    this.gate(r, x);
+    return this.sim(`device ${b.macAddress} would be ${b.enabled ? "let through without a login" : "removed from the bypass list"}`);
   }
   async health(r: RouterTarget): Promise<RouterHealth> {
     if (r.name.includes("[offline]")) return { online: false, simulated: true, detail: "Mock router is offline (simulated)" };
@@ -226,7 +260,25 @@ export function simulatedSessions(hint: SessionHint, now: Date): ActiveSession[]
         startedAt: u.since,
       };
     });
-  return [...pppoe, ...hotspot];
+  const bindings = (hint.bindings ?? [])
+    .filter((b) => b.since <= now && b.until > now)
+    .map((b): ActiveSession => {
+      const h = fnv1a(b.id);
+      const uptime = Math.max(0, t - Math.floor(b.since.getTime() / 1000));
+      const down = 40_000 + (h % 200_000);
+      return {
+        kind: "BINDING",
+        externalId: `*sim-bind-${h.toString(16)}`,
+        username: b.macAddress,
+        address: `10.${64 + (h % 64)}.${(h >>> 8) & 0xff}.${2 + ((h >>> 16) % 250)}`,
+        macAddress: b.macAddress,
+        uptimeSeconds: uptime,
+        bytesIn: BigInt(uptime * Math.floor(down / 10)),
+        bytesOut: BigInt(uptime * down),
+        startedAt: b.since,
+      };
+    });
+  return [...pppoe, ...hotspot, ...bindings];
 }
 
 // ───────── RouterOS ─────────
@@ -384,6 +436,55 @@ class RouterOsAdapter implements NetworkAdapter {
     }
   }
 
+  async setHotspotAccess(r: RouterTarget, a: HotspotAccess): Promise<OpResult> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        const existing = await findByName(c, "/ip/hotspot/user", a.username);
+        const fields = [
+          attr("password", a.password),
+          attr("profile", a.profile),
+          attr("disabled", a.disabled ? "yes" : "no"),
+          attr("limit-uptime", a.uptimeLimitSeconds ? rosDuration(a.uptimeLimitSeconds) : "0s"),
+          attr("limit-bytes-total", String(a.limitBytesTotal ?? 0)),
+          ...(a.comment ? [attr("comment", a.comment)] : []),
+        ];
+        if (existing) await c.command(["/ip/hotspot/user/set", attr(".id", existing[".id"]!), ...fields]);
+        else await c.command(["/ip/hotspot/user/add", attr("name", a.username), ...fields]);
+        if (a.resetCounters && existing) await c.command(["/ip/hotspot/user/reset-counters", attr(".id", existing[".id"]!)]);
+        // Logging out also clears login cookies, so the device cannot reconnect silently.
+        const kicked = a.disabled ? await disconnectAll(c, "/ip/hotspot/active", "user", a.username) : 0;
+        if (a.disabled) await disconnectAll(c, "/ip/hotspot/cookie", "user", a.username);
+        const check = await findByName(c, "/ip/hotspot/user", a.username);
+        return {
+          status: "SUCCEEDED" as const,
+          verified: Boolean(check) && check!.profile === a.profile && yes(check!.disabled) === a.disabled,
+          detail: `Hotspot user ${a.username} ${existing ? "updated" : "created"} and ${a.disabled ? "disabled" : "enabled"}${kicked ? `; ${kicked} session(s) logged out` : ""}`,
+        };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
+  async setDeviceBinding(r: RouterTarget, b: DeviceBinding): Promise<OpResult> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        const rows = await c.command(["/ip/hotspot/ip-binding/print", query("mac-address", b.macAddress)]);
+        if (b.enabled) {
+          if (rows[0]) await c.command(["/ip/hotspot/ip-binding/set", attr(".id", rows[0][".id"]!), attr("type", "bypassed"), attr("disabled", "no"), attr("comment", b.comment)]);
+          else await c.command(["/ip/hotspot/ip-binding/add", attr("mac-address", b.macAddress), attr("type", "bypassed"), attr("comment", b.comment)]);
+        } else {
+          for (const row of rows) await c.command(["/ip/hotspot/ip-binding/remove", attr(".id", row[".id"]!)]);
+        }
+        const check = await c.command(["/ip/hotspot/ip-binding/print", query("mac-address", b.macAddress)]);
+        const verified = b.enabled ? check.length === 1 && check[0]!.type === "bypassed" && !yes(check[0]!.disabled) : check.length === 0;
+        return { status: "SUCCEEDED" as const, verified, detail: `Device ${b.macAddress} ${b.enabled ? "let through without a login" : "removed from the bypass list"}` };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
   async health(r: RouterTarget): Promise<RouterHealth> {
     try {
       return await withRouter(rosOpts(r), async (c) => {
@@ -407,7 +508,13 @@ class RouterOsAdapter implements NetworkAdapter {
           if (err instanceof RouterOsTrapError) return [] as Array<Record<string, string>>;
           throw err;
         });
+        // Devices let through by MAC (TV / streaming plans) are hosts marked bypassed; they never log in.
+        const hosts = await c.command(["/ip/hotspot/host/print", query("bypassed", "true")]).catch((err) => {
+          if (err instanceof RouterOsTrapError) return [] as Array<Record<string, string>>;
+          throw err;
+        });
         return [
+          ...hosts.map((h) => ({ kind: "BINDING" as const, externalId: h[".id"]!, username: h["mac-address"] ?? "", address: h.address, macAddress: h["mac-address"], uptimeSeconds: parseUptime(h.uptime), bytesIn: counter(h["bytes-in"]), bytesOut: counter(h["bytes-out"]) })),
           ...ppp.map((a) => ({ kind: "PPPOE" as const, externalId: a[".id"]!, username: a.name ?? "", address: a.address, macAddress: a["caller-id"], uptimeSeconds: parseUptime(a.uptime) })),
           // Hotspot counters are from the client's side: bytes-in = uploaded by the client, bytes-out = downloaded.
           ...hs.map((a) => ({ kind: "HOTSPOT" as const, externalId: a[".id"]!, username: a.user ?? "", address: a.address, macAddress: a["mac-address"], uptimeSeconds: parseUptime(a.uptime), bytesIn: counter(a["bytes-in"]), bytesOut: counter(a["bytes-out"]) })),
@@ -437,6 +544,12 @@ class DisabledNetworkAdapter implements NetworkAdapter {
     this.fail();
   }
   async upsertProfile(): Promise<OpResult> {
+    this.fail();
+  }
+  async setHotspotAccess(): Promise<OpResult> {
+    this.fail();
+  }
+  async setDeviceBinding(): Promise<OpResult> {
     this.fail();
   }
   async health(): Promise<RouterHealth> {

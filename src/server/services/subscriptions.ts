@@ -127,7 +127,7 @@ export async function applyActionTx(
   ctx: ActorContext,
   id: string,
   action: SubscriptionAction,
-  opts: { reason?: string; idempotencyKey?: string; now?: Date; invoice?: boolean },
+  opts: { reason?: string; idempotencyKey?: string; now?: Date; invoice?: boolean; /** renew: start a fresh period now even if the current one is still running (plan switch). */ restart?: boolean },
 ): Promise<Subscription> {
   const existing = await tx.subscription.findFirst({ where: { id, ...tenantWhere(ctx) }, select: { id: true } });
   if (!existing) throw notFound("subscription");
@@ -149,7 +149,7 @@ export async function applyActionTx(
   if (action === "activate" || action === "renew") {
     let anchor: Date;
     let index: number;
-    if (action === "renew" && renewalContinues(sub.status, sub.currentPeriodEnd, now) && sub.billingAnchorAt) {
+    if (action === "renew" && !opts.restart && renewalContinues(sub.status, sub.currentPeriodEnd, now) && sub.billingAnchorAt) {
       anchor = sub.billingAnchorAt;
       index = sub.periodIndex + 1;
     } else {
