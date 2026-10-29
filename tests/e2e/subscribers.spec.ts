@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { login, phone, uniq } from "./helpers";
+import { createPlan, login, phone, uniq } from "./helpers";
 import { E2E_USERS } from "./users";
 
 test("create package, create subscriber with an active subscription, then suspend and reactivate", async ({ page }) => {
@@ -7,16 +7,12 @@ test("create package, create subscriber with an active subscription, then suspen
   await login(page, E2E_USERS.owner);
 
   // Create package
+  await createPlan(page, { name: `Home ${id}`, type: "PPPoE", price: "2500", rate: "5M/10M" });
   await page.goto("/packages");
-  await page.getByRole("button", { name: "New package" }).first().click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Name").fill(`Home ${id}`);
-  await dialog.getByLabel(/^Price/).fill("2500");
-  await dialog.getByLabel("Download (kbps)").fill("10240");
-  await dialog.getByRole("button", { name: "Create package" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByRole("cell", { name: `Home ${id}`, exact: true })).toBeVisible();
-  await expect(page.getByText("KES 2,500.00").first()).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: `Home ${id}` });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("KES 2,500.00")).toBeVisible();
+  await expect(row.getByText("5M/10M")).toBeVisible();
 
   // Create subscriber with that package
   await page.goto("/subscribers/new");

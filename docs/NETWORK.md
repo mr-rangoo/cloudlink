@@ -49,6 +49,17 @@ These checks run when a router is saved, and again before every operation.
 | `pppoe.remove` | Remove the secret and its sessions. | Delete the user's radcheck, radreply and radusergroup rows, then disconnect. | Confirms the user is absent. |
 | `session.disconnect` | Remove `/ppp/active` or `/ip/hotspot/active` entries for a username. | Same, through the router API. | Confirms none remain. |
 | `hotspot.user.upsert` | Create or update `/ip/hotspot/user` (code as username and password, profile, `limit-uptime`, optional MAC). | Same (hotspot vouchers always use the router API). | Read back the profile. |
+| `profile.sync` | Create or update the plan's `/ppp/profile` (PPPoE plans) or `/ip/hotspot/user/profile` (hotspot plans) by name: `rate-limit` (with burst) and, for hotspot, `shared-users` = devices per account. | Same through the router API (RADIUS users also get `Mikrotik-Rate-Limit`). | Read back `rate-limit` (burst times compared without the `s` unit) and `shared-users`. |
+
+### Plan profiles (`profile.sync`)
+Each plan with a rate limit has a router profile, named by the plan's **Router profile name** (new plans get a stable `cl-<plan-name>` name; older plans fall back to the plan name). PPPoE secrets and hotspot users reference that profile.
+- A push is queued when a plan is created, when its name, profile name, speed, burst, devices, access type or router restriction changes, and when staff press **Push to routers** (plan) or call `POST /routers/:id/sync-plans`. Description or price edits do not touch routers.
+- Targets: routers that are not archived, have PPPoE (PPPoE plans) or the hotspot (hotspot plans) enabled, and are allowed by the plan's router restriction.
+- Automatic pushes are idempotent per plan version and router; a newer push for the same plan and router cancels queued older ones.
+- Rates use RouterOS's decimal units (`k` = 1 000 bit/s, `M` = 1 000 000), written upload/download (rx/tx from the router's side), e.g. `5M/5M 10M/10M 4M/4M 30/30`.
+- Renaming a profile creates a new profile; the old one is left on the router for whatever still references it.
+
+Plan rules also apply when access is sold or granted: a plan limited to certain routers cannot be provisioned or have vouchers issued for other routers, and a scheduled plan's vouchers are refused outside its time window (the voucher stays unused).
 
 Staff may request only `pppoe.sync` (re-apply a subscription's current access state) and `session.disconnect` through `POST /api/v1/routers/:id/operations`. Arbitrary router commands are rejected with a validation error.
 

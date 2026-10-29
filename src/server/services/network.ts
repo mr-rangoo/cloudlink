@@ -7,9 +7,11 @@ import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { decryptSecret, encryptSecret } from "@/server/security/crypto";
 import { dispatchOperation, enqueueOperation, PermanentError, RetryableError } from "@/server/jobs/operations";
-import { kbpsToRate, networkAdapter, networkAdapterName, type ActiveSession, type NetworkAdapter, type OpResult, type SessionHint } from "@/server/integrations/network";
+import { networkAdapter, networkAdapterName, type ActiveSession, type NetworkAdapter, type OpResult, type SessionHint } from "@/server/integrations/network";
+import { routerRateLimit, type RateSpec } from "@/lib/plans";
 import { radiusActiveSessions, radiusConfigured, radiusRemoveUser, radiusUpsertUser } from "@/server/integrations/radius";
 import { assertExecutable, openAlert, routerTarget } from "@/server/services/routers";
+import { assertPlanAllowedOnRouter } from "@/server/services/plan-rules";
 import { actorType, actorUserId, lockRow, searchTerm } from "@/server/services/common";
 import { logger } from "@/server/observability/logger";
 import type { NetworkOperation, NetworkOperationStatus, Prisma, Router, Subscription } from "@/generated/prisma/client";
@@ -27,7 +29,7 @@ import type { NetworkOperation, NetworkOperationStatus, Prisma, Router, Subscrip
  * Billing state (Subscription.status) and network state (Subscription.networkStatus) are kept separate.
  */
 
-export const NETWORK_OPERATION_TYPES = ["pppoe.enable", "pppoe.disable", "pppoe.remove", "session.disconnect", "hotspot.user.upsert"] as const;
+export const NETWORK_OPERATION_TYPES = ["pppoe.enable", "pppoe.disable", "pppoe.remove", "session.disconnect", "hotspot.user.upsert", "profile.sync"] as const;
 export type NetworkOperationType = (typeof NETWORK_OPERATION_TYPES)[number];
 const STATE_TYPES: NetworkOperationType[] = ["pppoe.enable", "pppoe.disable"];
 const TERMINAL: NetworkOperationStatus[] = ["SUCCEEDED", "SIMULATED", "FAILED", "CANCELLED"];
@@ -40,6 +42,7 @@ export const OPERATION_LABEL: Record<NetworkOperationType, string> = {
   "pppoe.remove": "Remove PPPoE account",
   "session.disconnect": "Disconnect session",
   "hotspot.user.upsert": "Activate hotspot voucher",
+  "profile.sync": "Push plan to router",
 };
 
 export const PPPOE_USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,63}$/;
@@ -93,6 +96,13 @@ export async function requestNetworkOperationTx(tx: Tx, ctx: ActorContext, input
       maxAttempts: NETWORK_MAX_ATTEMPTS,
     },
   });
+  if (input.type === "profile.sync") {
+    // Only the newest version of a plan matters on a router.
+    await tx.networkOperation.updateMany({
+      where: { organizationId, routerId: input.routerId, type: "profile.sync", status: { in: ["QUEUED", "RETRYING"] }, id: { not: op.id }, params: { path: ["packageId"], equals: String(input.params.packageId ?? "") } },
+      data: { status: "CANCELLED", resultDetail: "Superseded by a newer version of the plan", completedAt: new Date() },
+    });
+  }
   if (input.subscriptionId && STATE_TYPES.includes(input.type)) {
     await tx.networkOperation.updateMany({
       where: {
@@ -173,6 +183,7 @@ export async function provisionSubscriptionNetwork(ctx: StaffContext, subscripti
   const router = await db.router.findFirst({ where: { id: input.routerId, ...tenantWhere(ctx), archivedAt: null } });
   if (!router) throw notFound("router");
   if (!router.pppoeEnabled) throw new AppError("INVALID_STATE", "PPPoE is not enabled on this router.");
+  await assertPlanAllowedOnRouter(db, sub.packageId, router.id);
   const username = input.username ?? sub.networkUsername ?? sub.subscriber.accountNumber.toLowerCase();
   if (!PPPOE_USERNAME_RE.test(username)) throw new AppError("VALIDATION_ERROR", "Choose a PPPoE username.", { fields: [{ path: "username", message: "Invalid username" }] });
 
@@ -353,7 +364,28 @@ export async function requestRouterOperation(ctx: StaffContext, routerId: string
 
 type Outcome = OpResult | { cancelled: string };
 
-const rateOf = (p: { uploadKbps: number | null; downloadKbps: number | null }) => (p.uploadKbps && p.downloadKbps ? `${kbpsToRate(p.uploadKbps)}/${kbpsToRate(p.downloadKbps)}` : null);
+const rateOf = (p: RateSpec) => routerRateLimit(p);
+
+/** The router profile a plan uses (also referenced by PPPoE secrets and hotspot users). */
+export function profileNameOf(pkg: { networkProfile: string | null; name: string }): string {
+  return pkg.networkProfile || pkg.name;
+}
+
+async function performProfileSync(op: NetworkOperation, router: Router, adapter: NetworkAdapter, attempt: number): Promise<Outcome> {
+  const params = (op.params ?? {}) as Record<string, unknown>;
+  const pkg = await db.package.findFirst({ where: { id: String(params.packageId ?? ""), organizationId: op.organizationId } });
+  if (!pkg) return { cancelled: "The plan no longer exists" };
+  if (pkg.status === "ARCHIVED") return { cancelled: "The plan was archived" };
+  const kind = pkg.serviceType === "PPPOE" ? "PPPOE" : "HOTSPOT";
+  if ((kind === "PPPOE" && !router.pppoeEnabled) || (kind === "HOTSPOT" && !router.hotspotEnabled)) return { cancelled: `${kind === "PPPOE" ? "PPPoE" : "Hotspot"} is not enabled on this router` };
+  const restricted = await db.packageRouter.findMany({ where: { packageId: pkg.id }, select: { routerId: true } });
+  if (restricted.length && !restricted.some((r) => r.routerId === router.id)) return { cancelled: "The plan is restricted to other routers" };
+  return adapter.upsertProfile(
+    await routerTarget(router),
+    { kind, name: profileNameOf(pkg), rateLimit: routerRateLimit(pkg), sharedUsers: kind === "HOTSPOT" ? (pkg.deviceLimit ?? 1) : null, comment: `cloudlink plan ${pkg.id}` },
+    { attempt },
+  );
+}
 
 async function performHotspot(op: NetworkOperation, router: Router | null, adapter: NetworkAdapter, attempt: number): Promise<Outcome> {
   const r = op.redemptionId ? await db.voucherRedemption.findUnique({ where: { id: op.redemptionId }, include: { voucher: { include: { batch: true } } } }) : null;
@@ -384,6 +416,7 @@ async function perform(op: NetworkOperation, attempt: number): Promise<Outcome> 
   if (op.type === "hotspot.user.upsert") return performHotspot(op, router, adapter, attempt);
   if (!router) throw new PermanentError("No router was specified", "ROUTER_MISSING");
   assertExecutable(router);
+  if (op.type === "profile.sync") return performProfileSync(op, router, adapter, attempt);
   const target = await routerTarget(router);
   const x = { attempt };
   const viaRadius = router.pppoeAuth === "RADIUS" && adapter.name === "routeros";
@@ -393,7 +426,14 @@ async function perform(op: NetworkOperation, attempt: number): Promise<Outcome> 
     case "pppoe.enable":
     case "pppoe.disable": {
       const sub = op.subscriptionId
-        ? await db.subscription.findUnique({ where: { id: op.subscriptionId }, include: { package: { select: { networkProfile: true, uploadKbps: true, downloadKbps: true } } } })
+        ? await db.subscription.findUnique({
+            where: { id: op.subscriptionId },
+            include: {
+              package: {
+                select: { networkProfile: true, uploadKbps: true, downloadKbps: true, burstUploadKbps: true, burstDownloadKbps: true, burstThresholdUploadKbps: true, burstThresholdDownloadKbps: true, burstTimeSeconds: true },
+              },
+            },
+          })
         : null;
       if (!sub || sub.networkRouterId !== router.id || sub.networkUsername !== username || !sub.networkPasswordEnc) {
         return { cancelled: "The subscription's network access changed after this operation was requested" };
@@ -568,6 +608,8 @@ export const operationListQuery = z.object({
   type: z.enum(NETWORK_OPERATION_TYPES).optional(),
   routerId: z.uuid().optional(),
   subscriptionId: z.uuid().optional(),
+  /** Profile pushes of one plan. */
+  packageId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -580,6 +622,7 @@ export async function listNetworkOperations(ctx: StaffContext, query: z.infer<ty
     ...(visible ? { routerId: { in: visible } } : {}),
     ...(query.routerId ? { routerId: query.routerId } : {}),
     ...(query.subscriptionId ? { subscriptionId: query.subscriptionId } : {}),
+    ...(query.packageId ? { type: "profile.sync", params: { path: ["packageId"], equals: query.packageId } } : {}),
     ...(query.type ? { type: query.type } : {}),
     ...(query.status === "ATTENTION" ? { status: { in: ["FAILED", "RETRYING"] } } : query.status !== "ALL" ? { status: query.status } : {}),
   };

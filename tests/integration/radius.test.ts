@@ -61,7 +61,7 @@ async function drain(rounds = 20) {
 async function setup() {
   const org = await createOrg();
   const ctx = await contextFor(org.owner.id, org.organization.id);
-  const pkg = await createPackage(ctx, packageInput.parse({ name: "Home 10", serviceType: "PPPOE", price: "2500.00", billingUnit: "MONTH", billingCount: 1, downloadKbps: 10240, uploadKbps: 5120, networkProfile: "home-10m" }));
+  const pkg = await createPackage(ctx, packageInput.parse({ name: "Home 10", serviceType: "PPPOE", price: "2500.00", billingUnit: "MONTH", billingCount: 1, downloadKbps: 10000, uploadKbps: 5000, networkProfile: "home-10m" }));
   const { subscriber, subscription } = await createSubscriber(ctx, subscriberInput.parse({ firstName: "Amina", phone: `07${String(30_000_000 + phoneSeq++)}`, packageId: pkg.id, activateSubscription: true }));
   const router = await createRouter(ctx, { name: "NAS-1", host: "127.0.0.1", apiPort: fake.port, username: "cloudlink", password: "router-pass", pppoeAuth: "RADIUS" });
   return { org, ctx, subscriber, subscription: subscription!, router, username: subscriber.accountNumber.toLowerCase() };

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { login, phone, uniq } from "./helpers";
+import { createPlan, login, phone, uniq } from "./helpers";
 import { E2E_USERS } from "./users";
 
 /**
@@ -9,14 +9,7 @@ import { E2E_USERS } from "./users";
 
 async function onboardPppoe(page: Page) {
   const id = uniq();
-  await page.goto("/packages");
-  await page.getByRole("button", { name: "New package" }).first().click();
-  const d = page.getByRole("dialog");
-  await d.getByLabel("Name").fill(`Fibre ${id}`);
-  await d.getByLabel(/^Price/).fill("2500");
-  await d.getByLabel("Router profile").fill("fibre-10m");
-  await d.getByRole("button", { name: "Create package" }).click();
-  await expect(d).toBeHidden();
+  await createPlan(page, { name: `Fibre ${id}`, type: "PPPoE", price: "2500", profile: "fibre-10m" });
   await page.goto("/subscribers/new");
   await page.getByLabel("First name").fill("Net");
   await page.getByLabel("Last name").fill(`Case${id}`);

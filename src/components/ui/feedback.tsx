@@ -52,10 +52,11 @@ export function EmptyState({ icon: Icon = Info, title, description, action }: { 
   );
 }
 
-export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: React.ReactNode }) {
+export function PageHeader({ title, description, actions, eyebrow }: { title: string; description?: React.ReactNode; actions?: React.ReactNode; eyebrow?: string }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="space-y-1">
+        {eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{eyebrow}</p> : null}
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
       </div>

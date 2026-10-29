@@ -17,7 +17,7 @@ describe("recurring job scheduler", () => {
     const { owner, organization } = await createOrg();
     await createOrg("Second");
     const ctx = await contextFor(owner.id, organization.id);
-    const pkg = await createPackage(ctx, { name: "P", serviceType: "PPPOE", price: "100.00", taxRate: "0", billingUnit: "MONTH", billingCount: 1, description: null });
+    const pkg = await createPackage(ctx, { name: "Plan P", serviceType: "PPPOE", price: "100.00", taxRate: "0", billingUnit: "MONTH", billingCount: 1, description: null });
     const { subscription } = await createSubscriber(ctx, subscriberInput.parse({ firstName: "Late", phone: "0711000111", packageId: pkg.id }));
     await db.subscription.update({ where: { id: subscription!.id }, data: { currentPeriodStart: new Date(Date.now() - 40 * 86_400_000), currentPeriodEnd: new Date(Date.now() - 60_000) } });
 

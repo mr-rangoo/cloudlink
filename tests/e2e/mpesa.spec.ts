@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { login, phone, uniq } from "./helpers";
+import { createPlan, login, phone, uniq } from "./helpers";
 import { E2E_USERS } from "./users";
 
 /**
@@ -10,13 +10,7 @@ test("customer pays an invoice with M-Pesa; the balance changes only after the c
   await login(page, E2E_USERS.owner);
   const id = uniq();
   const tel = phone();
-  await page.goto("/packages");
-  await page.getByRole("button", { name: "New package" }).first().click();
-  const d = page.getByRole("dialog");
-  await d.getByLabel("Name").fill(`Pay ${id}`);
-  await d.getByLabel(/^Price/).fill("1800");
-  await d.getByRole("button", { name: "Create package" }).click();
-  await expect(d).toBeHidden();
+  await createPlan(page, { name: `Pay ${id}`, type: "PPPoE", price: "1800" });
   await page.goto("/subscribers/new");
   await page.getByLabel("First name").fill("Mpesa");
   await page.getByLabel("Last name").fill(`Payer${id}`);

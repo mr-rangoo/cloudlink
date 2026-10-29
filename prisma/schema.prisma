@@ -326,11 +326,20 @@ enum ServiceType {
 }
 
 enum BillingUnit {
+  MINUTE
   HOUR
   DAY
   WEEK
   MONTH
   YEAR
+}
+
+/// What a plan grants, independent of the access technology (serviceType).
+enum PackageKind {
+  TIME // unlimited data for the duration
+  DATA // a data bundle (dataQuotaMb) usable within the duration
+  TRIAL // short trial, may be free; once per customer within trialCooldownDays
+  DEVICE // TV / streaming device that cannot use a login page (access by MAC)
 }
 
 model Package {
@@ -339,6 +348,7 @@ model Package {
   name           String
   description    String?
   serviceType    ServiceType
+  kind           PackageKind  @default(TIME)
   price          Decimal      @db.Decimal(14, 2)
   currency       String       @db.Char(3)
   taxRate        Decimal      @default(0) @db.Decimal(5, 2) // percent, e.g. 16.00 for VAT
@@ -350,14 +360,53 @@ model Package {
   deviceLimit    Int?
   networkProfile String? // PPP / hotspot profile name on the router (defaults to the package name)
   status         RecordStatus @default(ACTIVE)
+  /// Shown to customers for self-service (captive portal, customer portal). ACTIVE + unlisted = "hidden": staff can still sell it.
+  listed         Boolean      @default(true)
+  /// Marketing label shown with the plan: POPULAR | OFFER.
+  highlight      String?
+  sortOrder      Int          @default(0)
+  // MikroTik burst (all four rates and the time, or none)
+  burstDownloadKbps          Int?
+  burstUploadKbps            Int?
+  burstThresholdDownloadKbps Int?
+  burstThresholdUploadKbps   Int?
+  burstTimeSeconds           Int?
+  // Fair use policy: after fupThresholdMb in one period, throttle to the FUP rates or disconnect.
+  fupEnabled      Boolean @default(false)
+  fupThresholdMb  Int?
+  fupAction       String? // THROTTLE | DISCONNECT
+  fupDownloadKbps Int?
+  fupUploadKbps   Int?
+  // Time-of-day restriction in the organization timezone (minutes after local midnight; the window may cross midnight).
+  scheduleEnabled     Boolean @default(false)
+  scheduleStartMinute Int?
+  scheduleEndMinute   Int?
+  /// Days the window starts on: bit 0 = Monday … bit 6 = Sunday. Null = every day.
+  scheduleDays        Int?
+  /// TRIAL plans: the same phone or device can take the trial again only after this many days.
+  trialCooldownDays   Int?
   createdAt      DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
 
   subscriptions Subscription[]
   leads         Lead[]
+  routers       PackageRouter[]
 
   @@unique([organizationId, name])
   @@index([organizationId, status])
+}
+
+/// NAS restriction: when a plan has rows here it may only be used on these routers (none = every router).
+model PackageRouter {
+  packageId      String @db.Uuid
+  routerId       String @db.Uuid
+  organizationId String @db.Uuid
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  router  Router  @relation(fields: [routerId], references: [id], onDelete: Cascade)
+
+  @@id([packageId, routerId])
+  @@index([routerId])
 }
 
 // ───────────────────────── Subscribers ─────────────────────────
@@ -1456,6 +1505,7 @@ model Router {
   updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
 
   credential RouterCredential?
+  packages   PackageRouter[]
 
   @@unique([organizationId, name])
   @@index([organizationId, status])

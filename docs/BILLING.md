@@ -5,8 +5,14 @@ This document records the business rules implemented in code. Update it whenever
 ## Packages
 - Price is stored as `NUMERIC(14,2)` in the organization currency (KES by default), excluding tax.
 - `taxRate` is a percentage (e.g. `16.00` for VAT). `0` means no tax.
-- Billing interval = `billingUnit` (HOUR, DAY, WEEK, MONTH, YEAR) × `billingCount`.
+- Billing interval = `billingUnit` (MINUTE, HOUR, DAY, WEEK, MONTH, YEAR) × `billingCount`. Minutes are for hotspot plans only; the maximum count per unit is MINUTE 1440, HOUR 720, DAY 365, WEEK 104, MONTH 60, YEAR 10.
 - Changing a package affects **new** subscriptions only. Archiving is blocked while live subscriptions use the package.
+- Plan type = access technology (`serviceType`) + what it grants (`kind`): TIME (unlimited data for the duration), DATA (a data bundle, `dataQuotaMb` required), TRIAL (may be free; `trialCooldownDays`), DEVICE (TV/streaming device by MAC). DATA, TRIAL and DEVICE plans are hotspot plans.
+- Price must be greater than zero, except for TRIAL plans.
+- Availability: **Live** (`ACTIVE`, `listed`) is sold to customers; **Hidden** (`ACTIVE`, not listed) is not shown to customers but staff can assign it; **Off** (`INACTIVE`) cannot be sold. A plan can carry a label (`POPULAR` or `OFFER`) and a display order.
+- Burst (all five values or none) must satisfy burst limit > rate limit > burst threshold in both directions. A fair use policy needs a usage limit and an action; throttling needs reduced rates below the plan rates. A schedule window (local time, may cross midnight) names the days it starts on.
+- A PATCH changes only the fields it sends; switching a policy off clears its dependent values.
+- Revenue 30d on the plans page = fully paid invoice lines for the plan (gross, `paidAt` in the last 30 days) + face value of the plan's vouchers redeemed in the last 30 days, within the viewer's branch scope; shown only to staff with `payments.read` or `reports.read`.
 
 ## Subscription snapshot
 When a subscription is created it copies the package name, service type, price, currency, tax rate and interval.
@@ -31,7 +37,7 @@ and a subscriber timeline entry, and is audited. Network provisioning status is 
 - MONTH/YEAR keep the anchor's local day-of-month, clamped to the month length:
   31 Jan → 28 Feb (29 in leap years) → 31 Mar → 30 Apr. A 29 Feb yearly anchor bills on 28 Feb and returns to 29 Feb in leap years.
 - DAY/WEEK keep the local wall-clock time in the organization timezone (default Africa/Nairobi).
-- HOUR adds exact elapsed time.
+- MINUTE and HOUR add exact elapsed time.
 - `nextBillingAt` is the end of the current period; the next invoice is generated up to `invoiceLeadDays` before it.
 - `invoicedThrough` is the end of the latest period that has an invoice, so a period is never invoiced twice.
 

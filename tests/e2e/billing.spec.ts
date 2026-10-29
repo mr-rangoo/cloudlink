@@ -1,17 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
-import { login, phone, uniq } from "./helpers";
+import { createPlan, login, phone, uniq } from "./helpers";
 import { E2E_USERS } from "./users";
 
 /** Create a package + subscriber with an active subscription (which issues the activation invoice). */
 async function onboard(page: Page, price = "3000") {
   const id = uniq();
-  await page.goto("/packages");
-  await page.getByRole("button", { name: "New package" }).first().click();
-  const d = page.getByRole("dialog");
-  await d.getByLabel("Name").fill(`Plan ${id}`);
-  await d.getByLabel(/^Price/).fill(price);
-  await d.getByRole("button", { name: "Create package" }).click();
-  await expect(d).toBeHidden();
+  await createPlan(page, { name: `Plan ${id}`, type: "PPPoE", price });
   await page.goto("/subscribers/new");
   await page.getByLabel("First name").fill("Billing");
   await page.getByLabel("Last name").fill(`Case${id}`);

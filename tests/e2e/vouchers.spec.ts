@@ -1,20 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { login, uniq } from "./helpers";
+import { createPlan, login, uniq } from "./helpers";
 import { E2E_USERS } from "./users";
 
 test("generate vouchers, redeem one on the captive portal, and see honest activation status", async ({ page, browser }) => {
   const id = uniq();
   await login(page, E2E_USERS.owner);
-  await page.goto("/packages");
-  await page.getByRole("button", { name: "New package" }).first().click();
-  const d = page.getByRole("dialog");
-  await d.getByLabel("Name").fill(`Hotspot ${id}`);
-  await d.getByLabel("Service type").selectOption("HOTSPOT");
-  await d.getByLabel(/^Price/).fill("30");
-  await d.getByLabel("Billing period").selectOption("HOUR");
-  await d.getByLabel("Every").fill("3");
-  await d.getByRole("button", { name: "Create package" }).click();
-  await expect(d).toBeHidden();
+  await createPlan(page, { name: `Hotspot ${id}`, type: "Hotspot", price: "30", duration: "3 hours" });
 
   await page.goto("/vouchers");
   await page.getByRole("button", { name: "Generate batch" }).click();

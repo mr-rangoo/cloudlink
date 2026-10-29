@@ -66,7 +66,12 @@ export function Field({
     <div className={cn("space-y-1.5", className)}>
       <Label htmlFor={id}>
         {label}
-        {required ? <span className="text-danger"> *</span> : null}
+        {required ? (
+          <span className="text-danger" aria-hidden>
+            {" "}
+            *
+          </span>
+        ) : null}
       </Label>
       {React.cloneElement(children, { id, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy, required })}
       {hint ? (

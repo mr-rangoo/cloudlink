@@ -1,13 +1,13 @@
 import { daysInMonth, fromWallTime, toWallTime } from "@/server/domain/time";
 
-export type BillingUnit = "HOUR" | "DAY" | "WEEK" | "MONTH" | "YEAR";
+export type BillingUnit = "MINUTE" | "HOUR" | "DAY" | "WEEK" | "MONTH" | "YEAR";
 
 /**
  * Boundary `index` of a billing schedule anchored at `anchor`.
  * Boundary 0 is the anchor; period k spans [boundary(k), boundary(k+1)).
  *
  * Rules (documented in docs/BILLING.md):
- * - HOUR: exact elapsed time.
+ * - MINUTE / HOUR: exact elapsed time (short hotspot plans).
  * - DAY / WEEK: same local wall-clock time, N local days later (timezone-aware).
  * - MONTH / YEAR: same local day-of-month as the anchor, clamped to the last day of shorter months.
  *   Because every boundary is computed from the anchor (not from the previous boundary), a subscription
@@ -19,6 +19,7 @@ export function periodBoundary(anchor: Date, unit: BillingUnit, count: number, i
   if (index === 0) return new Date(anchor);
   const steps = count * index;
 
+  if (unit === "MINUTE") return new Date(anchor.getTime() + steps * 60_000);
   if (unit === "HOUR") return new Date(anchor.getTime() + steps * 3_600_000);
 
   const w = toWallTime(anchor, tz);

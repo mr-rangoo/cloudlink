@@ -42,7 +42,7 @@ async function runAllOps() {
 describe("reports agree with the ledger", () => {
   it("revenue, collections and aging reconcile with the trial balance", async () => {
     const { ctx } = await setup();
-    const pkg = await createPackage(ctx, { name: "P", serviceType: "PPPOE", price: "2000.00", taxRate: "16", billingUnit: "MONTH", billingCount: 1, description: null });
+    const pkg = await createPackage(ctx, { name: "Plan P", serviceType: "PPPOE", price: "2000.00", taxRate: "16", billingUnit: "MONTH", billingCount: 1, description: null });
     const { subscriber: a } = await createSubscriber(ctx, subscriberInput.parse({ firstName: "Ann", phone: tel(), packageId: pkg.id })); // 2320 invoice
     const { subscriber: b } = await createSubscriber(ctx, subscriberInput.parse({ firstName: "Ben", phone: tel() }));
     const inv = await createManualInvoice(ctx, invoiceCreateInput.parse({ subscriberId: b.id, lines: [{ description: "Router", quantity: "1", unitPrice: "5000" }] }));
@@ -69,7 +69,7 @@ describe("reports agree with the ledger", () => {
 
     const subsReport = await subscriberReport(ctx, {});
     expect(subsReport.months.at(-1)!.newSubscribers).toBe(2);
-    expect(subsReport.byPackage).toEqual([expect.objectContaining({ packageName: "P", active: 1, mrr: "2000.00" })]);
+    expect(subsReport.byPackage).toEqual([expect.objectContaining({ packageName: "Plan P", active: 1, mrr: "2000.00" })]);
 
     const col = await collectionsReport(ctx, {});
     expect(col.months.at(-1)!.total).toBe("3000.00");

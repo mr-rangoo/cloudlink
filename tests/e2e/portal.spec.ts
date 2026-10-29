@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { login, phone, uniq } from "./helpers";
+import { createPlan, login, phone, uniq } from "./helpers";
 import { E2E_USERS } from "./users";
 
 const PORTAL_PASSWORD = "Customer-Pass-123";
@@ -8,13 +8,7 @@ const PORTAL_PASSWORD = "Customer-Pass-123";
 async function subscriberWithPortal(page: Page, label: string) {
   const id = uniq();
   const tel = phone();
-  await page.goto("/packages");
-  await page.getByRole("button", { name: "New package" }).first().click();
-  const d = page.getByRole("dialog");
-  await d.getByLabel("Name").fill(`Portal ${label} ${id}`);
-  await d.getByLabel(/^Price/).fill("1800");
-  await d.getByRole("button", { name: "Create package" }).click();
-  await expect(d).toBeHidden();
+  await createPlan(page, { name: `Portal ${label} ${id}`, type: "PPPoE", price: "1800" });
   await page.goto("/subscribers/new");
   await page.getByLabel("First name").fill(label);
   await page.getByLabel("Last name").fill(`Portal${id}`);

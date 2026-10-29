@@ -2,6 +2,7 @@ import "server-only";
 import { PermanentError, RetryableError } from "@/server/jobs/operations";
 import { RouterOsConnectionError, RouterOsTrapError, withRouter, type RouterOsClient } from "@/server/integrations/routeros/client";
 import { attr, query, RouterOsInputError } from "@/server/integrations/routeros/protocol";
+import { formatRate } from "@/lib/plans";
 
 /**
  * Network adapter boundary (server-side only, worker process). Business code never talks to routers directly and
@@ -44,6 +45,26 @@ export interface HotspotUser {
   uptimeLimitSeconds: number;
   macAddress: string | null;
   comment?: string;
+}
+
+/** A plan's speed settings as a RouterOS PPP profile or hotspot user profile (created or updated by name). */
+export interface ServiceProfile {
+  kind: "PPPOE" | "HOTSPOT";
+  name: string;
+  /** RouterOS rate-limit ("rx/tx [burst …]"); null leaves the profile's current limit untouched. */
+  rateLimit: string | null;
+  /** Hotspot only: simultaneous logins per account (shared-users). */
+  sharedUsers: number | null;
+  comment?: string;
+}
+
+/** RouterOS prints burst times with a unit ("30s/30s"); compare limits without it. */
+export function normalizeRateLimit(v: string | undefined | null): string {
+  return (v ?? "")
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.replace(/(\d+)s(?=\/|$)/g, "$1"))
+    .join(" ");
 }
 
 export interface OpResult {
@@ -89,6 +110,7 @@ export interface NetworkAdapter {
   removePppoeSecret(r: RouterTarget, username: string, x: ExecContext): Promise<OpResult>;
   upsertHotspotUser(r: RouterTarget, u: HotspotUser, x: ExecContext): Promise<OpResult>;
   disconnectSession(r: RouterTarget, kind: "PPPOE" | "HOTSPOT", username: string, x: ExecContext): Promise<OpResult>;
+  upsertProfile(r: RouterTarget, p: ServiceProfile, x: ExecContext): Promise<OpResult>;
   health(r: RouterTarget): Promise<RouterHealth>;
   listSessions(r: RouterTarget, hint?: SessionHint): Promise<ActiveSession[]>;
 }
@@ -134,6 +156,11 @@ class MockNetworkAdapter implements NetworkAdapter {
   async disconnectSession(r: RouterTarget, kind: string, username: string, x: ExecContext) {
     this.gate(r, x);
     return this.sim(`${kind} session for ${username} would be disconnected`);
+  }
+  async upsertProfile(r: RouterTarget, p: ServiceProfile, x: ExecContext) {
+    this.gate(r, x);
+    const what = [p.rateLimit ? `rate-limit ${p.rateLimit}` : null, p.kind === "HOTSPOT" && p.sharedUsers ? `shared-users ${p.sharedUsers}` : null].filter(Boolean).join(", ");
+    return this.sim(`${p.kind === "PPPOE" ? "PPP" : "hotspot user"} profile ${p.name} would be set${what ? ` (${what})` : ""}`);
   }
   async health(r: RouterTarget): Promise<RouterHealth> {
     if (r.name.includes("[offline]")) return { online: false, simulated: true, detail: "Mock router is offline (simulated)" };
@@ -328,6 +355,35 @@ class RouterOsAdapter implements NetworkAdapter {
     }
   }
 
+  async upsertProfile(r: RouterTarget, p: ServiceProfile): Promise<OpResult> {
+    const path = p.kind === "PPPOE" ? "/ppp/profile" : "/ip/hotspot/user/profile";
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        const existing = await findByName(c, path, p.name);
+        const fields = [
+          ...(p.rateLimit ? [attr("rate-limit", p.rateLimit)] : []),
+          ...(p.kind === "HOTSPOT" && p.sharedUsers ? [attr("shared-users", String(p.sharedUsers))] : []),
+          ...(p.comment && p.kind === "PPPOE" ? [attr("comment", p.comment)] : []),
+        ];
+        if (existing) {
+          if (fields.length) await c.command([`${path}/set`, attr(".id", existing[".id"]!), ...fields]);
+        } else {
+          await c.command([`${path}/add`, attr("name", p.name), ...fields]);
+        }
+        const check = await findByName(c, path, p.name);
+        const rateOk = !p.rateLimit || normalizeRateLimit(check?.["rate-limit"]) === normalizeRateLimit(p.rateLimit);
+        const sharedOk = p.kind !== "HOTSPOT" || !p.sharedUsers || check?.["shared-users"] === String(p.sharedUsers);
+        return {
+          status: "SUCCEEDED" as const,
+          verified: Boolean(check) && rateOk && sharedOk,
+          detail: `${p.kind === "PPPOE" ? "PPP" : "Hotspot user"} profile ${p.name} ${existing ? "updated" : "created"}${p.rateLimit ? ` (rate-limit ${p.rateLimit})` : ""}`,
+        };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
   async health(r: RouterTarget): Promise<RouterHealth> {
     try {
       return await withRouter(rosOpts(r), async (c) => {
@@ -380,6 +436,9 @@ class DisabledNetworkAdapter implements NetworkAdapter {
   async disconnectSession(): Promise<OpResult> {
     this.fail();
   }
+  async upsertProfile(): Promise<OpResult> {
+    this.fail();
+  }
   async health(): Promise<RouterHealth> {
     return { online: false, detail: "Network automation is disabled" };
   }
@@ -400,8 +459,8 @@ export function networkAdapter(): NetworkAdapter {
   return new DisabledNetworkAdapter();
 }
 
-/** RouterOS rate string for a kbps value: 10240 → "10M", 512 → "512k". */
+/** RouterOS rate string for a kbps value (decimal units, as RouterOS uses): 10000 → "10M", 512 → "512k". */
 export function kbpsToRate(kbps: number | null | undefined): string | null {
   if (!kbps) return null;
-  return kbps % 1024 === 0 ? `${kbps / 1024}M` : `${kbps}k`;
+  return formatRate(kbps);
 }

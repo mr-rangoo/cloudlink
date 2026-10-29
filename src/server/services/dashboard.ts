@@ -30,6 +30,8 @@ export function monthlyEquivalent(price: DecimalValue, unit: BillingUnit, count:
       return perUnit.mul(365).div(12);
     case "HOUR":
       return perUnit.mul(24 * 365).div(12);
+    case "MINUTE":
+      return perUnit.mul(60 * 24 * 365).div(12);
   }
 }
 

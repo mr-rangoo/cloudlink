@@ -3,8 +3,8 @@ import { encodeSentence, parseAttributes, SentenceReader } from "@/server/integr
 
 /**
  * In-process fake RouterOS API server speaking the real wire protocol. It models the subset Cloudlink uses:
- * /login, /system/resource|identity print, /ppp/secret, /ppp/active, /ip/hotspot/user, /ip/hotspot/active.
- * Failure injection lets tests exercise timeouts, dropped connections and !trap errors.
+ * /login, /system/resource|identity print, /ppp/secret, /ppp/active, /ppp/profile, /ip/hotspot/user, /ip/hotspot/user/profile,
+ * /ip/hotspot/active. Failure injection lets tests exercise timeouts, dropped connections and !trap errors.
  */
 type Row = Record<string, string>;
 
@@ -14,7 +14,7 @@ export interface FakeRouterOptions {
 }
 
 export class FakeRouterOs {
-  readonly tables: Record<string, Row[]> = { "/ppp/secret": [], "/ppp/active": [], "/ip/hotspot/user": [], "/ip/hotspot/active": [] };
+  readonly tables: Record<string, Row[]> = { "/ppp/secret": [], "/ppp/active": [], "/ppp/profile": [], "/ip/hotspot/user": [], "/ip/hotspot/user/profile": [], "/ip/hotspot/active": [] };
   readonly log: string[][] = [];
   private nextId = 1;
   private server?: net.Server;

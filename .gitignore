@@ -16,3 +16,6 @@ src/generated/
 next-env.d.ts
 storage/
 backups/
+
+# Local Redis snapshot (created when redis-server runs from the project root)
+dump.rdb

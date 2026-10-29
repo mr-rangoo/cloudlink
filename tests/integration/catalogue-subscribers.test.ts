@@ -45,7 +45,7 @@ describe("packages", () => {
   it("enforces unique package names per organization", async () => {
     const { ctx } = await ownerCtx();
     await createPackage(ctx, { ...pkgInput, description: null });
-    await expect(createPackage(ctx, { ...pkgInput, description: null })).rejects.toMatchObject({ code: "P2002" });
+    await expect(createPackage(ctx, { ...pkgInput, description: null })).rejects.toMatchObject({ code: "CONFLICT", fields: [{ path: "name", message: "Already in use" }] });
   });
 });
 

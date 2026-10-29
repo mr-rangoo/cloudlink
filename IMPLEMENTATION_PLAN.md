@@ -9,6 +9,7 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Initial implementation plan reviewed.
 - [x] Phases 1–9 complete (2026-10-26). Remaining work needs external credentials, hardware or authorization — see the phase 9 work log and `docs/HANDOVER.md`.
 - [x] Phase 10 (user request: themes, payment methods, live sessions, AI chat) complete (2026-10-26) — see the phase 10 work log.
+- [ ] Phases 11–22 (user request 2026-10-30: "I need all this in my billing system", 29 screenshots of the user's current Centipid account) — in progress, see "Phases 11–22" below. Features are rebuilt as Cloudlink's own design; no Centipid code, copy, names or assets are reused.
 
 ## Integration status (truthful)
 | Integration | Status | Notes |
@@ -112,6 +113,48 @@ Coding agent: update this file continuously. Do not mark items complete without 
 - [x] Live sessions: live mode on the sessions page (30 s de-duplicated sync requests, 10 s refresh, online counts, stale warning); customer "My connection" card and API; deterministic simulated sessions in test mode only; daily pruning of routine jobs.
 - [x] AI assistant: Claude chat in the portal with six customer-scoped tools, one ticket per chat, append-only replay, refusal/limit handling, rate limits, disclosure, staff transcripts (branch-scoped), settings tab, 180-day retention, production env guards.
 - [ ] Verify the assistant with a real Anthropic API key on staging — **blocked**: no key supplied.
+
+## Phases 11–22 — feature parity with the user's current ISP platform (user request 2026-10-30)
+The user shared 29 screenshots (overview, live sessions, subscribers, plans + plan form, routers list/detail/actions/reports, link-router wizard, TR-069, equipment, payments, expenses, captive-portal templates, payment gateways, SMS providers, message templates, loyalty points, AI settings). Gap analysis against phases 1–10:
+
+| Area | Already in Cloudlink | Missing (to build) | Phase |
+| --- | --- | --- | --- |
+| Plans | packages with price, period, kbps, quota, devices, router profile | plan kinds (time/data bundle/trial/device), live/hidden/off, popular/on-offer, MikroTik rate-limit strings, burst, fair-use policy, time-of-day schedule, router (NAS) restriction, revenue/subscriber stats, full-page form, profile push to routers | 11 |
+| Hotspot sales | vouchers, captive portal voucher login | M-Pesa self-purchase on the captive portal with verified callback → subscription → router user → auto-login; reconnect with M-Pesa code; hotspot subscribers expiring to the minute; activation timing; router login page sync | 12 |
+| Captive portal | one design, themed | several original templates with previews, hotspot settings (support number, instructions, tabs) | 13 |
+| Routers | inventory, health check, setup command, sessions, operations | telemetry samples + charts (CPU/memory/disk/traffic/latency/reachability), health score, diagnose, sync time, walled garden, hotspot files, reboot, identity, maintenance mode, backups, logs, reports tab, link wizard | 14 |
+| Overview / live sessions / subscribers / navigation | KPI dashboard, sessions table, subscriber list | greeting + live ticker, revenue today vs yesterday, what's next, renewals due, busiest routers, subscriber health; traffic stats + expiry in sessions; subscriber stats, service tabs, filters (VIP, at risk, offline, router, created), last online, NAS, compensation; grouped navigation with counts; record search (Ctrl+K) | 15 |
+| Payments / expenses | ledger, payments list, expenses | period stats, type/reconciled/activation columns, CSV export | 16 |
+| Messaging | SMS (Africa's Talking, env only), email, templates | per-organization SMS provider catalogue + test send + credit balance, service templates (welcome, receipts, voucher delivery, credit saved, expiry), bulk SMS/campaigns, operator alerts, per-org SMTP, WhatsApp | 17 |
+| Payment gateways | M-Pesa Daraja (STK/C2B), manual | gateway catalogue with one active gateway, additional adapters | 18 |
+| Loyalty | — | points programme (earn per spend, redeem for credit, ledger-backed) | 19 |
+| Equipment / TR-069 | inventory with movements | sale price + payments against equipment, returned/damaged/sold; TR-069 device registry with ACS adapter | 20 |
+| AI / developer / security | portal assistant (Claude, env key) | staff "Ask AI" with organization tools, per-org API key, API tokens + outbound webhooks, staff 2FA | 21 |
+| Insights | reports | fiber map, ticket analytics, analytics page, promo banners / hotspot ads | 22 |
+
+Order: 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22, one commit per phase, tests/lint/typecheck/build after each.
+
+### Phase 11 — Plans engine ✅
+- [x] Plan kinds (time, data bundle, trial, TV/device) on top of the access type; Live / Hidden / Off; Popular / On offer labels; display order — `prisma/migrations/20261030090000_plans_engine` (CHECK constraints for burst, FUP, schedule, labels; same-organization trigger on `PackageRouter`).
+- [x] MINUTE billing unit for short hotspot plans (`src/server/domain/billing-period.ts`).
+- [x] MikroTik rate strings, burst, durations, schedules — `src/lib/plans.ts` (shared by form and server; unit-tested).
+- [x] Validation of the merged plan on create and PATCH (`planProblems`); PATCH no longer resets absent fields to defaults (latent bug in the old schema, regression-tested).
+- [x] Router profile push: `profile.sync` network operation (PPP profile or hotspot user profile with rate-limit incl. burst and shared-users), read-back verified, superseding, idempotent per plan version; triggered on save, per plan (`POST /packages/:id/sync`) and per router (`POST /routers/:id/sync-plans`).
+- [x] Router restriction enforced when provisioning PPPoE and issuing vouchers; schedule enforced at voucher redemption.
+- [x] Plans page (stats, type tabs, speed/duration/devices/burst/schedule chips, subscribers, revenue 30d, status, row menu: edit, duplicate, live/hidden/off, push, archive/restore) and full-page create/edit form with push history.
+- [ ] Fair use policy enforcement — stored and validated; applying it needs per-subscription usage collection (phase 14). The form says so.
+- [ ] Disconnecting active sessions when a scheduled plan's window closes — with hotspot subscriptions (phase 12).
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `npx prisma migrate dev` (dev) / `migrate deploy` (test, e2e) | `20261030090000_plans_engine` applied |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 16 files, 135 tests passed (adds `tests/unit/plans.test.ts`: rates, burst, schedules incl. midnight and Sunday wrap, durations, minute periods) |
+| `npm run test:integration` | 22 files, 175 tests passed (adds `tests/integration/plans.test.ts`: rules on create and merged PATCH, PATCH regression, same-organization restriction incl. DB trigger, hotspot and PPP profile push verified on the fake RouterOS server, superseding and per-version idempotency, restriction at provisioning, schedule at voucher redemption, catalogue counts/revenue/permissions, duplicate, push permission) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 23 passed (six specs now create plans through the new form via `createPlan`) |
+
+Fixes made during the phase: required-field asterisks are hidden from assistive technology (the input's `required` already announces it); tests that relied on one-letter plan names, raw `P2002` errors or binary (1024) rate units were updated to the new behaviour. Visual check: plans list and form at 1440 px and 390 px against a production build.
 
 ## Work log
 

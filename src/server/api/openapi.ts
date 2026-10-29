@@ -1,7 +1,7 @@
 import "server-only";
 import { z, type ZodType } from "zod";
 import { loginSchema } from "@/server/auth/service";
-import { packageInput, packageListQuery, packageUpdate } from "@/server/services/packages";
+import { catalogueQuery, packageInput, packageListQuery, packageUpdate } from "@/server/services/packages";
 import { noteInput, subscriberInput, subscriberListQuery, subscriberUpdate } from "@/server/services/subscribers";
 import { subscriptionActionInput, subscriptionCreateInput, subscriptionListQuery } from "@/server/services/subscriptions";
 import { leadActivityInput, leadConvertInput, leadInput, leadListQuery, leadUpdate } from "@/server/services/leads";
@@ -79,7 +79,10 @@ export const operations: Operation[] = [
   { method: "get", path: "/packages", summary: "List packages", tag: "Packages", auth: "session", permission: "packages.read", query: packageListQuery },
   { method: "post", path: "/packages", summary: "Create package", tag: "Packages", auth: "session", permission: "packages.write", body: packageInput },
   { method: "get", path: "/packages/:id", summary: "Get package", tag: "Packages", auth: "session", permission: "packages.read" },
-  { method: "patch", path: "/packages/:id", summary: "Update package (existing subscriptions keep their snapshot)", tag: "Packages", auth: "session", permission: "packages.write", body: packageUpdate },
+  { method: "patch", path: "/packages/:id", summary: "Update package (existing subscriptions keep their snapshot; network changes are pushed to routers)", tag: "Packages", auth: "session", permission: "packages.write", body: packageUpdate },
+  { method: "get", path: "/packages/catalogue", summary: "Plans with type, availability, live subscriptions and 30-day revenue, plus counts", tag: "Packages", auth: "session", permission: "packages.read", query: catalogueQuery },
+  { method: "post", path: "/packages/:id/duplicate", summary: "Copy a plan (the copy starts Off)", tag: "Packages", auth: "session", permission: "packages.write", responses: { "201": "Created" } },
+  { method: "post", path: "/packages/:id/sync", summary: "Push the plan's router profile (speed, burst, devices) to every router it is used on", tag: "Packages", auth: "session", permission: "packages.read + network.operate", responses: { "202": "Queued" } },
   { method: "get", path: "/subscribers", summary: "List subscribers (paginated)", tag: "Subscribers", auth: "session", permission: "subscribers.read", query: subscriberListQuery },
   { method: "post", path: "/subscribers", summary: "Create subscriber (optionally with first subscription)", tag: "Subscribers", auth: "session", permission: "subscribers.write", body: subscriberInput, responses: { "409": "Duplicate contact" } },
   { method: "get", path: "/subscribers/:id", summary: "Get subscriber", tag: "Subscribers", auth: "session", permission: "subscribers.read" },
@@ -226,6 +229,7 @@ export const operations: Operation[] = [
   { method: "get", path: "/routers/setup/:token", summary: "Router downloads its setup script (.rsc); the single-use token is the authorization", tag: "Network", auth: "none", responses: { "200": "RouterOS script (text/plain)", "404": "Invalid, expired or used" } },
   { method: "post", path: "/routers/:id/archive", summary: "Archive a router (refused while subscriptions are provisioned on it)", tag: "Network", auth: "session", permission: "routers.write" },
   { method: "post", path: "/routers/:id/health-check", summary: "Queue a reachability check (runs in the worker)", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },
+  { method: "post", path: "/routers/:id/sync-plans", summary: "Push every plan this router uses as a router profile", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },
   { method: "get", path: "/routers/:id/sessions", summary: "Sessions seen on one router", tag: "Network", auth: "session", permission: "network.read", query: sessionListQuery.omit({ routerId: true }) },
   { method: "post", path: "/routers/:id/operations", summary: "Request an allowlisted operation (pppoe.sync | session.disconnect)", tag: "Network", auth: "session", permission: "network.operate", body: routerOperationInput, responses: { "202": "Queued" } },
   { method: "get", path: "/network/operations", summary: "Durable network operations (status, attempts, verification)", tag: "Network", auth: "session", permission: "network.read", query: operationListQuery },

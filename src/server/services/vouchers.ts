@@ -13,6 +13,7 @@ import { actorUserId, nextCounter } from "@/server/services/common";
 import { cashAccountFor, postLedger } from "@/server/services/ledger";
 import { defaultHotspotRouterId, dispatchNetworkOperations, requestNetworkOperationTx } from "@/server/services/network";
 import { consumeRateLimit, RATE_LIMITS, refundRateLimit } from "@/server/security/rate-limit";
+import { assertPlanAllowedOnRouter, assertPlanOpen } from "@/server/services/plan-rules";
 import type { Prisma } from "@/generated/prisma/client";
 
 const dec = (v: { toString(): string }) => new D(v.toString());
@@ -141,6 +142,9 @@ export async function generateBatch(ctx: StaffContext, input: z.infer<typeof bat
   const branchId = input.branchId ? await resolveBranchForCreate(ctx, input.branchId) : null;
   if (input.routerId && !(await db.router.findFirst({ where: { id: input.routerId, organizationId: ctx.organizationId, hotspotEnabled: true, archivedAt: null } }))) {
     throw new AppError("VALIDATION_ERROR", "Choose a hotspot-enabled router.", { fields: [{ path: "routerId", message: "Not a hotspot router" }] });
+  }
+  if (await db.packageRouter.count({ where: { packageId: pkg.id } })) {
+    await assertPlanAllowedOnRouter(db, pkg.id, input.routerId ?? (await defaultHotspotRouterId(db, ctx.organizationId)));
   }
   const net = dec(pkg.price);
   const face = net.plus(net.mul(dec(pkg.taxRate)).div(100)).toDecimalPlaces(2);
@@ -272,6 +276,8 @@ export async function redeemVoucher(ctx: ActorContext, input: z.infer<typeof red
       await tx.voucher.update({ where: { id: v.id }, data: { status: "EXPIRED" } });
       return { expired: true as const };
     }
+    const plan = await tx.package.findUnique({ where: { id: v.batch.packageId }, select: { name: true, scheduleEnabled: true, scheduleStartMinute: true, scheduleEndMinute: true, scheduleDays: true } });
+    if (plan) assertPlanOpen(plan, now, tz); // the voucher stays unused and can be redeemed inside the window
     const accessEndsAt = periodBoundary(now, v.batch.durationUnit, v.batch.durationCount, 1, tz);
     await tx.voucher.update({ where: { id: v.id }, data: { status: "REDEEMED", redeemedAt: now } });
     const redemption = await tx.voucherRedemption.create({

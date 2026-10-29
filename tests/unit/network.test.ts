@@ -131,7 +131,8 @@ describe("adapter helpers", () => {
     expect(rosDuration(86400 + 3600 + 61)).toBe("1d1h1m1s");
     expect(rosDuration(3600)).toBe("1h");
     expect(rosDuration(0)).toBe("0s");
-    expect(kbpsToRate(10240)).toBe("10M");
+    expect(kbpsToRate(10000)).toBe("10M");
+    expect(kbpsToRate(10240)).toBe("10240k");
     expect(kbpsToRate(512)).toBe("512k");
     expect(kbpsToRate(null)).toBeNull();
   });
