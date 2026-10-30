@@ -6,6 +6,7 @@ import { Alert, Badge, PageHeader, type Tone } from "@/components/ui/feedback";
 import { humanize } from "@/components/status";
 import { Forbidden } from "@/components/shell/forbidden";
 import { MpesaSettingsCard } from "./mpesa-card";
+import { MessagingSettingsCard } from "./messaging-card";
 
 export const metadata: Metadata = { title: "Integrations" };
 
@@ -49,6 +50,7 @@ export default async function IntegrationsPage() {
         </Card>
       ))}
       <MpesaSettingsCard ctx={ctx} />
+      <MessagingSettingsCard ctx={ctx} />
       <p className="text-xs text-muted-foreground">Credentials are stored encrypted (or as server environment secrets) and are never displayed after saving.</p>
     </div>
   );

@@ -1,7 +1,8 @@
 import "server-only";
 import { db } from "@/server/db/client";
 import { requirePermission, type StaffContext } from "@/server/auth/context";
-import { messagingStatus, type IntegrationStatus } from "@/server/integrations/messaging";
+import type { IntegrationStatus } from "@/server/integrations/messaging";
+import { getMessagingSettings } from "@/server/services/messaging-config";
 import { pingRedis } from "@/server/jobs/redis";
 import { workerStatus } from "@/server/observability/health";
 import { radiusConfigured, radiusHealth } from "@/server/integrations/radius";
@@ -29,6 +30,25 @@ function routerStatus(mode: string, routers: { total: number; online: number }):
   return routers.online > 0 ? "ok" : "unavailable";
 }
 
+const PROVIDER_NAME: Record<string, string> = { africastalking: "Africa's Talking", twilio: "Twilio", smtp: "SMTP", "mock-sms": "mock", "mock-email": "mock", sms: "none", email: "none" };
+
+/** SMS / email row: verified only after a staff member confirmed a test message arrived (see messaging-config). */
+function messagingRow(
+  key: "sms" | "email",
+  label: string,
+  mode: string,
+  inUse: { provider: string; source: string; available: boolean },
+  recorded: IntegrationStatus | undefined,
+  lastTest: { at: string; accepted: boolean; confirmedAt: string | null } | null,
+): IntegrationRow {
+  const name = `${label} (${PROVIDER_NAME[inUse.provider] ?? inUse.provider})`;
+  if (mode === "mock") return { key, name, category: "messaging", mode, status: "mock", detail: "Messages are simulated, not delivered." };
+  if (!inUse.available) return { key, name, category: "messaging", mode, status: "not_configured", detail: "Not configured: messages are skipped. Set up a provider in the Messaging section below." };
+  const where = inUse.source === "environment" ? "server environment" : "saved in Cloudlink";
+  const test = lastTest ? (lastTest.accepted ? `Test accepted ${lastTest.at.slice(0, 10)}${lastTest.confirmedAt ? ", arrival confirmed" : "; confirm it arrived to verify"}.` : "Last test was not accepted.") : "Not tested yet.";
+  return { key, name, category: "messaging", mode, status: recorded ?? "configured", detail: `Configured (${where}). ${test}` };
+}
+
 export async function integrationStatus(ctx: StaffContext): Promise<IntegrationRow[]> {
   requirePermission(ctx, "integrations.read");
   const configs = await db.integrationConfiguration.findMany({ where: { organizationId: ctx.organizationId }, select: { provider: true, status: true, lastCheckedAt: true, lastError: true } });
@@ -39,7 +59,7 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
   const paymentMode = paymentAdapterMode();
   const mpesa = paymentMode === "daraja" ? await darajaConfigFor(ctx.organizationId).catch(() => null) : null;
   const networkMode = process.env.NETWORK_ADAPTER ?? "mock";
-  const messaging = messagingStatus();
+  const messaging = await getMessagingSettings(ctx);
   const [redis, workers, routerGroups, radius] = await Promise.all([
     pingRedis(),
     workerStatus(),
@@ -95,8 +115,8 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
           ? radius.detail
           : "Not configured: routers set to RADIUS authentication cannot be provisioned. See docs/NETWORK.md.",
     },
-    { key: "sms", name: `SMS (${messaging.sms.provider})`, category: "messaging", mode: process.env.MESSAGING_ADAPTER ?? "mock", status: mapStatus(recorded("sms")?.status) ?? messaging.sms.status, detail: messaging.sms.available ? (messaging.sms.status === "mock" ? "Messages are simulated, not delivered." : "Configured; not yet verified with a real send.") : "Not configured: messages are skipped." },
-    { key: "email", name: `Email (${messaging.email.provider})`, category: "messaging", mode: process.env.MESSAGING_ADAPTER ?? "mock", status: mapStatus(recorded("smtp")?.status) ?? messaging.email.status, detail: messaging.email.available ? (messaging.email.status === "mock" ? "Messages are simulated, not delivered." : "Configured; not yet verified with a real send.") : "Not configured: messages are skipped." },
+    messagingRow("sms", "SMS", messaging.mode, messaging.sms.inUse, mapStatus(recorded("sms")?.status), messaging.sms.lastTest),
+    messagingRow("email", "Email", messaging.mode, messaging.email.inUse, mapStatus(recorded("email")?.status), messaging.email.lastTest),
     { key: "storage", name: `File storage (${process.env.STORAGE_ADAPTER ?? "local"})`, category: "infrastructure", mode: process.env.STORAGE_ADAPTER ?? "local", status: (process.env.STORAGE_ADAPTER ?? "local") === "local" ? "ok" : "not_configured", detail: (process.env.STORAGE_ADAPTER ?? "local") === "local" ? "Local disk; suitable for a single server. Use S3-compatible storage for multi-node deployments." : "S3 adapter not implemented yet." },
     { key: "redis", name: "Redis / BullMQ", category: "infrastructure", mode: process.env.REDIS_URL ? "configured" : "none", status: redis === "ok" ? "ok" : redis === "not_configured" ? "not_configured" : "unavailable", detail: redis === "ok" ? "Jobs dispatch immediately." : "Worker falls back to database polling (slower, still durable)." },
     { key: "worker", name: "Background worker", category: "infrastructure", mode: "process", status: workers.some((w) => w.healthy) ? "ok" : "unavailable", detail: workers.some((w) => w.healthy) ? `${workers.filter((w) => w.healthy).length} worker(s) online` : "No worker heartbeat in the last minute: billing, notifications and exports are not being processed." },

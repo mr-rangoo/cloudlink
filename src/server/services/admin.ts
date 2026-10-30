@@ -285,6 +285,7 @@ export const settingsInput = z.object({
       receiptPrefix: z.string().trim().regex(/^[A-Z]{2,6}$/, "2–6 capital letters").optional(),
       creditNotePrefix: z.string().trim().regex(/^[A-Z]{2,6}$/, "2–6 capital letters").optional(),
       invoiceLeadDays: z.coerce.number().int().min(0).max(60).optional(),
+      expiryReminderDays: z.coerce.number().int().min(0).max(30).optional(),
       paymentTermsDays: z.coerce.number().int().min(0).max(120).optional(),
       invoiceOnActivation: z.boolean().optional(),
       invoiceFooter: z.string().trim().max(300).nullable().optional(),

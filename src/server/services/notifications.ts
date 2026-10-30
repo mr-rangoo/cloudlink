@@ -5,7 +5,7 @@ import { requirePermission, type ActorContext } from "@/server/auth/context";
 import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { enqueueOperation, PermanentError } from "@/server/jobs/operations";
-import { emailAdapter, smsAdapter, type MessageAdapter } from "@/server/integrations/messaging";
+import { messagingAdapterForOrg } from "@/server/services/messaging-config";
 import type { NotificationChannel, Prisma } from "@/generated/prisma/client";
 
 /**
@@ -13,25 +13,47 @@ import type { NotificationChannel, Prisma } from "@/generated/prisma/client";
  * inside the business transaction (outbox), and delivered by the worker through messaging adapters.
  * A row only becomes SENT when the adapter accepts it; mock adapters mark it `simulated`.
  */
-export type TemplateKey = "invoice.issued" | "payment.received" | "ticket.reply" | "ticket.resolved" | "portal.invite" | "subscription.expiring";
+export type TemplateKey =
+  | "invoice.issued"
+  | "payment.received"
+  | "credit.saved"
+  | "ticket.reply"
+  | "ticket.resolved"
+  | "portal.invite"
+  | "subscriber.welcome"
+  | "subscription.expiring"
+  | "subscription.expired"
+  | "hotspot.purchased"
+  | "voucher.delivery";
 export type Category = "billing" | "service" | "support" | "account";
 
 export const TEMPLATE_CATEGORY: Record<TemplateKey, Category> = {
   "invoice.issued": "billing",
   "payment.received": "billing",
+  "credit.saved": "billing",
   "ticket.reply": "support",
   "ticket.resolved": "support",
   "portal.invite": "account",
+  "subscriber.welcome": "account",
   "subscription.expiring": "service",
+  "subscription.expired": "service",
+  "hotspot.purchased": "service",
+  // Sent only when staff deliver a voucher on purpose, so it is not subject to preferences.
+  "voucher.delivery": "account",
 };
 
 export const TEMPLATE_VARIABLES: Record<TemplateKey, string[]> = {
   "invoice.issued": ["name", "organization", "invoiceNumber", "amount", "dueDate", "accountNumber"],
   "payment.received": ["name", "organization", "amount", "receiptNumber", "accountNumber", "balance"],
+  "credit.saved": ["name", "organization", "amount", "credit", "accountNumber"],
   "ticket.reply": ["name", "organization", "ticketNumber", "subject", "message"],
   "ticket.resolved": ["name", "organization", "ticketNumber", "subject", "resolution"],
   "portal.invite": ["name", "organization", "link", "accountNumber"],
   "subscription.expiring": ["name", "organization", "packageName", "endDate", "accountNumber"],
+  "subscriber.welcome": ["name", "organization", "accountNumber"],
+  "subscription.expired": ["name", "organization", "packageName", "endDate", "accountNumber"],
+  "hotspot.purchased": ["name", "organization", "packageName", "endDate", "receipt"],
+  "voucher.delivery": ["organization", "code", "packageName", "validUntil"],
 };
 
 const DEFAULTS: Record<TemplateKey, { subject: string; sms: string; email: string }> = {
@@ -64,6 +86,31 @@ const DEFAULTS: Record<TemplateKey, { subject: string; sms: string; email: strin
     subject: "Your {{packageName}} service ends {{endDate}}",
     sms: "{{organization}}: Your {{packageName}} service ends {{endDate}}. Pay with account {{accountNumber}} to stay connected.",
     email: "Hello {{name}},\n\nYour {{packageName}} service is paid until {{endDate}}.\nPay with account number {{accountNumber}} to avoid interruption.\n\n{{organization}}",
+  },
+  "credit.saved": {
+    subject: "{{credit}} saved on your account",
+    sms: "{{organization}}: {{credit}} of your {{amount}} payment is saved as credit on account {{accountNumber}}. It will pay your next bill.",
+    email: "Hello {{name}},\n\nFrom your payment of {{amount}}, {{credit}} is saved as credit on account {{accountNumber}}.\nIt will be used for your next invoice automatically.\n\n{{organization}}",
+  },
+  "subscriber.welcome": {
+    subject: "Welcome to {{organization}}",
+    sms: "Welcome to {{organization}}, {{name}}! Your account number is {{accountNumber}}. Use it as the reference when you pay.",
+    email: "Hello {{name}},\n\nWelcome to {{organization}}. Your account number is {{accountNumber}}.\nUse it as the payment reference (M-Pesa account number) whenever you pay.\n\n{{organization}}",
+  },
+  "subscription.expired": {
+    subject: "Your {{packageName}} service has ended",
+    sms: "{{organization}}: Your {{packageName}} service ended {{endDate}}. Pay with account {{accountNumber}} to reconnect.",
+    email: "Hello {{name}},\n\nYour {{packageName}} service ended on {{endDate}}.\nPay with account number {{accountNumber}} and it will be restored automatically.\n\n{{organization}}",
+  },
+  "hotspot.purchased": {
+    subject: "{{packageName}} is active",
+    sms: "{{organization}}: {{packageName}} is active until {{endDate}}. To connect another device, choose \"Already paid\" on the Wi-Fi page and enter M-Pesa code {{receipt}}.",
+    email: "Hello,\n\n{{packageName}} is active until {{endDate}}.\nTo connect another device, choose \"Already paid\" on the Wi-Fi page and enter your M-Pesa code {{receipt}}.\n\n{{organization}}",
+  },
+  "voucher.delivery": {
+    subject: "Your {{organization}} Wi-Fi voucher",
+    sms: "{{organization}}: Your Wi-Fi voucher code is {{code}} ({{packageName}}). Use it by {{validUntil}}.",
+    email: "Hello,\n\nYour Wi-Fi voucher code is {{code}} ({{packageName}}).\nEnter it on the Wi-Fi login page by {{validUntil}}.\n\n{{organization}}",
   },
 };
 
@@ -133,18 +180,49 @@ export async function queueSubscriberNotificationTx(
   return queued;
 }
 
-function adapterFor(channel: NotificationChannel): MessageAdapter {
-  return channel === "EMAIL" ? emailAdapter() : smsAdapter();
+/**
+ * Queue one message to a given recipient (not necessarily a subscriber), e.g. a voucher code for a walk-in
+ * customer. Idempotent per dedupeKey; written in the caller's transaction like every other notification.
+ */
+export async function queueNotificationTx(
+  tx: Tx,
+  organizationId: string,
+  input: { channel: NotificationChannel; recipient: string; key: TemplateKey; vars: Record<string, string | number | null | undefined>; dedupeKey: string; subscriberId?: string | null; metadata?: Prisma.InputJsonValue },
+) {
+  const existing = await tx.notification.findUnique({ where: { dedupeKey: input.dedupeKey } });
+  if (existing) return existing;
+  const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } });
+  const tpl = await templateFor(tx, organizationId, input.key, input.channel);
+  const vars = { organization: org.name, ...input.vars };
+  const n = await tx.notification.create({
+    data: {
+      organizationId,
+      subscriberId: input.subscriberId ?? null,
+      channel: input.channel,
+      templateKey: input.key,
+      category: TEMPLATE_CATEGORY[input.key],
+      recipient: input.recipient,
+      subject: tpl?.subject ? renderTemplate(tpl.subject, vars) : null,
+      body: tpl ? renderTemplate(tpl.body, vars) : "",
+      status: tpl ? "QUEUED" : "SKIPPED",
+      lastError: tpl ? null : "TEMPLATE_DISABLED",
+      dedupeKey: input.dedupeKey,
+      ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+    },
+  });
+  if (tpl) await enqueueOperation({ type: "notifications.send", organizationId, payload: { notificationId: n.id }, dedupeKey: `notify:${n.id}`, maxAttempts: 5 }, tx);
+  return n;
 }
 
 /**
- * Worker handler: deliver one notification. Missing configuration → SKIPPED (never "sent").
- * Transient failures are retried by the operation runner; permanent failures mark FAILED.
+ * Worker handler: deliver one notification through the organization's provider (see messaging-config).
+ * Missing configuration → SKIPPED (never "sent"). Transient failures are retried by the operation runner;
+ * permanent failures mark FAILED.
  */
 export async function deliverNotification(notificationId: string, overrideBody?: (n: { body: string }) => Promise<{ send: string; store: string }>): Promise<void> {
   const n = await db.notification.findUnique({ where: { id: notificationId } });
   if (!n || n.status !== "QUEUED") return;
-  const adapter = adapterFor(n.channel);
+  const { adapter } = await messagingAdapterForOrg(n.organizationId, n.channel);
   if (!adapter.available) {
     await db.notification.update({ where: { id: n.id }, data: { status: "SKIPPED", lastError: `${n.channel}_NOT_CONFIGURED`, provider: adapter.provider } });
     return;
@@ -188,7 +266,7 @@ export async function listNotifications(ctx: ActorContext, query: z.infer<typeof
 }
 
 export const templateInput = z.object({
-  key: z.enum(["invoice.issued", "payment.received", "ticket.reply", "ticket.resolved", "portal.invite", "subscription.expiring"]),
+  key: z.enum(Object.keys(TEMPLATE_CATEGORY) as [TemplateKey, ...TemplateKey[]]),
   channel: z.enum(["EMAIL", "SMS"]),
   subject: z.string().trim().max(200).optional().nullable(),
   body: z.string().trim().min(5).max(1600),
@@ -221,6 +299,9 @@ export async function saveTemplate(ctx: ActorContext, input: z.infer<typeof temp
   requirePermission(ctx, "notifications.write");
   if (input.key === "portal.invite" && !input.body.includes("{{link}}")) {
     throw new AppError("VALIDATION_ERROR", "The portal invite must include {{link}}.", { fields: [{ path: "body", message: "Must include {{link}}" }] });
+  }
+  if (input.key === "voucher.delivery" && !input.body.includes("{{code}}")) {
+    throw new AppError("VALIDATION_ERROR", "The voucher message must include {{code}}.", { fields: [{ path: "body", message: "Must include {{code}}" }] });
   }
   if (input.channel === "SMS" && input.body.length > 480) throw new AppError("VALIDATION_ERROR", "SMS templates must be 480 characters or fewer.", { fields: [{ path: "body", message: "Too long for SMS" }] });
   const row = await db.notificationTemplate.upsert({

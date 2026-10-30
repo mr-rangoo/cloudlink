@@ -71,7 +71,7 @@ export const envSchema = z
 
     PAYMENT_ADAPTER: z.enum(["mock", "daraja", "disabled"]).default("mock"),
     NETWORK_ADAPTER: z.enum(["mock", "routeros", "disabled"]).default("mock"),
-    MESSAGING_ADAPTER: z.enum(["mock", "smtp", "disabled"]).default("mock"),
+    MESSAGING_ADAPTER: z.enum(["mock", "live", "smtp", "disabled"]).default("mock"),
     /** Customer-portal AI assistant: anthropic (Claude API), mock (simulated replies, non-production only), disabled. */
     ASSISTANT_ADAPTER: z.enum(["anthropic", "mock", "disabled"]).default("disabled"),
     ANTHROPIC_API_KEY: z.string().optional().default(""),

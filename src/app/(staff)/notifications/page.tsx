@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Bell } from "lucide-react";
 import { getStaffContextWith } from "@/server/auth/page";
 import { listNotifications, listTemplates, notificationListQuery } from "@/server/services/notifications";
-import { messagingStatus } from "@/server/integrations/messaging";
+import { messagingInUse } from "@/server/services/messaging-config";
 import { maskContact } from "@/server/observability/logger";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, EmptyState, PageHeader, type Tone } from "@/components/ui/feedback";
@@ -17,7 +17,8 @@ import { RetryButton, TemplateDialog } from "./client";
 export const metadata: Metadata = { title: "Notifications" };
 
 const STATUS_TONE: Record<string, Tone> = { QUEUED: "info", SENT: "success", DELIVERED: "success", FAILED: "danger", SKIPPED: "neutral" };
-const INTEGRATION_TONE: Record<string, Tone> = { mock: "warning", not_configured: "neutral", sandbox_tested: "info", production_verified: "success", error: "danger" };
+const INTEGRATION_TONE: Record<string, Tone> = { mock: "warning", not_configured: "neutral", configured: "info", sandbox_tested: "info", production_verified: "success", error: "danger" };
+const PROVIDER_NAME: Record<string, string> = { africastalking: "Africa's Talking", twilio: "Twilio", smtp: "SMTP", "mock-sms": "mock adapter", "mock-email": "mock adapter", sms: "no provider", email: "no provider" };
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const { ctx, allowed } = await getStaffContextWith("notifications.read");
@@ -26,7 +27,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   const tab = sp.tab === "templates" ? "templates" : "messages";
   const canWrite = ctx.permissions.has("notifications.write");
   const tz = ctx.organization.timezone;
-  const status = messagingStatus();
+  const status = await messagingInUse(ctx.organizationId);
 
   return (
     <div className="space-y-6">
@@ -36,7 +37,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
           <Card key={ch}>
             <CardContent className="flex items-center justify-between py-4 text-sm">
               <span>
-                <span className="font-medium uppercase">{ch}</span> <span className="text-muted-foreground">via {status[ch].provider}</span>
+                <span className="font-medium uppercase">{ch}</span> <span className="text-muted-foreground">via {PROVIDER_NAME[status[ch].provider] ?? status[ch].provider}</span>
               </span>
               <Badge tone={INTEGRATION_TONE[status[ch].status] ?? "neutral"}>{status[ch].status.replace("_", " ")}</Badge>
             </CardContent>

@@ -106,6 +106,7 @@ async function GeneralTab({ ctx }: { ctx: Ctx }) {
           receiptPrefix: s.billing.receiptPrefix,
           creditNotePrefix: s.billing.creditNotePrefix,
           invoiceLeadDays: s.billing.invoiceLeadDays,
+          expiryReminderDays: s.billing.expiryReminderDays,
           paymentTermsDays: s.billing.paymentTermsDays,
           invoiceOnActivation: s.billing.invoiceOnActivation,
           invoiceFooter: s.billing.invoiceFooter ?? "",

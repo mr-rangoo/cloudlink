@@ -23,6 +23,7 @@ interface Initial {
     receiptPrefix: string;
     creditNotePrefix: string;
     invoiceLeadDays: number;
+    expiryReminderDays: number;
     paymentTermsDays: number;
     invoiceOnActivation: boolean;
     invoiceFooter: string;
@@ -61,6 +62,7 @@ export function SettingsForm({ initial, timezones }: { initial: Initial; timezon
             receiptPrefix: v.receiptPrefix,
             creditNotePrefix: v.creditNotePrefix,
             invoiceLeadDays: v.invoiceLeadDays,
+            expiryReminderDays: v.expiryReminderDays,
             paymentTermsDays: v.paymentTermsDays,
             invoiceOnActivation: v.invoiceOnActivation === "on",
             invoiceFooter: n(v.invoiceFooter),
@@ -145,6 +147,9 @@ export function SettingsForm({ initial, timezones }: { initial: Initial; timezon
           </Field>
           <Field id="b-lead" label="Invoice lead time (days)" hint="Next-period invoice is issued this many days before renewal" error={err("invoiceLeadDays")}>
             <Input name="invoiceLeadDays" type="number" min={0} max={60} defaultValue={b.invoiceLeadDays} />
+          </Field>
+          <Field id="b-remind" label="Expiry reminder (days before)" hint="SMS/email reminder for plans of a week or longer. 0 turns reminders off." error={err("expiryReminderDays")}>
+            <Input name="expiryReminderDays" type="number" min={0} max={30} defaultValue={b.expiryReminderDays} />
           </Field>
           <Field id="b-terms" label="Payment terms (days)" error={err("paymentTermsDays")}>
             <Input name="paymentTermsDays" type="number" min={0} max={120} defaultValue={b.paymentTermsDays} />

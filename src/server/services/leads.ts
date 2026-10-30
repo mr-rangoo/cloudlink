@@ -239,7 +239,7 @@ export async function convertLead(ctx: ActorContext, id: string, input: z.infer<
         activateSubscription: input.activateSubscription,
         allowDuplicateContact: input.allowDuplicateContact,
       },
-      { source: "lead conversion" },
+      { source: "lead conversion", welcome: true },
     );
     await tx.lead.update({ where: { id }, data: { stage: "WON", convertedSubscriberId: subscriber.id, convertedAt: new Date() } });
     await tx.leadActivity.create({

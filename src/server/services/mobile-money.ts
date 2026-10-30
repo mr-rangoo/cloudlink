@@ -495,7 +495,8 @@ async function confirmAttempt(attemptId: string, details: StkSuccessDetails, eve
           // Imported lazily: hotspot sales build on this module (import cycle otherwise).
           const { applyHotspotPurchaseTx } = await import("@/server/services/hotspot-sales");
           purchaseSubscriptionId = (await applyHotspotPurchaseTx(tx, ctx, attempt, payment)).subscriptionId;
-          await notifyPaymentReceivedTx(tx, attempt.organizationId, payment.id);
+          // A completed purchase sends "plan active" instead; money kept as credit gets the usual receipt.
+          if (!purchaseSubscriptionId) await notifyPaymentReceivedTx(tx, attempt.organizationId, payment.id);
         } else if (payment.subscriberId) {
           if (attempt.invoiceId) {
             const invoice = await tx.invoice.findUnique({ where: { id: attempt.invoiceId }, select: { id: true, subscriberId: true, status: true, balanceDue: true, currency: true } });

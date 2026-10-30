@@ -92,3 +92,27 @@ export function checkRouterHost(host: string, opts: { allowedNetworks: string; a
   }
   return { ok: true };
 }
+
+const NOT_PUBLIC: Cidr[] = [
+  ...PRIVATE,
+  ...LOOPBACK,
+  { address: "0.0.0.0", prefix: 8, family: "ipv4" },
+  { address: "169.254.0.0", prefix: 16, family: "ipv4" },
+  { address: "192.0.0.0", prefix: 24, family: "ipv4" },
+  { address: "198.18.0.0", prefix: 15, family: "ipv4" },
+  { address: "224.0.0.0", prefix: 3, family: "ipv4" },
+  { address: "::", prefix: 128, family: "ipv6" },
+  { address: "::ffff:0:0", prefix: 96, family: "ipv6" },
+  { address: "fe80::", prefix: 10, family: "ipv6" },
+  { address: "ff00::", prefix: 8, family: "ipv6" },
+];
+const notPublicList = blockList(NOT_PUBLIC);
+
+/**
+ * True for a public unicast address. Used before connecting to hosts an organization configured itself (e.g. its
+ * SMTP server), so a tenant cannot make the worker reach internal services.
+ */
+export function isPublicAddress(ip: string): boolean {
+  const family = familyOf(ip);
+  return family !== null && !notPublicList.check(ip, family);
+}

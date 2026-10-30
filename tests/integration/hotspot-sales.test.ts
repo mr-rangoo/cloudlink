@@ -171,6 +171,11 @@ describe("hotspot purchase", () => {
     expect(user!["limit-uptime"]).toMatch(/^(59m\d+s|1h)$/);
     expect(await db.subscription.findUniqueOrThrow({ where: { id: sub.id } })).toMatchObject({ networkStatus: "ACTIVE" });
     expect((await db.paymentAttempt.findUniqueOrThrow({ where: { id: p.attemptId } })).activatedAt).not.toBeNull();
+    // The buyer gets "plan active" with the reconnect code, not a generic account receipt.
+    const texts = await db.notification.findMany({ where: { subscriberId: subscriber.id }, select: { templateKey: true, channel: true, body: true } });
+    expect(texts.map((t) => t.templateKey)).toContain("hotspot.purchased");
+    expect(texts.map((t) => t.templateKey)).not.toContain("payment.received");
+    expect(texts.find((t) => t.templateKey === "hotspot.purchased")!.body).toContain("Already paid");
     // The payments list shows it as a hotspot purchase with its activation time.
     const listed = (await listPayments(await contextFor(org.owner.id, org.organization.id), { type: "hotspot" })).rows;
     expect(listed).toEqual([expect.objectContaining({ source: "hotspot", reconciliation: "allocated", activation: expect.objectContaining({ seconds: expect.any(Number) }) })]);

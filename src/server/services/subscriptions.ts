@@ -4,9 +4,11 @@ import { db, type Tx } from "@/server/db/client";
 import { listWhere, requirePermission, tenantWhere, type ActorContext } from "@/server/auth/context";
 import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
-import { periodAt } from "@/server/domain/billing-period";
+import { periodAt, type BillingUnit } from "@/server/domain/billing-period";
 import { nextStatus, renewalContinues, type SubscriptionAction } from "@/server/domain/subscription-state";
 import { actorType, actorUserId, lockRow, searchTerm } from "@/server/services/common";
+import { queueSubscriberNotificationTx } from "@/server/services/notifications";
+import { formatDate } from "@/lib/utils";
 import type { Prisma, Subscription } from "@/generated/prisma/client";
 
 export const subscriptionCreateInput = z.object({
@@ -59,6 +61,48 @@ export const subscriptionSelect = {
   cancelledAt: true,
   createdAt: true,
 } satisfies Prisma.SubscriptionSelect;
+
+/**
+ * Plans of a week or longer get expiry reminders and "service ended" messages. Short hotspot plans (minutes, hours,
+ * a few days) would otherwise text the customer every time a plan runs out.
+ */
+export function remindable(sub: { billingUnit: BillingUnit; billingCount: number }): boolean {
+  return sub.billingUnit === "YEAR" || sub.billingUnit === "MONTH" || sub.billingUnit === "WEEK" || (sub.billingUnit === "DAY" && sub.billingCount >= 7);
+}
+
+/**
+ * Hourly: remind customers whose plan (a week or longer) ends within the organization's reminder window
+ * (BillingSettings.expiryReminderDays; 0 = off). One reminder per subscription period.
+ */
+export async function remindExpiringSubscriptions(organizationId: string, now = new Date()): Promise<{ reminded: number }> {
+  const settings = await db.billingSettings.findUnique({ where: { organizationId }, select: { expiryReminderDays: true } });
+  const days = settings?.expiryReminderDays ?? 3;
+  if (days <= 0) return { reminded: 0 };
+  const tz = await orgTimezone(db, organizationId);
+  const due = await db.subscription.findMany({
+    where: {
+      organizationId,
+      status: "ACTIVE",
+      currentPeriodEnd: { gt: now, lte: new Date(now.getTime() + days * 86_400_000) },
+      OR: [{ billingUnit: { in: ["WEEK", "MONTH", "YEAR"] } }, { billingUnit: "DAY", billingCount: { gte: 7 } }],
+    },
+    select: { id: true, subscriberId: true, packageName: true, currentPeriodEnd: true },
+    take: 1000,
+  });
+  let reminded = 0;
+  for (const s of due) {
+    const queued = await db.$transaction((tx) =>
+      queueSubscriberNotificationTx(tx, organizationId, {
+        subscriberId: s.subscriberId,
+        key: "subscription.expiring",
+        vars: { packageName: s.packageName, endDate: formatDate(s.currentPeriodEnd!, tz) },
+        dedupeBase: `subscription.expiring:${s.id}:${s.currentPeriodEnd!.toISOString()}`,
+      }),
+    );
+    if (queued) reminded++;
+  }
+  return { reminded };
+}
 
 async function orgTimezone(tx: Tx | typeof db, organizationId: string): Promise<string> {
   const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timezone: true } });
@@ -203,6 +247,14 @@ export async function applyActionTx(
       },
     },
   });
+  if (action === "expire" && sub.currentPeriodEnd && remindable(sub)) {
+    await queueSubscriberNotificationTx(tx, sub.organizationId, {
+      subscriberId: sub.subscriberId,
+      key: "subscription.expired",
+      vars: { packageName: sub.packageName, endDate: formatDate(sub.currentPeriodEnd, tz) },
+      dedupeBase: `subscription.expired:${id}:${sub.currentPeriodEnd.toISOString()}`,
+    });
+  }
   await tx.subscriberActivity.create({
     data: {
       organizationId: sub.organizationId,

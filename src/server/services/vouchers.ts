@@ -13,6 +13,8 @@ import { actorUserId, nextCounter } from "@/server/services/common";
 import { cashAccountFor, postLedger } from "@/server/services/ledger";
 import { defaultHotspotRouterId, dispatchNetworkOperations, requestNetworkOperationTx } from "@/server/services/network";
 import { consumeRateLimit, RATE_LIMITS, refundRateLimit } from "@/server/security/rate-limit";
+import { PermanentError } from "@/server/jobs/operations";
+import { queueNotificationTx } from "@/server/services/notifications";
 import { assertPlanAllowedOnRouter, assertPlanOpen } from "@/server/services/plan-rules";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -209,6 +211,45 @@ export async function getBatch(ctx: StaffContext, id: string) {
   const vouchers = await db.voucher.findMany({ where: { batchId: id }, orderBy: { createdAt: "asc" }, select: { id: true, codeHint: true, status: true, redeemedAt: true, redemption: { select: { channel: true, clientMac: true, activationStatus: true, accessEndsAt: true } } } });
   const agent = b.agentId ? await db.agent.findUnique({ where: { id: b.agentId }, select: { id: true, name: true } }) : null;
   return { ...b, agent, vouchers };
+}
+
+export const sendVoucherInput = z.object({ phone: z.string().trim().min(9).max(20) });
+
+/**
+ * Text one unused voucher's code to a customer. Revealing a code is an export, so it needs vouchers.export and is
+ * audited. The code is filled in by the worker at send time and is never stored in the message record.
+ */
+export async function sendVoucherBySms(ctx: StaffContext, voucherId: string, raw: z.input<typeof sendVoucherInput>) {
+  requirePermission(ctx, "vouchers.export");
+  const input = sendVoucherInput.parse(raw);
+  const phone = normalizePhone(input.phone);
+  if (!phone) throw new AppError("VALIDATION_ERROR", "Enter a Kenyan mobile number.", { fields: [{ path: "phone", message: "Invalid phone number" }] });
+  const voucher = await db.voucher.findFirst({ where: { id: voucherId, organizationId: ctx.organizationId }, include: { batch: true } });
+  if (!voucher) throw notFound("voucher");
+  if (voucher.status !== "UNUSED" || voucher.batch.status !== "ACTIVE") throw new AppError("INVALID_STATE", "Only unused vouchers from an active batch can be sent.");
+  if (voucher.batch.expiresAt && voucher.batch.expiresAt < new Date()) throw new AppError("INVALID_STATE", "This batch can no longer be redeemed.");
+  const validUntil = voucher.batch.expiresAt ? new Intl.DateTimeFormat("en-KE", { dateStyle: "medium", timeZone: ctx.organization.timezone }).format(voucher.batch.expiresAt) : "any time";
+  const n = await db.$transaction((tx) =>
+    queueNotificationTx(tx, ctx.organizationId, {
+      channel: "SMS",
+      recipient: phone,
+      key: "voucher.delivery",
+      vars: { code: "{{code}}", packageName: voucher.batch.packageName, validUntil },
+      dedupeKey: `voucher.delivery:${voucher.id}:${Date.now()}`,
+      metadata: { voucherId: voucher.id },
+    }),
+  );
+  await audit(ctx, { action: "voucher.send_sms", entityType: "voucher", entityId: voucher.id, metadata: { batchId: voucher.batchId, codeHint: voucher.codeHint, to: `${phone.slice(0, 6)}***${phone.slice(-2)}`, notificationId: n.id } });
+  return { notificationId: n.id, status: n.status };
+}
+
+/** Worker: the code for a voucher being delivered, only while it can still be redeemed. */
+export async function voucherCodeForDelivery(organizationId: string, voucherId: string): Promise<string> {
+  const voucher = await db.voucher.findFirst({ where: { id: voucherId, organizationId }, include: { batch: { select: { status: true, expiresAt: true } } } });
+  if (!voucher || voucher.status !== "UNUSED" || voucher.batch.status !== "ACTIVE" || (voucher.batch.expiresAt && voucher.batch.expiresAt < new Date())) {
+    throw new PermanentError("The voucher is no longer available to send", "VOUCHER_UNAVAILABLE");
+  }
+  return decryptSecret(voucher.codeEncrypted, `voucher:${organizationId}`);
 }
 
 export async function voidBatch(ctx: StaffContext, id: string, reason: string) {

@@ -16,10 +16,11 @@ import { reportRangeQuery } from "@/server/services/reports";
 import { exportRequestInput } from "@/server/services/exports";
 import { auditQuery, branchInput, branchUpdateInput, roleInput, setPasswordInput, settingsInput, staffInviteInput, staffUpdateInput } from "@/server/services/admin";
 import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/inventory";
-import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput } from "@/server/services/vouchers";
+import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput, sendVoucherInput } from "@/server/services/vouchers";
 import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from "@/server/services/routers";
 import { telemetryQuery } from "@/server/services/router-insights";
 import { searchQuery } from "@/server/services/search";
+import { emailSettingsInput, smsSettingsInput, testMessageInput } from "@/server/services/messaging-config";
 import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
 import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } from "@/server/services/mobile-money";
 import { mpesaConfigInput } from "@/server/services/mpesa-config";
@@ -222,6 +223,7 @@ export const operations: Operation[] = [
   { method: "get", path: "/vouchers/batches/:id", summary: "Batch with voucher statuses (code hints only)", tag: "Vouchers", auth: "session", permission: "vouchers.read" },
   { method: "post", path: "/vouchers/batches/:id/void", summary: "Void unused vouchers in a batch", tag: "Vouchers", auth: "session", permission: "vouchers.write" },
   { method: "get", path: "/vouchers/batches/:id/export", summary: "Audited export of unused codes (PDF cards, or ?format=csv)", tag: "Vouchers", auth: "session", permission: "vouchers.export" },
+  { method: "post", path: "/vouchers/:id/send", summary: "Text an unused voucher code to a phone (audited; code not stored in the message)", tag: "Vouchers", auth: "session", permission: "vouchers.export", body: sendVoucherInput, responses: { "202": "Queued" } },
   { method: "post", path: "/vouchers/redeem", summary: "Staff-assisted redemption", tag: "Vouchers", auth: "session", permission: "vouchers.write", body: redeemInput },
   { method: "get", path: "/agents", summary: "Agents with sold/commission/remitted/owed", tag: "Vouchers", auth: "session", permission: "vouchers.read" },
   { method: "post", path: "/agents", summary: "Create agent", tag: "Vouchers", auth: "session", permission: "vouchers.write", body: agentInput },
@@ -292,6 +294,12 @@ export const operations: Operation[] = [
   { method: "post", path: "/payments/attempts/:id/simulate", summary: "Development only (mock adapter): simulate the customer's response", tag: "Payments", auth: "session", permission: "payments.initiate", body: simulateInput },
   { method: "get", path: "/integrations/mpesa", summary: "M-Pesa settings (credentials never returned)", tag: "Integrations", auth: "session", permission: "integrations.read" },
   { method: "put", path: "/integrations/mpesa", summary: "Save M-Pesa settings and encrypted credentials", tag: "Integrations", auth: "session", permission: "integrations.write", body: mpesaConfigInput },
+  { method: "get", path: "/integrations/messaging", summary: "SMS and email provider settings and the provider in use (credentials never returned)", tag: "Integrations", auth: "session", permission: "integrations.read" },
+  { method: "put", path: "/integrations/messaging/sms", summary: "Save the SMS provider (Africa's Talking or Twilio); credentials encrypted, write-only", tag: "Integrations", auth: "session", permission: "integrations.write", body: smsSettingsInput },
+  { method: "put", path: "/integrations/messaging/email", summary: "Save the SMTP server; password encrypted, write-only", tag: "Integrations", auth: "session", permission: "integrations.write", body: emailSettingsInput },
+  { method: "post", path: "/integrations/messaging/test", summary: "Send a test SMS/email now; records whether the provider accepted it", tag: "Integrations", auth: "session", permission: "integrations.write", body: testMessageInput },
+  { method: "post", path: "/integrations/messaging/confirm", summary: "Confirm the last accepted test arrived (marks the provider verified)", tag: "Integrations", auth: "session", permission: "integrations.write" },
+  { method: "post", path: "/integrations/messaging/balance", summary: "Ask the SMS provider for its prepaid balance", tag: "Integrations", auth: "session", permission: "integrations.read" },
   { method: "post", path: "/integrations/mpesa/test", summary: "Check credentials (OAuth token only; no money moves)", tag: "Integrations", auth: "session", permission: "integrations.write" },
   { method: "post", path: "/integrations/mpesa/register-c2b", summary: "Register C2B confirmation/validation URLs", tag: "Integrations", auth: "session", permission: "integrations.write" },
   { method: "post", path: "/customer/payments", summary: "Customer pays with M-Pesa (own account or invoice)", tag: "Customer portal", auth: "session", body: customerPaymentInput, responses: { "202": "Request sent" } },

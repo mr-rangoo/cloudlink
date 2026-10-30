@@ -7,6 +7,7 @@ import { AppError, notFound } from "@/server/errors";
 import { normalizeEmail, normalizePhone } from "@/server/domain/contact";
 import { actorUserId, formatAccountNumber, nextCounter, searchTerm } from "@/server/services/common";
 import { createSubscriptionTx, subscriptionSelect } from "@/server/services/subscriptions";
+import { queueSubscriberNotificationTx } from "@/server/services/notifications";
 import type { Prisma } from "@/generated/prisma/client";
 
 const phoneField = z
@@ -150,7 +151,8 @@ export const subscriberListSelect = {
 } satisfies Prisma.SubscriberSelect;
 
 /** Shared create used by the API, lead conversion and CSV import. */
-export async function createSubscriberTx(tx: Tx, ctx: ActorContext, input: z.infer<typeof subscriberInput>, opts: { source?: string } = {}) {
+/** `welcome`: send the welcome message (staff-created accounts and lead conversions; not imports or hotspot buyers). */
+export async function createSubscriberTx(tx: Tx, ctx: ActorContext, input: z.infer<typeof subscriberInput>, opts: { source?: string; welcome?: boolean } = {}) {
   const branchId = await resolveBranchForCreate(ctx, input.branchId);
   if (!input.allowDuplicateContact) {
     const dupes = await findContactDuplicates(tx, ctx.organizationId, input.phone, input.email);
@@ -185,6 +187,7 @@ export async function createSubscriberTx(tx: Tx, ctx: ActorContext, input: z.inf
   await tx.subscriberActivity.create({
     data: { organizationId: ctx.organizationId, subscriberId: subscriber.id, actorUserId: actorUserId(ctx), type: "created", message: `Subscriber account ${accountNumber} created${opts.source ? ` (${opts.source})` : ""}` },
   });
+  if (opts.welcome) await queueSubscriberNotificationTx(tx, ctx.organizationId, { subscriberId: subscriber.id, key: "subscriber.welcome", vars: {}, dedupeBase: `subscriber.welcome:${subscriber.id}` });
   let subscription = null;
   if (input.packageId) {
     requirePermission(ctx, "subscriptions.write");
@@ -195,7 +198,7 @@ export async function createSubscriberTx(tx: Tx, ctx: ActorContext, input: z.inf
 
 export async function createSubscriber(ctx: ActorContext, input: z.infer<typeof subscriberInput>) {
   requirePermission(ctx, "subscribers.write");
-  const result = await db.$transaction((tx) => createSubscriberTx(tx, ctx, input));
+  const result = await db.$transaction((tx) => createSubscriberTx(tx, ctx, input, { welcome: true }));
   await audit(ctx, {
     action: "subscriber.create",
     entityType: "subscriber",

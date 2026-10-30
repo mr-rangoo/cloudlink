@@ -3,12 +3,13 @@ import type { OperationHandlers } from "@/server/jobs/operations";
 import { PermanentError } from "@/server/jobs/operations";
 import { logger } from "@/server/observability/logger";
 import { systemContext } from "@/server/auth/context";
-import { expireDueSubscriptions } from "@/server/services/subscriptions";
+import { expireDueSubscriptions, remindExpiringSubscriptions } from "@/server/services/subscriptions";
 import { runRecurringBilling } from "@/server/services/invoices";
 import { deliverNotification } from "@/server/services/notifications";
 import { inviteLink, mintInviteToken } from "@/server/portal/auth";
 import { db } from "@/server/db/client";
 import { generateExport } from "@/server/services/exports";
+import { voucherCodeForDelivery } from "@/server/services/vouchers";
 import { enforcePlanSchedules, ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperations, syncNetworkSessions } from "@/server/services/network";
 import { runRouterHealthChecks } from "@/server/services/routers";
 import { pruneRouterTelemetry } from "@/server/services/router-insights";
@@ -34,6 +35,12 @@ export const operationHandlers: OperationHandlers = {
     const expired = await expireDueSubscriptions(op.organizationId, ctx);
     if (expired) logger.info({ organizationId: op.organizationId, expired }, "subscriptions expired");
     return { expired };
+  },
+
+  /** Remind customers whose plan of a week or longer ends soon (once per period; window from billing settings). */
+  "subscriptions.remind_expiring": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    return remindExpiringSubscriptions(op.organizationId);
   },
 
   /** Invoice upcoming subscription periods (idempotent: one invoice per subscription period). */
@@ -118,7 +125,16 @@ export const operationHandlers: OperationHandlers = {
   "notifications.send": async (op) => {
     const { notificationId } = op.payload as { notificationId?: string };
     if (!notificationId) throw new PermanentError("notificationId missing", "BAD_PAYLOAD");
-    const n = await db.notification.findUnique({ where: { id: notificationId }, select: { templateKey: true, subscriberId: true, organizationId: true } });
+    const n = await db.notification.findUnique({ where: { id: notificationId }, select: { templateKey: true, subscriberId: true, organizationId: true, metadata: true } });
+    if (n?.templateKey === "voucher.delivery") {
+      // The code is read and decrypted only now, and the stored copy of the message never contains it.
+      const voucherId = (n.metadata as { voucherId?: string } | null)?.voucherId;
+      if (!voucherId) throw new PermanentError("voucher missing", "BAD_PAYLOAD");
+      return deliverNotification(notificationId, async (row) => {
+        const code = await voucherCodeForDelivery(n.organizationId, voucherId);
+        return { send: row.body.replaceAll("{{code}}", code), store: row.body.replaceAll("{{code}}", "[voucher code sent - not stored]") };
+      });
+    }
     if (n?.templateKey !== "portal.invite") return deliverNotification(notificationId);
     // Portal invites: mint the single-use token now so it is never stored in plaintext.
     await deliverNotification(notificationId, async (row) => {

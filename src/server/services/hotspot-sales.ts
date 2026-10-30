@@ -20,6 +20,8 @@ import { paymentAdapterMode } from "@/server/services/mpesa-config";
 import { playSimulatedResponse, simulateInput, submitPaymentAttempt } from "@/server/services/mobile-money";
 import { describeSchedule } from "@/lib/plans";
 import { hotspotSettingsFor } from "@/server/services/hotspot-settings";
+import { queueSubscriberNotificationTx } from "@/server/services/notifications";
+import { formatDateTime } from "@/lib/utils";
 import type { Package, Payment, PaymentAttempt, Subscription } from "@/generated/prisma/client";
 
 /**
@@ -315,6 +317,14 @@ export async function applyHotspotPurchaseTx(tx: Tx, ctx: ActorContext, attempt:
     payment,
   });
   if (!grant.applied) return keep(grant.reason);
+  const tz = (await tx.organization.findUniqueOrThrow({ where: { id: attempt.organizationId }, select: { timezone: true } })).timezone;
+  await queueSubscriberNotificationTx(tx, attempt.organizationId, {
+    subscriberId: subscriber.id,
+    key: "hotspot.purchased",
+    vars: { packageName: pkg.name, endDate: grant.subscription.currentPeriodEnd ? formatDateTime(grant.subscription.currentPeriodEnd, tz) : "", receipt: payment.providerTransactionId ?? payment.receiptNumber ?? "" },
+    dedupeBase: `hotspot.purchased:${attempt.id}`,
+    channels: ["SMS"],
+  });
   return { subscriptionId: grant.subscription.id };
 }
 

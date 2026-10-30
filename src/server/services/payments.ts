@@ -335,6 +335,16 @@ export async function notifyPaymentReceivedTx(tx: Tx, organizationId: string, pa
     vars: { amount: formatMoney(p.amount.toString(), p.currency), receiptNumber: p.receiptNumber ?? "", balance },
     dedupeBase: `payment.received:${paymentId}`,
   });
+  // Part of the payment was not needed by any invoice: tell the customer it is kept for the next bill.
+  const credit = p.amount.minus(p.allocatedAmount).minus(p.refundedAmount);
+  if (credit.gt(0)) {
+    await queueSubscriberNotificationTx(tx, organizationId, {
+      subscriberId: p.subscriberId,
+      key: "credit.saved",
+      vars: { amount: formatMoney(p.amount.toString(), p.currency), credit: formatMoney(credit.toFixed(2), p.currency) },
+      dedupeBase: `credit.saved:${paymentId}`,
+    });
+  }
 }
 
 async function assertVisible(ctx: ActorContext, paymentId: string) {

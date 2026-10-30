@@ -13,6 +13,7 @@ import { humanize } from "@/components/status";
 import { Forbidden } from "@/components/shell/forbidden";
 import { ActionDialog } from "@/components/action-dialog";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
+import { SendVoucherDialog } from "./client";
 
 export const metadata: Metadata = { title: "Voucher batch" };
 
@@ -32,6 +33,7 @@ export default async function BatchPage({ params }: { params: Promise<{ id: stri
     throw err;
   }
   const tz = ctx.organization.timezone;
+  const canSend = ctx.permissions.has("vouchers.export");
   const unused = b.vouchers.filter((v) => v.status === "UNUSED").length;
   return (
     <div className="space-y-6">
@@ -72,6 +74,7 @@ export default async function BatchPage({ params }: { params: Promise<{ id: stri
               <Th>Channel</Th>
               <Th>Network activation</Th>
               <Th>Access until</Th>
+              {canSend ? <Th className="text-right">Send</Th> : null}
             </tr>
           </THead>
           <TBody>
@@ -87,6 +90,11 @@ export default async function BatchPage({ params }: { params: Promise<{ id: stri
                 <Td label="Channel">{v.redemption ? humanize(v.redemption.channel) : "—"}</Td>
                 <Td label="Network activation">{v.redemption ? <Badge tone={ACT[v.redemption.activationStatus] ?? "neutral"}>{humanize(v.redemption.activationStatus)}</Badge> : "—"}</Td>
                 <Td label="Access until">{v.redemption ? formatDateTime(v.redemption.accessEndsAt, tz) : "—"}</Td>
+                {canSend ? (
+                  <Td label="Send" className="md:text-right">
+                    {v.status === "UNUSED" && b.status === "ACTIVE" ? <SendVoucherDialog voucherId={v.id} hint={v.codeHint} /> : null}
+                  </Td>
+                ) : null}
               </Tr>
             ))}
           </TBody>

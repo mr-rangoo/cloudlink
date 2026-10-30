@@ -691,6 +691,8 @@ model BillingSettings {
   invoiceLeadDays     Int      @default(3) // generate the next invoice this many days before the period ends
   paymentTermsDays    Int      @default(0) // due date = period start (or issue date) + terms
   invoiceOnActivation Boolean  @default(true)
+  /// Send "your service ends soon" this many days before the end of plans of a week or longer (0 = off).
+  expiryReminderDays  Int      @default(3)
   taxLabel            String   @default("VAT")
   taxPin              String?
   legalName           String?
@@ -1235,6 +1237,8 @@ model Notification {
   attempts          Int                 @default(0)
   lastError         String?
   dedupeKey         String              @unique
+  /// Non-secret references the worker needs at send time (e.g. the voucher whose code is filled in then).
+  metadata          Json?
   sentAt            DateTime?           @db.Timestamptz(6)
   deliveredAt       DateTime?           @db.Timestamptz(6)
   createdAt         DateTime            @default(now()) @db.Timestamptz(6)

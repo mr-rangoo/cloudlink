@@ -255,6 +255,27 @@ Visual check (production build on :3102, e2e database): overview at 1440 px and 
 
 Visual check (production build on :3102, e2e database): payments and expenses for 30 days at 1440 px and 390 px; the backfill labelled the earlier e2e M-Pesa and hotspot payments correctly. Fixes from it: truncated hints shortened; "Waiting for router" became "Not confirmed on router" (old purchases are not waiting).
 
+### Phase 17a — Messaging providers per organization and service messages ✅ (no real provider verified)
+- [x] Providers per organization (`src/server/services/messaging-config.ts`, `IntegrationConfiguration` "sms"/"email"): Africa's Talking or Twilio for SMS, SMTP for email; credentials AES-256-GCM encrypted (organization + channel AAD), write-only. Integrations → Messaging providers: set up, send test, confirm received, SMS balance.
+- [x] Verification is honest: "accepted" ≠ delivered; only a staff confirmation after an accepted real test marks the provider verified (sandbox vs production); material changes reset it; simulated tests are never recorded as verification.
+- [x] Adapters (`src/server/integrations/messaging.ts`): Twilio added (send + balance), Africa's Talking balance, SMTP per organization with SSL/STARTTLS; `MESSAGING_ADAPTER=live` (older `smtp` still accepted); delivery picks the organization's provider, then the environment, else SKIPPED.
+- [x] SSRF guard: in production a tenant SMTP host must resolve only to public addresses (`isPublicAddress`), use a mail port and TLS.
+- [x] Service messages: `subscriber.welcome` (staff-created and lead conversions only), `credit.saved`, `subscription.expiring` (hourly `subscriptions.remind_expiring`, reminder days in Settings → Billing; plans of a week or longer; once per period), `subscription.expired`, `hotspot.purchased` (replaces the generic receipt for completed captive-portal purchases), `voucher.delivery` (Send by SMS on a batch; code decrypted by the worker at send time and never stored; fails if the voucher was used meanwhile).
+- [x] Found and fixed: the `subscription.expiring` template existed but nothing ever sent it.
+- [x] Migration `20261031090000_messaging_templates` (BillingSettings.expiryReminderDays with CHECK 0–30, Notification.metadata).
+- [ ] Not done: WhatsApp (needs a verified Meta business account and approved templates); delivery receipts; any real provider verification — **blocked** on accounts.
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261031090000_messaging_templates` applied; `migrate diff` against dev: empty |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 18 files, 147 tests passed |
+| `npm run test:integration` | 28 files, 217 tests passed (adds `tests/integration/messaging.test.ts` against a fake SMS API and a fake SMTP server: encrypted write-only credentials, test send and confirmation, reset on change, balances, Twilio, rejections, delivery through the organization provider, SMTP with login, production SMTP refusal, mock and unconfigured behaviour, welcome / credit saved / reminders / expired for long plans only, voucher SMS without storing the code and failing after redemption; hotspot test checks the purchase SMS replaces the receipt) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 29 passed (adds `messaging.spec.ts`: SMS provider setup, simulated test cannot be confirmed, voucher sent by SMS with the code not stored) |
+
+Visual check: Integrations page with the messaging card (mock mode notice, saved provider, actions) on the production build.
+
 ## Work log
 
 ### 2026-10-25 — Phase 1 (Foundation)
