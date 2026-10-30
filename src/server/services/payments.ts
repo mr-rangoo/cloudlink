@@ -1,10 +1,11 @@
 import "server-only";
 import { z } from "zod";
 import { db, type Tx } from "@/server/db/client";
-import { listWhere, requirePermission, resolveBranchForCreate, tenantWhere, type ActorContext } from "@/server/auth/context";
+import { listWhere, requirePermission, resolveBranchForCreate, tenantWhere, type ActorContext, type StaffContext } from "@/server/auth/context";
 import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { D, positiveMoneyInput } from "@/server/domain/money";
+import { periodFields, resolvePeriod, type ResolvedPeriod } from "@/server/domain/periods";
 import { actorUserId, nextCounter, searchTerm } from "@/server/services/common";
 import { cashAccountFor, postLedger } from "@/server/services/ledger";
 import { dispatchNetworkOperations } from "@/server/services/network";
@@ -47,9 +48,16 @@ export const paymentListQuery = z.object({
   method: z.enum(METHODS).optional(),
   subscriberId: z.uuid().optional(),
   unmatched: z.enum(["1"]).optional(),
+  /** hotspot = bought on the captive portal; stk = M-Pesa prompt for an account; c2b = paybill/till; manual = entered by staff. */
+  type: z.enum(["hotspot", "stk", "c2b", "manual"]).optional(),
+  ...periodFields,
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
+
+export type PaymentType = "hotspot" | "stk" | "c2b" | "manual";
+export const PAYMENT_TYPE_LABEL: Record<PaymentType, string> = { hotspot: "Hotspot purchase", stk: "M-Pesa prompt", c2b: "Paybill / till", manual: "Recorded by staff" };
+
 
 export async function nextReceiptNumber(tx: Tx, organizationId: string): Promise<string> {
   const settings = await getBillingSettings(tx, organizationId);
@@ -66,6 +74,8 @@ export interface ConfirmedPaymentData {
   branchId: string | null;
   method: PaymentMethod;
   provider: string;
+  /** How the money arrived (see Payment.source). */
+  source: PaymentType;
   providerTransactionId: string | null;
   amount: string;
   currency: string;
@@ -90,6 +100,7 @@ export async function createConfirmedPaymentTx(tx: Tx, ctx: ActorContext, p: Con
       subscriberId: p.subscriberId,
       method: p.method,
       provider: p.provider,
+      source: p.source,
       providerTransactionId: p.providerTransactionId,
       receiptNumber: await nextReceiptNumber(tx, ctx.organizationId),
       amount: p.amount,
@@ -147,6 +158,7 @@ export async function recordManualPayment(ctx: ActorContext, input: z.infer<type
       branchId,
       method: input.method,
       provider: "manual",
+      source: "manual",
       providerTransactionId: reference,
       amount: input.amount,
       currency: org.currency,
@@ -330,25 +342,100 @@ async function assertVisible(ctx: ActorContext, paymentId: string) {
   if (!p) throw notFound("payment");
 }
 
-export async function listPayments(ctx: ActorContext, query: z.infer<typeof paymentListQuery>) {
-  requirePermission(ctx, "payments.read");
+function paymentWhere(ctx: ActorContext, query: z.infer<typeof paymentListQuery>, period: ResolvedPeriod | null): Prisma.PaymentWhereInput {
   const q = searchTerm(query.q);
-  const where: Prisma.PaymentWhereInput = {
+  return {
     ...listWhere(ctx),
-    ...(query.status !== "ALL" ? { status: query.status } : {}),
     ...(query.method ? { method: query.method } : {}),
+    ...(query.type ? { source: query.type } : {}),
     ...(query.subscriberId ? { subscriberId: query.subscriberId } : {}),
-    ...(query.unmatched ? { subscriberId: null, status: "CONFIRMED" } : {}),
+    ...(period ? { receivedAt: { gte: period.start, lt: period.end } } : {}),
     ...(q ? { OR: [{ receiptNumber: { contains: q, mode: "insensitive" } }, { providerTransactionId: { contains: q.toUpperCase() } }, { payerName: { contains: q, mode: "insensitive" } }] } : {}),
+  };
+}
+
+/** Reconciliation state of a payment, for the list: where its money went. */
+export function reconciliationOf(p: { status: string; subscriberId: string | null; amount: { toString(): string }; allocatedAmount: { toString(): string }; refundedAmount: { toString(): string } }) {
+  if (p.status !== "CONFIRMED") return null;
+  if (!p.subscriberId) return "unmatched" as const;
+  const unallocated = new D(p.amount.toString()).minus(p.allocatedAmount.toString()).minus(p.refundedAmount.toString());
+  if (unallocated.lte(0)) return "allocated" as const;
+  return new D(p.allocatedAmount.toString()).gt(0) ? ("partly_allocated" as const) : ("credit" as const);
+}
+
+export async function listPayments(ctx: StaffContext, raw: z.input<typeof paymentListQuery>) {
+  requirePermission(ctx, "payments.read");
+  const query = paymentListQuery.parse(raw);
+  const period = resolvePeriod(query, ctx.organization.timezone);
+  const where: Prisma.PaymentWhereInput = {
+    ...paymentWhere(ctx, query, period),
+    ...(query.status !== "ALL" ? { status: query.status } : {}),
+    ...(query.unmatched ? { subscriberId: null, status: "CONFIRMED" } : {}),
   };
   const [rows, total, sum] = await Promise.all([
     db.payment.findMany({ where, orderBy: [{ receivedAt: "desc" }, { createdAt: "desc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
     db.payment.count({ where }),
     db.payment.aggregate({ where: { ...where, status: "CONFIRMED" }, _sum: { amount: true } }),
   ]);
-  const subs = await db.subscriber.findMany({ where: { id: { in: rows.map((r) => r.subscriberId).filter((v): v is string => Boolean(v)) } }, select: { id: true, displayName: true, accountNumber: true } });
+  const ids = rows.map((r) => r.id);
+  const [subs, attempts] = await Promise.all([
+    db.subscriber.findMany({ where: { id: { in: rows.map((r) => r.subscriberId).filter((v): v is string => Boolean(v)) } }, select: { id: true, displayName: true, accountNumber: true } }),
+    ids.length ? db.paymentAttempt.findMany({ where: { organizationId: ctx.organizationId, paymentId: { in: ids } }, select: { paymentId: true, purpose: true, completedAt: true, activatedAt: true } }) : [],
+  ]);
   const byId = new Map(subs.map((s) => [s.id, s]));
-  return { rows: rows.map((r) => ({ ...r, unallocated: unallocatedOf(r).toFixed(2), subscriber: r.subscriberId ? (byId.get(r.subscriberId) ?? null) : null })), total, confirmedTotal: (sum._sum.amount ?? new D(0)).toString() };
+  return {
+    rows: rows.map((r) => {
+      const attempt = attempts.find((a) => a.paymentId === r.id);
+      // Hotspot purchases: how long after the payment was confirmed the customer's access was confirmed on the router.
+      const activation =
+        attempt?.purpose === "hotspot_purchase"
+          ? { activatedAt: attempt.activatedAt, seconds: attempt.activatedAt && attempt.completedAt ? Math.max(0, Math.round((attempt.activatedAt.getTime() - attempt.completedAt.getTime()) / 1000)) : null }
+          : null;
+      return {
+        ...r,
+        unallocated: unallocatedOf(r).toFixed(2),
+        subscriber: r.subscriberId ? (byId.get(r.subscriberId) ?? null) : null,
+        reconciliation: reconciliationOf(r),
+        activation,
+      };
+    }),
+    total,
+    confirmedTotal: (sum._sum.amount ?? new D(0)).toString(),
+    period,
+  };
+}
+
+/**
+ * Figures for the payments page, for the period and the method / type / search filters (not the status tab):
+ * confirmed total and count, by method, unmatched, credit left on accounts, reversals. Organization currency only.
+ */
+export async function paymentPeriodSummary(ctx: StaffContext, raw: z.input<typeof paymentListQuery>) {
+  requirePermission(ctx, "payments.read");
+  const query = paymentListQuery.parse(raw);
+  const period = resolvePeriod(query, ctx.organization.timezone);
+  const base: Prisma.PaymentWhereInput = { ...paymentWhere(ctx, query, period), currency: ctx.organization.currency };
+  const confirmed: Prisma.PaymentWhereInput = { ...base, status: "CONFIRMED" };
+  const [all, byMethod, bySource, unmatched, matched, reversed] = await Promise.all([
+    db.payment.aggregate({ where: confirmed, _sum: { amount: true }, _count: { _all: true } }),
+    db.payment.groupBy({ by: ["method"], where: confirmed, _sum: { amount: true }, _count: { _all: true } }),
+    db.payment.groupBy({ by: ["source"], where: confirmed, _sum: { amount: true }, _count: { _all: true } }),
+    db.payment.aggregate({ where: { ...confirmed, subscriberId: null }, _sum: { amount: true }, _count: { _all: true } }),
+    db.payment.aggregate({ where: { ...confirmed, subscriberId: { not: null } }, _sum: { amount: true, allocatedAmount: true, refundedAmount: true } }),
+    db.payment.aggregate({ where: { ...base, status: "REVERSED" }, _sum: { amount: true }, _count: { _all: true } }),
+  ]);
+  const money = (v: Prisma.Decimal | null | undefined) => new D((v ?? 0).toString()).toFixed(2);
+  const credit = new D((matched._sum.amount ?? 0).toString()).minus((matched._sum.allocatedAmount ?? 0).toString()).minus((matched._sum.refundedAmount ?? 0).toString());
+  return {
+    currency: ctx.organization.currency,
+    period,
+    collected: money(all._sum.amount),
+    payments: all._count._all,
+    byMethod: byMethod.map((m) => ({ method: m.method, amount: money(m._sum.amount), payments: m._count._all })).sort((a, b) => Number(b.amount) - Number(a.amount)),
+    bySource: bySource.map((m) => ({ source: m.source as PaymentType, amount: money(m._sum.amount), payments: m._count._all })).sort((a, b) => Number(b.amount) - Number(a.amount)),
+    unmatched: { amount: money(unmatched._sum.amount), payments: unmatched._count._all },
+    creditOnAccounts: credit.gt(0) ? credit.toFixed(2) : "0.00",
+    reversed: { amount: money(reversed._sum.amount), payments: reversed._count._all },
+  };
 }
 
 export async function getPayment(ctx: ActorContext, id: string) {

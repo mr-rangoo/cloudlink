@@ -1,12 +1,13 @@
 import "server-only";
 import { z } from "zod";
 import { db } from "@/server/db/client";
-import { listWhere, requirePermission, resolveBranchForCreate, type ActorContext } from "@/server/auth/context";
+import { hasPermission, listWhere, requirePermission, resolveBranchForCreate, type ActorContext, type StaffContext } from "@/server/auth/context";
 import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { D, positiveMoneyInput } from "@/server/domain/money";
 import { fromWallTime, toWallTime } from "@/server/domain/time";
-import { actorUserId } from "@/server/services/common";
+import { periodFields, previousPeriod, resolvePeriod, type ResolvedPeriod } from "@/server/domain/periods";
+import { actorUserId, searchTerm } from "@/server/services/common";
 import { accountBalance, cashAccountFor, computeTrialBalance, postLedger } from "@/server/services/ledger";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -108,16 +109,75 @@ export async function reverseExpense(ctx: ActorContext, id: string, reason: stri
   return result;
 }
 
-export async function listExpenses(ctx: ActorContext, query: z.infer<typeof financeListQuery>) {
+export const expenseListQuery = financeListQuery.extend({
+  ...periodFields,
+  categoryId: z.uuid().optional(),
+  method: z.enum(METHODS).optional(),
+  status: z.enum(["RECORDED", "REVERSED", "ALL"]).default("ALL"),
+  q: z.string().optional(),
+});
+
+function expenseWhere(ctx: ActorContext, query: z.infer<typeof expenseListQuery>, period: ResolvedPeriod | null): Prisma.ExpenseWhereInput {
+  const q = searchTerm(query.q);
+  return {
+    ...listWhere(ctx),
+    ...(period ? { paidAt: { gte: period.start, lt: period.end } } : {}),
+    ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+    ...(query.method ? { method: query.method } : {}),
+    ...(q ? { OR: [{ description: { contains: q, mode: "insensitive" } }, { payee: { contains: q, mode: "insensitive" } }, { reference: { contains: q, mode: "insensitive" } }] } : {}),
+  };
+}
+
+export async function listExpenses(ctx: StaffContext, raw: z.input<typeof expenseListQuery>) {
   requirePermission(ctx, "expenses.read");
-  const where: Prisma.ExpenseWhereInput = { ...listWhere(ctx) };
+  const query = expenseListQuery.parse(raw);
+  const period = resolvePeriod(query, ctx.organization.timezone);
+  const where: Prisma.ExpenseWhereInput = { ...expenseWhere(ctx, query, period), ...(query.status !== "ALL" ? { status: query.status } : {}) };
   const [rows, total, categories] = await Promise.all([
     db.expense.findMany({ where, orderBy: { paidAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
     db.expense.count({ where }),
     db.expenseCategory.findMany({ where: { organizationId: ctx.organizationId } }),
   ]);
   const names = new Map(categories.map((c) => [c.id, c.name]));
-  return { rows: rows.map((r) => ({ ...r, categoryName: names.get(r.categoryId) ?? "—" })), total };
+  return { rows: rows.map((r) => ({ ...r, categoryName: names.get(r.categoryId) ?? "—" })), total, period };
+}
+
+/**
+ * Figures for the expenses page (period, category, method and search filters; reversed expenses excluded):
+ * total spent, entries, spending by category, the equally long period before, and — with payments.read —
+ * payments collected in the same period and the difference. Organization currency only.
+ */
+export async function expenseSummary(ctx: StaffContext, raw: z.input<typeof expenseListQuery>) {
+  requirePermission(ctx, "expenses.read");
+  const query = expenseListQuery.parse(raw);
+  const tz = ctx.organization.timezone;
+  const period = resolvePeriod(query, tz);
+  const currency = ctx.organization.currency;
+  const recorded: Prisma.ExpenseWhereInput = { ...expenseWhere(ctx, query, period), status: "RECORDED", currency };
+  const prev = period ? previousPeriod(period, tz) : null;
+  const canPayments = hasPermission(ctx, "payments.read");
+  const [sum, byCategory, before, categories, collected] = await Promise.all([
+    db.expense.aggregate({ where: recorded, _sum: { amount: true }, _count: { _all: true } }),
+    db.expense.groupBy({ by: ["categoryId"], where: recorded, _sum: { amount: true }, _count: { _all: true } }),
+    prev ? db.expense.aggregate({ where: { ...expenseWhere(ctx, query, prev), status: "RECORDED", currency }, _sum: { amount: true } }) : null,
+    db.expenseCategory.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true, name: true } }),
+    canPayments ? db.payment.aggregate({ where: { ...listWhere(ctx), status: "CONFIRMED", currency, ...(period ? { receivedAt: { gte: period.start, lt: period.end } } : {}) }, _sum: { amount: true } }) : null,
+  ]);
+  const spent = dec(sum._sum.amount ?? 0);
+  const name = new Map(categories.map((c) => [c.id, c.name]));
+  return {
+    currency,
+    period,
+    spent: spent.toFixed(2),
+    entries: sum._count._all,
+    previous: before ? { spent: dec(before._sum.amount ?? 0).toFixed(2), fromDate: prev!.fromDate, toDate: prev!.toDate } : null,
+    byCategory: byCategory
+      .map((c) => ({ categoryId: c.categoryId, name: name.get(c.categoryId) ?? "—", amount: dec(c._sum.amount ?? 0).toFixed(2), entries: c._count._all }))
+      .sort((a, b) => Number(b.amount) - Number(a.amount)),
+    /** Only with payments.read; not filtered by category/method/search (those apply to expenses). */
+    collected: collected ? dec(collected._sum.amount ?? 0).toFixed(2) : null,
+    net: collected ? dec(collected._sum.amount ?? 0).minus(spent).toFixed(2) : null,
+  };
 }
 
 /** Owner drawing (money taken out of the business) or bank deposit (cash/M-Pesa moved to the bank). */

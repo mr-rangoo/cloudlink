@@ -21,7 +21,11 @@ Charts follow the data-viz rules: single y-axis, fixed series colour order valid
 light and dark mode, legend for ≥ 2 series, hover tooltips, and a data table under every chart.
 
 ## Exports
-- Types: subscribers, invoices, payments, receivables aging, revenue, audit log.
+- Types: subscribers, invoices, payments, expenses, receivables aging, revenue, audit log.
+- Date filters are local dates (YYYY-MM-DD) or months (YYYY-MM) in the organization timezone, inclusive; a month
+  runs to its last day. (Before phase 16 a month ended on the 28th and dates were read as UTC; fixed.)
+- Payments can also be filtered by status, method and how the money arrived (`type`), and include subscriber, payer,
+  type and unallocated columns; expenses by category and method.
 - Requires `reports.export` **and** read permission for the data. Requests are audited and queued; the worker
   re-checks the requester's live membership and permissions before generating the CSV (a deactivated user's queued
   export fails).

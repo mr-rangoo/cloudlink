@@ -5,7 +5,7 @@ import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMutation } from "@/components/use-mutation";
 
-const LABEL: Record<string, string> = { revenue: "Export revenue", receivables_aging: "Export aging", subscribers: "Export subscribers", invoices: "Export invoices", payments: "Export payments", audit_logs: "Export audit log" };
+const LABEL: Record<string, string> = { revenue: "Export revenue", receivables_aging: "Export aging", subscribers: "Export subscribers", invoices: "Export invoices", payments: "Export payments", expenses: "Export expenses", audit_logs: "Export audit log" };
 
 /** Queue a CSV export, then go to the Exports tab where it can be downloaded once ready. */
 export function ExportButton({ type, params }: { type: string; params?: Record<string, string | undefined> }) {

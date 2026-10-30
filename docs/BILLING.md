@@ -134,6 +134,27 @@ transaction: either every row is imported or none is. Imported subscriptions sta
 - Automatic allocation: oldest payment to the oldest-due open invoice (on payment entry, on invoice issue, on matching).
 - Unidentified receipts (no subscriber) post to "Unidentified receipts" and appear under Reconciliation until matched.
 - Mutating payment endpoints require an `Idempotency-Key`; the same key and body replays the stored response.
+- Every payment records how the money arrived (`source`): **Recorded by staff** (manual entry), **M-Pesa prompt**
+  (STK Push for an account or invoice), **Hotspot purchase** (STK Push from the captive portal) or **Paybill / till**
+  (C2B confirmation). Set when the payment is created; payments that existed before were filled in from their linked
+  M-Pesa request, otherwise from the provider.
+
+### Payments page
+- Period: today, yesterday, 7 or 30 days, this or last month, custom dates (inclusive local dates in the organization
+  timezone) or all time. Filters: status, method, how the money arrived, search.
+- Figures (for the period, method, type and search; not the status tab; organization currency): collected
+  (CONFIRMED), by method (M-Pesa, cash, bank), unmatched (confirmed, no subscriber), credit on accounts (confirmed,
+  matched, not yet allocated or refunded), and a line by how the money arrived plus reversals.
+- Columns: type; **Reconciled** = Allocated (fully used by invoices), Partly allocated, Credit on account (nothing
+  allocated yet) or Unmatched; **Activation** for hotspot purchases = time from the confirmed payment to access
+  confirmed on the router, or "Not confirmed on router".
+- **Export payments** queues a CSV of the current period, status, method and type (needs `reports.export`).
+
+### Expenses page
+- Same periods, plus category, method, status (recorded / reversed) and search.
+- Figures: spent (recorded, reversals excluded), entries, largest category, change against the equally long period
+  before, and — with `payments.read` — payments collected in the same period and collected minus spent (a cash view
+  before tax, not profit). Spending by category with shares. **Export expenses** queues a CSV.
 
 ## Corrections
 | Situation | Operation | Effect |

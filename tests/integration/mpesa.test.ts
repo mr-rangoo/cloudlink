@@ -104,7 +104,7 @@ describe("M-Pesa STK Push", () => {
     const confirmed = await getAttempt(ctx, attempt.id);
     expect(confirmed).toMatchObject({ status: "CONFIRMED", providerReceipt: "RKT0000AAA" });
     const payment = await db.payment.findUniqueOrThrow({ where: { id: confirmed.paymentId! } });
-    expect(payment).toMatchObject({ method: "MPESA", provider: "mpesa_daraja", providerTransactionId: "RKT0000AAA", status: "CONFIRMED", subscriberId: subscriber.id });
+    expect(payment).toMatchObject({ method: "MPESA", provider: "mpesa_daraja", source: "stk", providerTransactionId: "RKT0000AAA", status: "CONFIRMED", subscriberId: subscriber.id });
     expect(payment.amount.toString()).toBe("1500");
     expect(payment.receiptNumber).toMatch(/^[A-Z]{2,6}-\d{6}$/);
     expect((await db.invoice.findUniqueOrThrow({ where: { id: invoice.id } })).status).toBe("PAID");
@@ -310,7 +310,7 @@ describe("M-Pesa C2B (direct paybill payments)", () => {
 
     expect(await c2b(token, confirmation({ TransID: "RKA1234567", TransAmount: "1500.00", BillRefNumber: ` ${subscriber.accountNumber.toLowerCase()} ` }))).toEqual({ status: 200, body: { ResultCode: 0, ResultDesc: "Accepted" } });
     const matched = await db.payment.findFirstOrThrow({ where: { providerTransactionId: "RKA1234567" } });
-    expect(matched).toMatchObject({ subscriberId: subscriber.id, method: "MPESA", provider: "mpesa_daraja", payerName: "Achieng" });
+    expect(matched).toMatchObject({ subscriberId: subscriber.id, method: "MPESA", provider: "mpesa_daraja", source: "c2b", payerName: "Achieng" });
     expect((await db.invoice.findUniqueOrThrow({ where: { id: invoice.id } })).status).toBe("PAID");
 
     await c2b(token, confirmation({ TransID: "RKA1234567", TransAmount: "1500.00", BillRefNumber: subscriber.accountNumber }));

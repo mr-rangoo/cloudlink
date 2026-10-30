@@ -18,6 +18,7 @@ import {
   startHotspotPurchase,
 } from "@/server/services/hotspot-sales";
 import { runOperation } from "@/server/jobs/operations";
+import { listPayments } from "@/server/services/payments";
 import { operationHandlers } from "@/server/jobs/handlers";
 import { POST as purchaseRoute } from "@/app/api/v1/hotspot/[org]/purchase/route";
 import { saveHotspotSettings } from "@/server/services/hotspot-settings";
@@ -170,6 +171,9 @@ describe("hotspot purchase", () => {
     expect(user!["limit-uptime"]).toMatch(/^(59m\d+s|1h)$/);
     expect(await db.subscription.findUniqueOrThrow({ where: { id: sub.id } })).toMatchObject({ networkStatus: "ACTIVE" });
     expect((await db.paymentAttempt.findUniqueOrThrow({ where: { id: p.attemptId } })).activatedAt).not.toBeNull();
+    // The payments list shows it as a hotspot purchase with its activation time.
+    const listed = (await listPayments(await contextFor(org.owner.id, org.organization.id), { type: "hotspot" })).rows;
+    expect(listed).toEqual([expect.objectContaining({ source: "hotspot", reconciliation: "allocated", activation: expect.objectContaining({ seconds: expect.any(Number) }) })]);
 
     const grant = (await hotspotPurchaseStatus(slug, { attemptId: p.attemptId, token: p.token }, "10.30.0.1")).grant!;
     expect(grant).toMatchObject({ ready: true, simulated: false });

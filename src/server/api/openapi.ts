@@ -8,7 +8,7 @@ import { leadActivityInput, leadConvertInput, leadInput, leadListQuery, leadUpda
 import { importPreviewInput } from "@/server/services/imports";
 import { creditNoteInput, invoiceCreateInput, invoiceListQuery, voidInput } from "@/server/services/invoices";
 import { allocateInput, manualPaymentInput, paymentListQuery, reconcileInput, refundInput, reverseInput } from "@/server/services/payments";
-import { categoryInput, expenseInput, financeListQuery, reverseExpenseInput, withdrawalInput } from "@/server/services/finance";
+import { categoryInput, expenseInput, expenseListQuery, financeListQuery, reverseExpenseInput, withdrawalInput } from "@/server/services/finance";
 import { commentInput, customerCommentInput, customerTicketInput, staffTicketInput, ticketListQuery, ticketUpdateInput } from "@/server/services/tickets";
 import { notificationListQuery, preferencesInput, templateInput } from "@/server/services/notifications";
 import { portalActivateInput, portalLoginInput } from "@/server/portal/auth";
@@ -128,7 +128,8 @@ export const operations: Operation[] = [
   { method: "post", path: "/invoices/:id/credit-notes", summary: "Issue a credit note (gross amount)", tag: "Invoices", auth: "session", permission: "credit_notes.create", body: creditNoteInput, idempotent: true },
   { method: "get", path: "/invoices/:id/pdf", summary: "Invoice PDF (from persisted data)", tag: "Invoices", auth: "session", permission: "invoices.read" },
   { method: "post", path: "/billing/run", summary: "Run recurring billing now (idempotent per period)", tag: "Invoices", auth: "session", permission: "invoices.issue" },
-  { method: "get", path: "/payments", summary: "List payments", tag: "Payments", auth: "session", permission: "payments.read", query: paymentListQuery },
+  { method: "get", path: "/payments", summary: "List payments (period, method, type, status filters; type, reconciliation and activation per row)", tag: "Payments", auth: "session", permission: "payments.read", query: paymentListQuery },
+  { method: "get", path: "/payments/summary", summary: "Payment figures for a period: collected, by method and type, unmatched, credit on accounts, reversals", tag: "Payments", auth: "session", permission: "payments.read", query: paymentListQuery },
   { method: "post", path: "/payments/manual", summary: "Record a confirmed cash/bank/cheque/manual M-Pesa payment", tag: "Payments", auth: "session", permission: "payments.record", body: manualPaymentInput, idempotent: true, responses: { "409": "Duplicate reference" } },
   { method: "get", path: "/payments/unmatched", summary: "Confirmed payments not matched to a subscriber", tag: "Payments", auth: "session", permission: "payments.reconcile" },
   { method: "get", path: "/payments/:id", summary: "Payment with allocations and refunds", tag: "Payments", auth: "session", permission: "payments.read" },
@@ -142,7 +143,8 @@ export const operations: Operation[] = [
   { method: "get", path: "/ledger/entries", summary: "Ledger entries (double entry)", tag: "Ledger", auth: "session", permission: "ledger.read" },
   { method: "get", path: "/ledger/trial-balance", summary: "Trial balance by account", tag: "Ledger", auth: "session", permission: "ledger.read" },
   { method: "post", path: "/reconciliation/checks", summary: "Recompute cached balances and verify the ledger", tag: "Ledger", auth: "session", permission: "payments.reconcile" },
-  { method: "get", path: "/expenses", summary: "List expenses", tag: "Finance", auth: "session", permission: "expenses.read", query: financeListQuery },
+  { method: "get", path: "/expenses", summary: "List expenses (period, category, method, status, search)", tag: "Finance", auth: "session", permission: "expenses.read", query: expenseListQuery },
+  { method: "get", path: "/expenses/summary", summary: "Spending for a period by category, previous period, collections and difference (payments.read)", tag: "Finance", auth: "session", permission: "expenses.read", query: expenseListQuery },
   { method: "post", path: "/expenses", summary: "Record an expense", tag: "Finance", auth: "session", permission: "expenses.write", body: expenseInput, idempotent: true },
   { method: "post", path: "/expenses/:id/reverse", summary: "Reverse an expense", tag: "Finance", auth: "session", permission: "expenses.write", body: reverseExpenseInput },
   { method: "get", path: "/expenses/categories", summary: "Expense categories", tag: "Finance", auth: "session", permission: "expenses.read" },

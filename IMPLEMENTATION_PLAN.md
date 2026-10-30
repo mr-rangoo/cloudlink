@@ -236,6 +236,25 @@ Visual check against a production build (`next start -p 3102`, e2e database, moc
 
 Visual check (production build on :3102, e2e database): overview at 1440 px and 390 px, subscribers list with filters, sessions, Ctrl+K record results. Fixes from it: truncated stat hints shortened; the offline part of the health meter was invisible on the card; phone numbers in search results are formatted. Found while building: the Payment model has no subscriber relation (names are looked up separately), and the support role can read payments (test corrected).
 
+### Phase 16 — Payments and expenses by period, CSV export ✅
+- [x] `Payment.source` (manual / stk / hotspot / c2b), migration `20261030220000_payment_source` with backfill from linked M-Pesa requests, CHECK and index; set on every creation path (manual entry, STK confirmation, C2B confirmation).
+- [x] Shared periods (`src/server/domain/periods.ts`): today, yesterday, 7/30 days, this/last month, custom inclusive dates, all; previous period of equal length. Shared `PeriodFilter` component.
+- [x] Payments page: period figures (collected, M-Pesa, cash, bank, unmatched, credit on accounts, by type, reversals), filters for method and type, Type / Reconciled / Activation columns. `GET /payments/summary`.
+- [x] Expenses page: period, category, method, status and search filters; spent vs previous period, entries, largest category, collected and collected-minus-spent (with `payments.read`), spending by category. `GET /expenses/summary`.
+- [x] CSV export of the filtered view from both pages (existing worker exports; new `expenses` type; payments gained status/method/type filters and subscriber/payer/type/unallocated columns).
+- [x] Fixed an export defect: month ranges ended on the 28th and dates were read as UTC; now local dates with real month ends (tested).
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261030220000_payment_source` applied; `migrate diff` against dev: empty |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 18 files, 147 tests passed (adds `tests/unit/periods.test.ts`) |
+| `npm run test:integration` | 27 files, 211 tests passed (adds `tests/integration/payments-expenses.test.ts`: periods, method/type filters, reconciliation states, summary figures, branch scope and permissions, expense summary vs previous period and collections, export date ranges, filtered payments and expenses CSV with formula neutralising; M-Pesa tests check `source` stk/c2b; hotspot test checks the list shows the purchase with its activation time) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 28 passed: 27 in the full run; the new `finance.spec.ts` failed there on an ambiguous label selector (`To` also matched another label), was fixed with exact matching and passed on re-run |
+
+Visual check (production build on :3102, e2e database): payments and expenses for 30 days at 1440 px and 390 px; the backfill labelled the earlier e2e M-Pesa and hotspot payments correctly. Fixes from it: truncated hints shortened; "Waiting for router" became "Not confirmed on router" (old purchases are not waiting).
+
 ## Work log
 
 ### 2026-10-25 — Phase 1 (Foundation)

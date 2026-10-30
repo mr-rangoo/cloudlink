@@ -9,6 +9,7 @@ import { csvCell } from "@/server/domain/csv";
 import { enqueueOperation, PermanentError } from "@/server/jobs/operations";
 import { storage } from "@/server/integrations/storage";
 import { formatPhone } from "@/server/domain/contact";
+import { addLocalDays, fromWallTime } from "@/server/domain/time";
 import type { PermissionKey } from "@/server/auth/permissions";
 import { receivablesAging, reportRangeQuery, revenueReport } from "@/server/services/reports";
 import type { Prisma } from "@/generated/prisma/client";
@@ -22,6 +23,7 @@ export const EXPORT_TYPES = {
   subscribers: { label: "Subscribers", permission: "subscribers.read" },
   invoices: { label: "Invoices", permission: "invoices.read" },
   payments: { label: "Payments", permission: "payments.read" },
+  expenses: { label: "Expenses", permission: "expenses.read" },
   receivables_aging: { label: "Receivables aging", permission: "reports.read" },
   revenue: { label: "Revenue by month", permission: "reports.read" },
   audit_logs: { label: "Audit log", permission: "audit.read" },
@@ -34,7 +36,15 @@ const MAX_ROWS = 50_000;
 export const exportRequestInput = z.object({
   type: z.enum(Object.keys(EXPORT_TYPES) as [ExportType, ...ExportType[]]),
   params: z
-    .object({ from: z.string().regex(/^\d{4}-\d{2}(-\d{2})?$/).optional(), to: z.string().regex(/^\d{4}-\d{2}(-\d{2})?$/).optional(), status: z.string().max(30).optional() })
+    .object({
+      from: z.string().regex(/^\d{4}-\d{2}(-\d{2})?$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}(-\d{2})?$/).optional(),
+      status: z.string().max(30).optional(),
+      /** Payments and expenses: payment method; payments: how the money arrived; expenses: category. */
+      method: z.enum(["CASH", "BANK_TRANSFER", "MPESA", "CHEQUE", "CARD", "OTHER"]).optional(),
+      type: z.enum(["manual", "stk", "hotspot", "c2b"]).optional(),
+      categoryId: z.uuid().optional(),
+    })
     .default({}),
 });
 
@@ -54,24 +64,38 @@ function toCsv(header: string[], rows: unknown[][]): Buffer {
   return Buffer.from(`﻿${lines.join("\r\n")}\r\n`, "utf8");
 }
 
-function dateRange(params: { from?: string; to?: string }): Prisma.DateTimeFilter | undefined {
+/**
+ * Inclusive local dates (YYYY-MM-DD) or months (YYYY-MM) in the organization timezone → [start, end).
+ * A month "to" runs to the end of that month.
+ */
+export function dateRange(params: { from?: string; to?: string }, tz: string): Prisma.DateTimeFilter | undefined {
+  const start = (v: string) => {
+    const [y, m, d] = v.split("-").map(Number) as [number, number, number | undefined];
+    return fromWallTime({ year: y, month: m, day: d ?? 1, hour: 0, minute: 0, second: 0, millisecond: 0 }, tz);
+  };
   const f: Prisma.DateTimeFilter = {};
-  if (params.from) f.gte = new Date(params.from.length === 7 ? `${params.from}-01` : params.from);
-  if (params.to) f.lte = new Date(params.to.length === 7 ? `${params.to}-28T23:59:59Z` : `${params.to}T23:59:59Z`);
+  if (params.from) f.gte = start(params.from);
+  if (params.to) {
+    const [y, m] = params.to.split("-").map(Number) as [number, number];
+    f.lt = params.to.length === 7 ? start(m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`) : addLocalDays(start(params.to), 1, tz);
+  }
   return Object.keys(f).length ? f : undefined;
 }
 
-async function buildCsv(ctx: StaffContext, type: ExportType, params: { from?: string; to?: string; status?: string }): Promise<{ csv: Buffer; rows: number }> {
+type ExportParams = z.infer<typeof exportRequestInput>["params"];
+
+async function buildCsv(ctx: StaffContext, type: ExportType, params: ExportParams): Promise<{ csv: Buffer; rows: number }> {
   const org = ctx.organizationId;
+  const tz = ctx.organization.timezone;
   const branch = ctx.branchIds ? { branchId: { in: ctx.branchIds } } : {};
   const iso = (d: Date | null | undefined) => (d ? d.toISOString() : "");
   switch (type) {
     case "subscribers": {
-      const rows = await db.subscriber.findMany({ where: { organizationId: org, ...branch, createdAt: dateRange(params) }, orderBy: { accountNumber: "asc" }, take: MAX_ROWS });
+      const rows = await db.subscriber.findMany({ where: { organizationId: org, ...branch, createdAt: dateRange(params, tz) }, orderBy: { accountNumber: "asc" }, take: MAX_ROWS });
       return { csv: toCsv(["account_number", "name", "type", "phone", "email", "status", "created_at"], rows.map((s) => [s.accountNumber, s.displayName, s.type, formatPhone(s.phone), s.email ?? "", s.status, iso(s.createdAt)])), rows: rows.length };
     }
     case "invoices": {
-      const rows = await db.invoice.findMany({ where: { organizationId: org, ...branch, status: { not: "DRAFT" }, issuedAt: dateRange(params) }, orderBy: { issuedAt: "asc" }, take: MAX_ROWS });
+      const rows = await db.invoice.findMany({ where: { organizationId: org, ...branch, status: { not: "DRAFT" }, issuedAt: dateRange(params, tz) }, orderBy: { issuedAt: "asc" }, take: MAX_ROWS });
       const subs = new Map((await db.subscriber.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.subscriberId))] } }, select: { id: true, accountNumber: true, displayName: true } })).map((s) => [s.id, s]));
       return {
         csv: toCsv(
@@ -82,12 +106,52 @@ async function buildCsv(ctx: StaffContext, type: ExportType, params: { from?: st
       };
     }
     case "payments": {
-      const rows = await db.payment.findMany({ where: { organizationId: org, ...branch, receivedAt: dateRange(params) }, orderBy: { receivedAt: "asc" }, take: MAX_ROWS });
-      const subs = new Map((await db.subscriber.findMany({ where: { id: { in: rows.map((r) => r.subscriberId).filter((v): v is string => Boolean(v)) } }, select: { id: true, accountNumber: true } })).map((s) => [s.id, s]));
+      const statuses = ["PENDING", "CONFIRMED", "FAILED", "CANCELLED", "REVERSED", "UNKNOWN"] as const;
+      const status = statuses.find((s) => s === params.status);
+      const rows = await db.payment.findMany({
+        where: { organizationId: org, ...branch, receivedAt: dateRange(params, tz), ...(status ? { status } : {}), ...(params.method ? { method: params.method } : {}), ...(params.type ? { source: params.type } : {}) },
+        orderBy: { receivedAt: "asc" },
+        take: MAX_ROWS,
+      });
+      const subs = new Map((await db.subscriber.findMany({ where: { id: { in: rows.map((r) => r.subscriberId).filter((v): v is string => Boolean(v)) } }, select: { id: true, accountNumber: true, displayName: true } })).map((s) => [s.id, s]));
       return {
         csv: toCsv(
-          ["receipt_number", "received_at", "account_number", "method", "reference", "status", "currency", "amount", "allocated", "refunded"],
-          rows.map((p) => [p.receiptNumber ?? "", iso(p.receivedAt), p.subscriberId ? (subs.get(p.subscriberId)?.accountNumber ?? "") : "UNMATCHED", p.method, p.providerTransactionId ?? "", p.status, p.currency, p.amount.toString(), p.allocatedAmount.toString(), p.refundedAmount.toString()]),
+          ["receipt_number", "received_at", "account_number", "subscriber", "payer_name", "type", "method", "reference", "status", "currency", "amount", "allocated", "refunded", "unallocated"],
+          rows.map((p) => {
+            const sub = p.subscriberId ? subs.get(p.subscriberId) : undefined;
+            const unallocated = p.status === "CONFIRMED" ? p.amount.minus(p.allocatedAmount).minus(p.refundedAmount).toFixed(2) : "";
+            return [
+              p.receiptNumber ?? "",
+              iso(p.receivedAt),
+              p.subscriberId ? (sub?.accountNumber ?? "") : "UNMATCHED",
+              sub?.displayName ?? "",
+              p.payerName ?? "",
+              p.source,
+              p.method,
+              p.providerTransactionId ?? "",
+              p.status,
+              p.currency,
+              p.amount.toString(),
+              p.allocatedAmount.toString(),
+              p.refundedAmount.toString(),
+              unallocated,
+            ];
+          }),
+        ),
+        rows: rows.length,
+      };
+    }
+    case "expenses": {
+      const rows = await db.expense.findMany({
+        where: { organizationId: org, ...branch, paidAt: dateRange(params, tz), ...(params.categoryId ? { categoryId: params.categoryId } : {}), ...(params.method ? { method: params.method } : {}) },
+        orderBy: { paidAt: "asc" },
+        take: MAX_ROWS,
+      });
+      const categories = new Map((await db.expenseCategory.findMany({ where: { organizationId: org } })).map((c) => [c.id, c.name]));
+      return {
+        csv: toCsv(
+          ["paid_at", "category", "description", "payee", "method", "reference", "currency", "amount", "status", "reversed_at", "reversal_reason"],
+          rows.map((e) => [iso(e.paidAt), categories.get(e.categoryId) ?? "", e.description, e.payee ?? "", e.method, e.reference ?? "", e.currency, e.amount.toString(), e.status, iso(e.reversedAt), e.reversalReason ?? ""]),
         ),
         rows: rows.length,
       };
@@ -101,7 +165,7 @@ async function buildCsv(ctx: StaffContext, type: ExportType, params: { from?: st
       return { csv: toCsv(["month", "revenue", "credit_notes", "net_revenue", "tax", "collected", "expenses"], r.months.map((m) => [m.month, m.revenue, m.creditNotes, m.netRevenue, m.tax, m.collected, m.expenses])), rows: r.months.length };
     }
     case "audit_logs": {
-      const rows = await db.auditLog.findMany({ where: { organizationId: org, createdAt: dateRange(params) }, orderBy: { createdAt: "asc" }, take: MAX_ROWS });
+      const rows = await db.auditLog.findMany({ where: { organizationId: org, createdAt: dateRange(params, tz) }, orderBy: { createdAt: "asc" }, take: MAX_ROWS });
       const users = new Map((await db.user.findMany({ where: { id: { in: rows.map((r) => r.actorUserId).filter((v): v is string => Boolean(v)) } }, select: { id: true, email: true } })).map((u) => [u.id, u.email]));
       return {
         csv: toCsv(["timestamp", "actor", "actor_type", "action", "entity_type", "entity_id", "ip_address", "correlation_id"], rows.map((a) => [iso(a.createdAt), a.actorUserId ? (users.get(a.actorUserId) ?? a.actorUserId) : "", a.actorType, a.action, a.entityType ?? "", a.entityId ?? "", a.ipAddress ?? "", a.correlationId ?? ""])),
@@ -123,7 +187,7 @@ export async function generateExport(exportJobId: string) {
     const pseudoSession = { id: `export:${job.id}`, userId: user.id, organizationId: job.organizationId, activeBranchId: null, user } as unknown as Parameters<typeof loadStaffContext>[0];
     const ctx = await loadStaffContext(pseudoSession, { correlationId: `export:${job.id}`, ipAddress: null, userAgent: null });
     requirePermission(ctx, "reports.export", EXPORT_TYPES[job.type as ExportType].permission);
-    const { csv, rows } = await buildCsv(ctx, job.type as ExportType, job.params as { from?: string; to?: string; status?: string });
+    const { csv, rows } = await buildCsv(ctx, job.type as ExportType, exportRequestInput.shape.params.parse(job.params ?? {}));
     const key = `exports/${job.organizationId}/${randomUUID()}.csv`;
     await storage().put(key, csv, "text/csv");
     const fileName = `cloudlink-${job.type}-${new Date().toISOString().slice(0, 10)}.csv`;
