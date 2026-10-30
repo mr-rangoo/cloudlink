@@ -28,6 +28,7 @@ import { emailSettingsInput, smsSettingsInput, testMessageInput } from "@/server
 import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
 import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } from "@/server/services/mobile-money";
 import { mpesaConfigInput } from "@/server/services/mpesa-config";
+import { activeGatewayInput, kopokopoConfigInput } from "@/server/services/payment-gateways";
 import { brandingInput } from "@/server/services/branding";
 import { paymentMethodInput, paymentMethodUpdate } from "@/server/services/payment-methods";
 import { assistantMessageInput, assistantSettingsInput, conversationListQuery } from "@/server/assistant/service";
@@ -318,10 +319,16 @@ export const operations: Operation[] = [
   { method: "post", path: "/integrations/messaging/confirm", summary: "Confirm the last accepted test arrived (marks the provider verified)", tag: "Integrations", auth: "session", permission: "integrations.write" },
   { method: "post", path: "/integrations/messaging/balance", summary: "Ask the SMS provider for its prepaid balance", tag: "Integrations", auth: "session", permission: "integrations.read" },
   { method: "post", path: "/integrations/mpesa/test", summary: "Check credentials (OAuth token only; no money moves)", tag: "Integrations", auth: "session", permission: "integrations.write" },
+  // Phase 18: payment gateway catalogue
+  { method: "get", path: "/integrations/payment-gateways", summary: "Gateway catalogue: configuration status and which gateway collects online payments", tag: "Integrations", auth: "session", permission: "integrations.read" },
+  { method: "put", path: "/integrations/payment-gateways/active", summary: "Choose the gateway for new online payments (must be configured)", tag: "Integrations", auth: "session", permission: "integrations.write", body: activeGatewayInput },
+  { method: "put", path: "/integrations/kopokopo", summary: "Save Kopo Kopo settings (credentials write-only, encrypted)", tag: "Integrations", auth: "session", permission: "integrations.write", body: kopokopoConfigInput },
+  { method: "post", path: "/integrations/kopokopo/test", summary: "Check Kopo Kopo credentials (token only; no money moves)", tag: "Integrations", auth: "session", permission: "integrations.write" },
   { method: "post", path: "/integrations/mpesa/register-c2b", summary: "Register C2B confirmation/validation URLs", tag: "Integrations", auth: "session", permission: "integrations.write" },
   { method: "post", path: "/customer/payments", summary: "Customer pays with M-Pesa (own account or invoice)", tag: "Customer portal", auth: "session", body: customerPaymentInput, responses: { "202": "Request sent" } },
   { method: "get", path: "/customer/payments/attempts/:id", summary: "Status of the customer's own payment request", tag: "Customer portal", auth: "session" },
   { method: "post", path: "/webhooks/mobile-money/stk/:token", summary: "M-Pesa STK result callback (secret per-request token; verified with an STK query)", tag: "Webhooks", auth: "webhook", body: stkCallbackSchema, responses: { "200": "Acknowledged (also for duplicates)", "404": "Unknown token" } },
+  { method: "post", path: "/webhooks/mobile-money/kopokopo/:token", summary: "Kopo Kopo incoming-payment result (secret per-request token + X-KopoKopo-Signature; verified with a status query)", tag: "Webhooks", auth: "webhook", responses: { "200": "Acknowledged (also for duplicates)", "401": "Missing or invalid signature", "404": "Unknown token" } },
   { method: "post", path: "/webhooks/mobile-money/c2b/:token/confirmation", summary: "M-Pesa C2B confirmation (secret per-organization token)", tag: "Webhooks", auth: "webhook", body: c2bConfirmationSchema, responses: { "200": "Acknowledged" } },
   { method: "post", path: "/webhooks/mobile-money/c2b/:token/validation", summary: "M-Pesa C2B validation", tag: "Webhooks", auth: "webhook", body: c2bConfirmationSchema, responses: { "200": "Accepted or rejected (ResultCode)" } },
 ];

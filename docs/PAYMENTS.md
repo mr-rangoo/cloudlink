@@ -8,7 +8,9 @@ callback on its own never counts as payment.
 | --- | --- |
 | Daraja adapter (OAuth, STK Push, STK Push Query, C2B URL registration) | Implemented from the public Daraja documentation. Tested against an in-process fake Daraja server that enforces the documented rules (`tests/support/fake-daraja.ts`). The STK password matches the documented example. |
 | Callback handling (STK and C2B) | Tested end to end through the real route handlers: validation, deduplication, verification, allocation, renewals and ledger. |
+| Kopo Kopo adapter (token, incoming payments, status, signed callbacks) | Implemented from Kopo Kopo's API reference and their official Node SDK (`k2-connect-node`). Tested against an in-process fake (`tests/support/fake-kopokopo.ts`). |
 | Safaricom sandbox | **Not verified.** No sandbox credentials have been supplied. |
+| Kopo Kopo sandbox | **Not verified.** No Kopo Kopo credentials have been supplied. |
 | Production | **Not verified.** Requires approved credentials and a real payment. |
 
 The Integrations page reports "Sandbox tested" or "Production verified" only after a real payment is confirmed in that environment. Saving or testing credentials is not enough.
@@ -17,7 +19,7 @@ The Integrations page reports "Sandbox tested" or "Production verified" only aft
 | Mode | Behaviour |
 | --- | --- |
 | `mock` | Development and tests. No prompt is sent and no money moves. A request stays "waiting" until staff simulate the customer's response, outside production only. The simulation goes through the same callback pipeline. Simulated payments use provider `mock`, receipts start with `SIM`, and the UI labels them. Rejected when `APP_ENV=production`. |
-| `daraja` | Real Daraja. Each organization uses the credentials saved under Integrations, or the `MPESA_*` variables for the organization named in `MPESA_ENV_ORGANIZATION`. |
+| `daraja` (or `live`) | Real gateways. Each organization chooses its active gateway under Integrations → Payment gateways: M-Pesa Daraja (credentials saved there, or the `MPESA_*` variables for the organization named in `MPESA_ENV_ORGANIZATION`) or Kopo Kopo. |
 | `disabled` | Online payment is unavailable. Customers are told to pay by account number. |
 
 ## STK Push (Lipa Na M-Pesa Online)
@@ -105,10 +107,28 @@ Cash, bank, cheque and manual M-Pesa entries are recorded by staff with `payment
 | `MPESA_VERIFY_CALLBACKS` | Default `true`. Cannot be `false` in production. |
 | `MPESA_BASE_URL` | Test-only fake-server override. Must be empty in production. |
 
+## Payment gateways (Integrations → Payment gateways)
+An organization can set up more than one gateway, but exactly one collects new online payments. That covers the portal's Pay with M-Pesa, staff payment requests and hotspot sales.
+- **Choosing the gateway.** "Use for online payments" works only for a gateway that is set up. The choice is audited. Organizations that never chose one keep using M-Pesa Daraja.
+- **Requests already sent** are queried, verified and confirmed by the gateway that sent them, even after a switch.
+- **Status.** Each gateway's status ("Sandbox tested", "Production verified") is set only by a confirmed real payment through it.
+
+### Kopo Kopo (K2 Connect)
+- **Settings.** Environment, till number (digits, or a K-prefixed online payments account), client ID, client secret and API key. The secrets are encrypted, write-only and never logged. **Test credentials** fetches an access token, and no money moves.
+- **Requests.** `POST /api/v2/incoming_payments` ("M-PESA STK Push") to the till, with a per-request secret callback URL `/api/v1/webhooks/mobile-money/kopokopo/<token>`.
+- **Callbacks.** Each must carry a valid `X-KopoKopo-Signature`: the hex HMAC-SHA256 of the raw body, made with the API key and checked in constant time. A missing or invalid signature gets `401` and is not stored. A valid callback is normalised and goes through the same store, verify and confirm path as Daraja:
+  - its identifiers must match the request;
+  - the currency and amount must match exactly;
+  - Kopo Kopo's status query must confirm the same outcome, receipt and amount;
+  - each M-Pesa receipt is recorded once per organization.
+- **No callback.** The worker's status query settles the request on its own, because Kopo Kopo's authenticated status response includes the M-Pesa receipt and amount.
+- **Addresses.** Production uses `https://api.kopokopo.com` and sandbox `https://sandbox.kopokopo.com`. `KOPOKOPO_BASE_URL` is a test-only override, refused in production.
+- **Not covered.** Payments made directly to a Kopo Kopo till (not through a Cloudlink prompt) are not matched automatically. Record them from Reconciliation.
+
 ## Adding another gateway
 Implement `PaymentGateway` (`src/server/integrations/payments/gateway.ts`): `requestPayment`, `queryPayment`, `testCredentials` and `registerC2bUrls` where supported.
 
-- Add the gateway to `resolveGateway()`, with a fake server for tests.
+- Add the gateway to `GATEWAYS` (`services/payment-gateways.ts`) and `gatewayFor()` (`services/mpesa-config.ts`), with a fake server for tests.
 - Map the provider's states to pending, confirmed, failed, cancelled, expired and unknown.
 - Feed its callbacks through the same store, verify and confirm path.
 - Do not show the gateway as available until its sandbox flow has been tested.
@@ -116,5 +136,4 @@ Implement `PaymentGateway` (`src/server/integrations/payments/gateway.ts`): `req
 ## Not implemented
 - Refunds back to M-Pesa (B2C) and M-Pesa reversals. Refunds are recorded manually.
 - Daraja Transaction Status API for C2B verification, which needs initiator credentials.
-- Buying hotspot vouchers online from the captive portal. Vouchers are sold by staff and agents.
-- Card and other gateways.
+- Card gateways, and Kopo Kopo till payments made outside a Cloudlink prompt (buy-goods webhooks).

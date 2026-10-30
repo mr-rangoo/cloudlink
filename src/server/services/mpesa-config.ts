@@ -8,7 +8,9 @@ import { decryptSecret, encryptSecret, randomToken, sha256 } from "@/server/secu
 import { PermanentError, RetryableError } from "@/server/jobs/operations";
 import { DarajaGateway, type DarajaConfig } from "@/server/integrations/payments/daraja";
 import { MockGateway } from "@/server/integrations/payments/mock";
-import type { PaymentGateway } from "@/server/integrations/payments/gateway";
+import type { GatewayProvider, PaymentGateway } from "@/server/integrations/payments/gateway";
+import { KopoKopoGateway } from "@/server/integrations/payments/kopokopo";
+import { activeGatewayKey, kopokopoConfigFor, recordGatewayVerified } from "@/server/services/payment-gateways";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -41,18 +43,23 @@ interface SecretConfig {
 
 export interface ResolvedGateway {
   gateway: PaymentGateway;
-  provider: "mpesa_daraja" | "mock";
+  provider: GatewayProvider;
   environment: "sandbox" | "production" | "mock";
+  /** Paybill/store number (Daraja) or till number (Kopo Kopo). */
   shortcode: string;
   source: "integration" | "environment" | "mock";
+  /** Webhook path segment for this provider's result callbacks. */
+  callbackPath: "stk" | "kopokopo";
 }
 
 export function callbackBaseUrl(): string {
   return (process.env.MPESA_CALLBACK_URL || process.env.APP_URL || "").replace(/\/$/, "");
 }
 
+/** mock (development default), daraja = real gateways ("live" is accepted as the same), disabled. */
 export function paymentAdapterMode(): "mock" | "daraja" | "disabled" {
   const mode = process.env.PAYMENT_ADAPTER || "mock";
+  if (mode === "live") return "daraja";
   return mode === "mock" || mode === "daraja" ? mode : "disabled";
 }
 
@@ -103,14 +110,32 @@ export async function darajaConfigFor(organizationId: string): Promise<{ config:
   return null;
 }
 
-/** The gateway to use for an organization. Throws INTEGRATION_UNAVAILABLE with a customer-safe message. */
+/** The gateway for NEW online payments (the organization's active gateway). Throws INTEGRATION_UNAVAILABLE with a customer-safe message. */
 export async function resolveGateway(organizationId: string): Promise<ResolvedGateway> {
   const mode = paymentAdapterMode();
   if (mode === "disabled") throw new AppError("INTEGRATION_UNAVAILABLE", "Online payment is not available. Please pay using your account number.");
-  if (mode === "mock") return { gateway: new MockGateway(), provider: "mock", environment: "mock", shortcode: "000000", source: "mock" };
+  if (mode === "mock") return gatewayFor(organizationId, "mock");
+  return gatewayFor(organizationId, await activeGatewayKey(organizationId));
+}
+
+/**
+ * The gateway of a given provider: used to verify and query requests with the provider that sent them, even if
+ * the organization has since switched its active gateway.
+ */
+export async function gatewayFor(organizationId: string, provider: GatewayProvider | string): Promise<ResolvedGateway> {
+  if (provider === "mock") {
+    if (process.env.APP_ENV === "production") throw new AppError("INTEGRATION_UNAVAILABLE", "Simulated payment requests cannot be processed in production.");
+    return { gateway: new MockGateway(), provider: "mock", environment: "mock", shortcode: "000000", source: "mock", callbackPath: "stk" };
+  }
+  if (provider === "kopokopo") {
+    const cfg = await kopokopoConfigFor(organizationId);
+    if (!cfg) throw new AppError("INTEGRATION_UNAVAILABLE", "Online payment is not set up for this provider yet. Please pay using your account number.");
+    return { gateway: new KopoKopoGateway(cfg), provider: "kopokopo", environment: cfg.environment, shortcode: cfg.tillNumber, source: "integration", callbackPath: "kopokopo" };
+  }
+  if (provider !== PROVIDER) throw new AppError("INTEGRATION_UNAVAILABLE", "Unknown payment gateway.");
   const found = await darajaConfigFor(organizationId);
   if (!found) throw new AppError("INTEGRATION_UNAVAILABLE", "M-Pesa is not configured for this provider yet. Please pay using your account number.");
-  return { gateway: new DarajaGateway(found.config), provider: "mpesa_daraja", environment: found.config.environment, shortcode: found.config.shortcode, source: found.source };
+  return { gateway: new DarajaGateway(found.config), provider: "mpesa_daraja", environment: found.config.environment, shortcode: found.config.shortcode, source: found.source, callbackPath: "stk" };
 }
 
 // ───────── Staff configuration ─────────
@@ -271,12 +296,6 @@ export async function c2bConfigForToken(token: string) {
 }
 
 /** Record real evidence: the first confirmed sandbox/production payment marks the integration tested/verified. */
-export async function recordVerifiedPayment(organizationId: string, environment: "sandbox" | "production" | "mock") {
-  if (environment === "mock") return;
-  const status = environment === "production" ? "PRODUCTION_VERIFIED" : "SANDBOX_TESTED";
-  await db.integrationConfiguration.upsert({
-    where: { organizationId_provider: { organizationId, provider: PROVIDER } },
-    create: { organizationId, provider: PROVIDER, status, lastCheckedAt: new Date() },
-    update: { status, lastCheckedAt: new Date(), lastError: null },
-  });
+export async function recordVerifiedPayment(organizationId: string, environment: "sandbox" | "production" | "mock", provider: string = PROVIDER) {
+  await recordGatewayVerified(organizationId, provider, environment);
 }

@@ -77,6 +77,12 @@ describe("environment validation", () => {
     expect(parseEnv({ ...prod, ASSISTANT_ADAPTER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-x" })).toMatchObject({ ASSISTANT_MODEL: "claude-opus-5-5", ASSISTANT_EFFORT: "low" });
   });
 
+  it("accepts PAYMENT_ADAPTER=live and refuses the test-only Kopo Kopo override in production", () => {
+    const prod = { ...base, APP_ENV: "production", APP_URL: "https://billing.example.co.ke", PAYMENT_ADAPTER: "live", NETWORK_ADAPTER: "disabled", MESSAGING_ADAPTER: "disabled" };
+    expect(parseEnv(prod).PAYMENT_ADAPTER).toBe("live");
+    expect(() => parseEnv({ ...prod, KOPOKOPO_BASE_URL: "http://127.0.0.1:9" })).toThrow(/KOPOKOPO_BASE_URL/);
+  });
+
   it("rejects placeholder secrets in production", () => {
     expect(() =>
       parseEnv({

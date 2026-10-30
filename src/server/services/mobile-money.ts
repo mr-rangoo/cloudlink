@@ -30,7 +30,9 @@ import { allocateTx, autoAllocateForSubscriberTx, type AllocationResult } from "
 import { createConfirmedPaymentTx, findLivePaymentByReference, notifyPaymentReceivedTx } from "@/server/services/payments";
 import { notifyOperators } from "@/server/services/operator-alerts";
 import { dispatchNetworkOperations } from "@/server/services/network";
-import { c2bConfigForToken, callbackBaseUrl, recordVerifiedPayment, resolveGateway } from "@/server/services/mpesa-config";
+import { c2bConfigForToken, callbackBaseUrl, gatewayFor, recordVerifiedPayment, resolveGateway } from "@/server/services/mpesa-config";
+import { k2IncomingPaymentSchema, k2Result, kopokopoSignatureValid } from "@/server/integrations/payments/kopokopo";
+import { kopokopoConfigFor } from "@/server/services/payment-gateways";
 import type { PaymentAttempt, PaymentAttemptStatus, Prisma, WebhookEvent } from "@/generated/prisma/client";
 
 /**
@@ -40,7 +42,11 @@ import type { PaymentAttempt, PaymentAttemptStatus, Prisma, WebhookEvent } from 
  *  1. the callback arrived on the attempt's secret, single-use callback URL (unguessable token, stored hashed);
  *  2. its CheckoutRequestID / MerchantRequestID match what the provider returned when the request was made;
  *  3. it reports success with a receipt number and exactly the requested amount;
- *  4. an STK Push Query to the provider confirms success (MPESA_VERIFY_CALLBACKS, mandatory in production).
+ *  4. an STK Push Query to the provider confirms success (MPESA_VERIFY_CALLBACKS, mandatory in production);
+ *     where the provider's status query reports the transaction itself (Kopo Kopo), its receipt and amount must match too.
+ * Kopo Kopo callbacks must also carry a valid X-KopoKopo-Signature. For Kopo Kopo, an authenticated status query
+ * that returns the receipt and exactly the requested amount is itself sufficient (no callback needed).
+ * Requests are always verified by the gateway that sent them, even after the organization switches gateways.
  * Every callback is stored once (unique provider + kind + key) before processing; repeats are acknowledged and
  * counted, never re-applied. The payment, ledger, allocations and renewals are created in one transaction and the
  * M-Pesa receipt is unique per organization (partial unique index), so no path can record the same money twice.
@@ -196,7 +202,7 @@ export async function submitPaymentAttempt(ctx: ActorContext, args: SubmitPaymen
     });
   if (attempt.status !== "PENDING" || attempt.checkoutRequestId) return attempt;
 
-  const callbackUrl = `${callbackBaseUrl()}/api/v1/webhooks/mobile-money/stk/${token}`;
+  const callbackUrl = `${callbackBaseUrl()}/api/v1/webhooks/mobile-money/${gw.callbackPath}/${token}`;
   try {
     const res = await gw.gateway.requestPayment({ amount: args.amount, phone: args.phone, accountReference: attempt.accountReference, description: args.purchase ? "WiFi" : "Internet", callbackUrl });
     attempt = await db.paymentAttempt.update({
@@ -238,6 +244,8 @@ export async function initiateCustomerPayment(ctx: CustomerContext, raw: z.input
 export interface WebhookMeta {
   ipAddress: string | null;
   correlationId: string;
+  /** Provider signature header, for providers that sign callbacks (Kopo Kopo). */
+  signature?: string | null;
 }
 
 export interface WebhookResponse {
@@ -339,8 +347,14 @@ export async function ingestStkCallback(attempt: PaymentAttempt, rawBody: string
       : {}),
   };
   // Keyed by request AND CheckoutRequestID: a callback posted on another request's URL can never shadow this one.
-  const { event, duplicate } = await storeEvent({ organizationId: attempt.organizationId, provider: attempt.provider, kind: "stk_callback", eventKey: `${attempt.id}:${cb.CheckoutRequestID}`, fingerprint, payload, attemptId: attempt.id, sourceIp: meta.ipAddress });
-  if (duplicate && (event.status === "PROCESSED" || event.status === "REJECTED")) return { status: 200, body: ACK };
+  await storeAndProcess(attempt, payload, `${attempt.id}:${cb.CheckoutRequestID}`, fingerprint, meta);
+  return { status: 200, body: ACK };
+}
+
+/** Store a normalised result callback once, then verify and apply it (retried by the worker when needed). */
+async function storeAndProcess(attempt: PaymentAttempt, payload: StoredStkPayload, eventKey: string, fingerprint: string, meta: WebhookMeta): Promise<void> {
+  const { event, duplicate } = await storeEvent({ organizationId: attempt.organizationId, provider: attempt.provider, kind: "stk_callback", eventKey, fingerprint, payload: payload as unknown as Prisma.InputJsonValue, attemptId: attempt.id, sourceIp: meta.ipAddress });
+  if (duplicate && (event.status === "PROCESSED" || event.status === "REJECTED")) return;
   try {
     await processStkEvent(event.id);
   } catch (err) {
@@ -356,7 +370,54 @@ export async function ingestStkCallback(attempt: PaymentAttempt, rawBody: string
       await dispatchOperation(op);
     }
   }
-  return { status: 200, body: ACK };
+}
+
+/** POST /webhooks/mobile-money/kopokopo/:token — Kopo Kopo incoming-payment result (signed with the API key). */
+export async function handleKopoKopoCallbackRequest(token: string, rawBody: string, meta: WebhookMeta): Promise<WebhookResponse> {
+  if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return { status: 404, body: { error: "Not found" } };
+  await consumeRateLimit(RATE_LIMITS.webhook, `k2:${meta.ipAddress ?? "unknown"}`);
+  if (Buffer.byteLength(rawBody) > MAX_WEBHOOK_BYTES) return { status: 413, body: { error: "Too large" } };
+  const attempt = await db.paymentAttempt.findUnique({ where: { callbackTokenHash: sha256(token) } });
+  if (!attempt || attempt.provider !== "kopokopo") {
+    logger.warn({ correlationId: meta.correlationId }, "kopokopo callback for an unknown token");
+    return { status: 404, body: { error: "Not found" } };
+  }
+  const cfg = await kopokopoConfigFor(attempt.organizationId);
+  if (!cfg) {
+    logger.error({ attemptId: attempt.id }, "kopokopo callback received but the gateway is no longer configured");
+    return { status: 503, body: { error: "Temporarily unavailable" } };
+  }
+  if (!kopokopoSignatureValid(cfg.apiKey, rawBody, meta.signature)) {
+    logger.warn({ attemptId: attempt.id, correlationId: meta.correlationId }, "kopokopo callback with a missing or invalid signature");
+    return { status: 401, body: { error: "Invalid signature" } };
+  }
+  const fingerprint = sha256(rawBody);
+  const parsed = k2IncomingPaymentSchema.safeParse(parseJson(rawBody));
+  if (!parsed.success) {
+    await storeEvent({ organizationId: attempt.organizationId, provider: attempt.provider, kind: "stk_callback", eventKey: `invalid:${fingerprint}`, fingerprint, payload: { invalid: true }, attemptId: attempt.id, sourceIp: meta.ipAddress, status: "REJECTED", error: "Malformed callback body" });
+    return { status: 400, body: { error: "Malformed body" } };
+  }
+  const r = k2Result(parsed.data);
+  if (r.status === "Pending") return { status: 200, body: { status: "received" } };
+  const time = r.time ? new Date(r.time) : null;
+  // Minimised payload: no full phone number; enough to re-run verification and confirmation.
+  const payload: StoredStkPayload = {
+    merchantRequestId: r.id,
+    checkoutRequestId: r.id,
+    resultCode: r.status === "Success" ? "0" : "K2_FAILED",
+    resultDesc: r.description,
+    ...(r.status === "Success"
+      ? {
+          amount: r.amount ?? undefined,
+          receipt: r.receipt ?? undefined,
+          currency: r.currency ?? undefined,
+          transactionDate: time && !Number.isNaN(time.getTime()) ? time.toISOString() : null,
+          phoneMatches: r.phone ? r.phone.replace(/\D/g, "").slice(-9) === attempt.phone.slice(-9) : null,
+        }
+      : {}),
+  };
+  await storeAndProcess(attempt, payload, `${attempt.id}:${r.id}`, fingerprint, meta);
+  return { status: 200, body: { status: "received" } };
 }
 
 interface StoredStkPayload {
@@ -366,6 +427,8 @@ interface StoredStkPayload {
   resultDesc: string;
   amount?: number;
   receipt?: string;
+  /** Reported by providers that include it (Kopo Kopo); must equal the request's currency. */
+  currency?: string;
   transactionDate?: string | null;
   phoneMatches?: boolean | null;
 }
@@ -401,9 +464,9 @@ export async function processStkEvent(eventId: string, opts: { final?: boolean }
       await setAttemptOutcome(attempt.id, "UNKNOWN", { resultCode: p.resultCode, detail: "M-Pesa reported success without a receipt number. Check the M-Pesa statement before recording anything." });
       return finishEvent(event.id, "REJECTED", { error: "Success callback without receipt or amount" });
     }
-    if (!new D(p.amount).equals(new D(attempt.amount.toString()))) {
+    if ((p.currency && p.currency !== attempt.currency) || !new D(p.amount).equals(new D(attempt.amount.toString()))) {
       log.warn({ reported: p.amount, requested: attempt.amount.toString() }, "stk callback amount does not match the request");
-      await setAttemptOutcome(attempt.id, "UNKNOWN", { resultCode: p.resultCode, detail: `M-Pesa reported ${p.amount} but ${attempt.amount.toString()} was requested. Review against the M-Pesa statement.` });
+      await setAttemptOutcome(attempt.id, "UNKNOWN", { resultCode: p.resultCode, detail: `M-Pesa reported ${p.currency ? `${p.currency} ` : ""}${p.amount} but ${attempt.currency} ${attempt.amount.toString()} was requested. Review against the M-Pesa statement.` });
       return finishEvent(event.id, "REJECTED", { error: "Amount does not match the request" });
     }
     if (attempt.status === "CONFIRMED" && attempt.providerReceipt && attempt.providerReceipt !== p.receipt) {
@@ -417,7 +480,7 @@ export async function processStkEvent(eventId: string, opts: { final?: boolean }
   let resultCode: string | null = p.resultCode;
   let resultDesc = p.resultDesc;
   if (process.env.MPESA_VERIFY_CALLBACKS !== "false") {
-    const gw = await resolveGateway(attempt.organizationId).catch((err) => {
+    const gw = await gatewayFor(attempt.organizationId, attempt.provider).catch((err) => {
       throw new RetryableError(err instanceof Error ? err.message : "Gateway unavailable", "GATEWAY_UNAVAILABLE");
     });
     const mockResultCode = ((attempt.metadata ?? {}) as { mockResultCode?: string }).mockResultCode ?? null;
@@ -434,6 +497,11 @@ export async function processStkEvent(eventId: string, opts: { final?: boolean }
       log.warn({ queryResult: q.resultCode }, "stk success callback contradicted by the provider status query");
       await setAttemptOutcome(attempt.id, q.outcome, { resultCode: q.resultCode, resultDesc: q.resultDesc, detail: stkMessage(q.resultCode ?? "", q.resultDesc) });
       return finishEvent(event.id, "REJECTED", { error: `Provider status query reported ${q.outcome.toLowerCase()} for a success callback` });
+    }
+    if (reported === "SUCCESS" && ((q.receipt && q.receipt !== p.receipt) || (q.amount !== undefined && !new D(q.amount).equals(new D(attempt.amount.toString()))) || (q.currency && q.currency !== attempt.currency))) {
+      log.warn("stk success callback differs from the transaction reported by the provider status query");
+      await setAttemptOutcome(attempt.id, "UNKNOWN", { resultCode: q.resultCode, detail: "The payment details in the confirmation differ from what the payment provider reports. Review against the M-Pesa statement before recording anything." });
+      return finishEvent(event.id, "REJECTED", { error: "Callback receipt or amount differs from the provider status query" });
     }
     if (reported !== "SUCCESS" && q.outcome === "SUCCESS") {
       // Money moved: do not mark the request failed. The genuine success callback (or reconciliation) settles it.
@@ -455,7 +523,7 @@ export async function processStkEvent(eventId: string, opts: { final?: boolean }
   const environment = ((attempt.metadata ?? {}) as { environment?: "sandbox" | "production" | "mock" }).environment ?? "mock";
   const paymentId = await confirmAttempt(attempt.id, details, event.id);
   await finishEvent(event.id, "PROCESSED", { paymentId });
-  if (attempt.provider === "mpesa_daraja") await recordVerifiedPayment(attempt.organizationId, environment);
+  if (attempt.provider !== "mock") await recordVerifiedPayment(attempt.organizationId, environment, attempt.provider);
 }
 
 /** Record the money exactly once and apply it. Returns the payment id. */
@@ -559,10 +627,21 @@ export async function runStatusQuery(attemptId: string, opts: { final: boolean }
     await processStkEvent(pending.id, opts);
     return { verifiedCallback: true };
   }
-  const gw = await resolveGateway(attempt.organizationId);
+  const gw = await gatewayFor(attempt.organizationId, attempt.provider);
   const mockResultCode = ((attempt.metadata ?? {}) as { mockResultCode?: string }).mockResultCode ?? null;
   const q = await gw.gateway.queryPayment(attempt.checkoutRequestId, { mockResultCode, createdAt: attempt.createdAt });
   await db.paymentAttempt.update({ where: { id: attempt.id }, data: { lastQueriedAt: new Date(), queryCount: { increment: 1 } } });
+  // Providers whose authenticated status query reports the transaction (receipt and amount) can settle it directly.
+  if (q.outcome === "SUCCESS" && q.receipt && q.amount !== undefined) {
+    if ((q.currency && q.currency !== attempt.currency) || !new D(q.amount).equals(new D(attempt.amount.toString()))) {
+      await setAttemptOutcome(attempt.id, "UNKNOWN", { resultCode: q.resultCode, detail: `The provider reports ${q.currency ?? ""} ${q.amount} but ${attempt.currency} ${attempt.amount.toString()} was requested. Review against the M-Pesa statement.` });
+      return { outcome: "UNKNOWN" };
+    }
+    const paymentId = await confirmAttempt(attempt.id, { amount: q.amount, receipt: q.receipt, transactionDate: null, phone: null }, `query:${attempt.id}`);
+    const environment = ((attempt.metadata ?? {}) as { environment?: "sandbox" | "production" | "mock" }).environment ?? "mock";
+    await recordVerifiedPayment(attempt.organizationId, environment, attempt.provider);
+    return { outcome: "SUCCESS", paymentId };
+  }
   if (q.outcome === "PENDING") {
     if (opts.final) {
       await setAttemptOutcome(attempt.id, "UNKNOWN", { detail: "M-Pesa had not finished the request after several checks. If the customer paid, the payment is recorded when M-Pesa reports it." });

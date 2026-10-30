@@ -26,7 +26,7 @@ const PUBLIC_ROUTES: Record<string, string> = {
   "v1/hotspot/[org]/access/route.ts": "router readiness for a login the caller holds (rate-limited)",
   "v1/hotspot/[org]/reconnect/route.ts": "re-issue login details with M-Pesa code + phone (failure rate-limited)",
 };
-const WEBHOOK_ROUTES = ["v1/webhooks/mobile-money/stk/[token]/route.ts", "v1/webhooks/mobile-money/c2b/[token]/confirmation/route.ts", "v1/webhooks/mobile-money/c2b/[token]/validation/route.ts"];
+const WEBHOOK_ROUTES = ["v1/webhooks/mobile-money/stk/[token]/route.ts", "v1/webhooks/mobile-money/kopokopo/[token]/route.ts", "v1/webhooks/mobile-money/c2b/[token]/confirmation/route.ts", "v1/webhooks/mobile-money/c2b/[token]/validation/route.ts"];
 const RAW_ROUTES: Record<string, string> = {
   "v1/health/live/route.ts": "liveness, no data",
   "v1/health/ready/route.ts": "readiness, coarse statuses only",

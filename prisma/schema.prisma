@@ -1936,3 +1936,10 @@ model SignupRequest {
   @@index([email, createdAt])
   @@index([createdAt])
 }
+
+// Which configured gateway collects online payments (portal, staff requests, hotspot sales). One per organization.
+model PaymentGatewaySettings {
+  organizationId String   @id @db.Uuid
+  activeProvider String // mpesa_daraja | kopokopo
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+}

@@ -10,9 +10,9 @@ import type { WebhookMeta, WebhookResponse } from "@/server/services/mobile-mone
  * so it can be fingerprinted. Authenticity is the handler's job (secret URL token, identifiers, provider query).
  * Responses never echo request content and are never cached.
  */
-export function webhookRoute(handler: (token: string, rawBody: string, meta: WebhookMeta) => Promise<WebhookResponse>) {
+export function webhookRoute(handler: (token: string, rawBody: string, meta: WebhookMeta) => Promise<WebhookResponse>, opts: { signatureHeader?: string } = {}) {
   return async (req: NextRequest, routeCtx: { params: Promise<{ token: string }> }): Promise<Response> => {
-    const meta = getRequestMeta(req);
+    const meta: WebhookMeta = { ...getRequestMeta(req), signature: opts.signatureHeader ? req.headers.get(opts.signatureHeader) : null };
     const headers = { "cache-control": "no-store", "x-correlation-id": meta.correlationId };
     try {
       const { token } = await routeCtx.params;

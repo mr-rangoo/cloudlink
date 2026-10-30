@@ -69,7 +69,10 @@ export const envSchema = z
     /** Addresses the Cloudlink worker connects to routers from (e.g. its VPN address); written into router setup scripts. */
     ROUTER_MANAGEMENT_SOURCES: z.string().optional().default(""),
 
-    PAYMENT_ADAPTER: z.enum(["mock", "daraja", "disabled"]).default("mock"),
+    /** mock | daraja (or live): real gateways chosen per organization (M-Pesa Daraja, Kopo Kopo) | disabled. */
+    PAYMENT_ADAPTER: z.enum(["mock", "daraja", "live", "disabled"]).default("mock"),
+    /** Non-production only: point the Kopo Kopo adapter at a fake server (tests). */
+    KOPOKOPO_BASE_URL: z.string().optional().default(""),
     NETWORK_ADAPTER: z.enum(["mock", "routeros", "disabled"]).default("mock"),
     MESSAGING_ADAPTER: z.enum(["mock", "live", "smtp", "disabled"]).default("mock"),
     /** Customer-portal AI assistant: anthropic (Claude API), mock (simulated replies, non-production only), disabled. */
@@ -120,7 +123,8 @@ export const envSchema = z
     if (env.ENABLE_DEMO_SEED) fail("ENABLE_DEMO_SEED", "demo seed must be disabled in production");
     if (!env.APP_URL.startsWith("https://")) fail("APP_URL", "must use https in production");
     if (/replace-with|changeme|example/i.test(env.AUTH_SECRET)) fail("AUTH_SECRET", "placeholder secret detected");
-    if (env.PAYMENT_ADAPTER === "daraja" && env.MPESA_CALLBACK_URL && !env.MPESA_CALLBACK_URL.startsWith("https://"))
+    if (env.KOPOKOPO_BASE_URL) fail("KOPOKOPO_BASE_URL", "is a test-only override and must be empty in production");
+    if ((env.PAYMENT_ADAPTER === "daraja" || env.PAYMENT_ADAPTER === "live") && env.MPESA_CALLBACK_URL && !env.MPESA_CALLBACK_URL.startsWith("https://"))
       fail("MPESA_CALLBACK_URL", "must use https");
     if (env.MPESA_BASE_URL) fail("MPESA_BASE_URL", "is a test-only override and must be empty in production");
     if (env.MPESA_VERIFY_CALLBACKS === "false") fail("MPESA_VERIFY_CALLBACKS", "callback verification cannot be disabled in production");

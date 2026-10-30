@@ -313,7 +313,26 @@ Browser check: `tests/e2e/messaging.spec.ts` writes a service notice, previews i
 
 Visual check (production build on :3102, e2e database): sign-in with the new links, sign-up form, "check your email" with the test-mode message, confirmation page, new workspace with the checklist, portal sign-in and sign-up at 390 px.
 
-**Exact next task**: Phase 18 — payment gateway catalogue (one active gateway per organization) and additional adapters.
+### Phase 18 — Payment gateway catalogue and Kopo Kopo ✅ (no real gateway verified)
+- [x] Gateway catalogue (`src/server/services/payment-gateways.ts`, Integrations → Payment gateways): M-Pesa Daraja and Kopo Kopo; exactly one collects new online payments (portal, staff requests, hotspot sales); only a configured gateway can be activated; switching is audited. Migration `20261101120000_payment_gateways` (`PaymentGatewaySettings`, provider CHECK). Organizations that never chose keep Daraja.
+- [x] Kopo Kopo K2 Connect adapter (`src/server/integrations/payments/kopokopo.ts`), built from Kopo Kopo's API reference and official Node SDK source: form-encoded client-credentials token (cached), `POST /api/v2/incoming_payments` (201 + Location on the configured host only), `GET` status (Pending/Success/Failed), callbacks verified with `X-KopoKopo-Signature` (hex HMAC-SHA256 of the raw body with the API key, constant-time). Credentials encrypted, write-only; test-credentials action.
+- [x] Payment pipeline generalised (`mobile-money.ts`): per-provider callback path; callbacks normalised into the existing store → verify → confirm path; requests always verified/queried by the gateway that sent them (`gatewayFor`), even after a switch; when a status query reports the transaction, its receipt, amount and currency must match the callback; Kopo Kopo requests settle from the authenticated status query when no callback arrives. Daraja behaviour unchanged (existing M-Pesa and hotspot-sales tests pass).
+- [x] `PAYMENT_ADAPTER=live` accepted as the clearer name for real gateways; `KOPOKOPO_BASE_URL` test-only (refused in production). Integrations status lists Kopo Kopo. Docs: `docs/PAYMENTS.md`.
+- [ ] Not done: Kopo Kopo buy-goods webhooks (payments made directly to the till outside a Cloudlink prompt), card gateways. **Kopo Kopo sandbox not verified** (no credentials).
+
+| Command (2026-10-31) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261101120000_payment_gateways` applied |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 18 files, 148 passed |
+| `npm run test:integration` | 31 files, 234 passed (new `payment-gateways.test.ts`: 6 — signed callback, forged/unsigned rejected, receipt/amount mismatch, failure, query-only settlement, verification after a switch, cross-request body) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 33 passed (new `payment-gateways.spec.ts`) |
+| `npm audit` | 0 vulnerabilities |
+
+Visual check (production build on :3102, e2e database): Integrations → Payment gateways with Kopo Kopo active, the settings dialog, and the 390 px layout.
+
+**Exact next task**: Phase 19 — loyalty points (earn per spend, redeem for account credit, ledger-backed).
 
 ## Work log
 

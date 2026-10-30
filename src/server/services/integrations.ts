@@ -6,6 +6,7 @@ import { getMessagingSettings } from "@/server/services/messaging-config";
 import { pingRedis } from "@/server/jobs/redis";
 import { workerStatus } from "@/server/observability/health";
 import { radiusConfigured, radiusHealth } from "@/server/integrations/radius";
+import { activeGatewayKey, kopokopoConfigFor } from "@/server/services/payment-gateways";
 import { darajaConfigFor, paymentAdapterMode } from "@/server/services/mpesa-config";
 
 export interface IntegrationRow {
@@ -58,6 +59,8 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
 
   const paymentMode = paymentAdapterMode();
   const mpesa = paymentMode === "daraja" ? await darajaConfigFor(ctx.organizationId).catch(() => null) : null;
+  const k2 = paymentMode === "daraja" ? await kopokopoConfigFor(ctx.organizationId).catch(() => null) : null;
+  const activeGateway = await activeGatewayKey(ctx.organizationId);
   const networkMode = process.env.NETWORK_ADAPTER ?? "mock";
   const messaging = await getMessagingSettings(ctx);
   const [redis, workers, routerGroups, radius] = await Promise.all([
@@ -86,6 +89,21 @@ export async function integrationStatus(ctx: StaffContext): Promise<IntegrationR
             : mpesa
               ? `${mpesa.config.environment === "production" ? "Production" : "Sandbox"} credentials for shortcode ${mpesa.config.shortcode} (${mpesa.source === "environment" ? "server environment" : "saved in Cloudlink"}). Marked tested only after a confirmed payment.`
               : "Not configured: save the Daraja credentials below.",
+    },
+    {
+      key: "kopokopo",
+      name: "Kopo Kopo (K2 Connect)",
+      category: "payments",
+      mode: paymentMode,
+      status: paymentMode === "mock" ? "mock" : paymentMode === "disabled" ? "not_configured" : (mapStatus(recorded("kopokopo")?.status) ?? (k2 ? "configured" : "not_configured")),
+      detail:
+        paymentMode === "mock"
+          ? "Simulated in test mode."
+          : paymentMode === "disabled"
+            ? "Online payment is disabled (PAYMENT_ADAPTER=disabled)."
+            : k2
+              ? `${k2.environment === "production" ? "Production" : "Sandbox"} credentials for till ${k2.tillNumber}${activeGateway === "kopokopo" ? ", collecting online payments" : ""}. Marked tested only after a confirmed payment.`
+              : "Not set up (optional): see Payment gateways below.",
     },
     { key: "manual_payments", name: "Cash / bank / cheque", category: "payments", mode: "built-in", status: "ok", detail: "Recorded and confirmed by authorised staff." },
     {
