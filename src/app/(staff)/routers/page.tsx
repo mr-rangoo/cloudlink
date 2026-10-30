@@ -9,7 +9,8 @@ import { Badge, EmptyState, PageHeader } from "@/components/ui/feedback";
 import { Pagination, Table, TBody, Td, Th, THead, Tr, buildHref } from "@/components/ui/table";
 import { FilterTabs, SearchForm } from "@/components/list-toolbar";
 import { RouterStatusBadge } from "@/components/status";
-import { AdapterNotice } from "@/components/network-notice";
+import { StatStrip } from "@/components/stat-strip";
+import { AdapterNotice, formatDuration } from "@/components/network-notice";
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDateTime } from "@/lib/utils";
 import { RouterFormDialog } from "./client";
@@ -22,7 +23,7 @@ export default async function RoutersPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const parsed = routerListQuery.safeParse(sp);
   const query = parsed.success ? parsed.data : routerListQuery.parse({});
-  const { rows, total, adapter } = await listRouters(ctx, query);
+  const { rows, total, adapter, summary } = await listRouters(ctx, query);
   const canWrite = ctx.permissions.has("routers.write");
   const branches = canWrite ? await listAccessibleBranches(ctx) : [];
   const tz = ctx.organization.timezone;
@@ -37,6 +38,14 @@ export default async function RoutersPage({ searchParams }: { searchParams: Prom
         actions={canWrite ? <RouterFormDialog branches={branches.map((b) => ({ id: b.id, name: b.name }))} /> : null}
       />
       <AdapterNotice adapter={adapter} />
+      <StatStrip
+        stats={[
+          { label: "Routers", value: summary.total, hint: summary.maintenance ? `${summary.maintenance} in maintenance` : "Not archived" },
+          { label: "Online", value: summary.online, tone: summary.online ? "success" : "default", href: href({ status: "ONLINE", archived: undefined }) },
+          { label: "Offline", value: summary.offline, tone: summary.offline ? "danger" : "default", href: href({ status: "OFFLINE", archived: undefined }) },
+          { label: adapter === "mock" ? "Simulated" : "Not checked", value: summary.unknown, href: href({ status: "UNKNOWN", archived: undefined }) },
+        ]}
+      />
       <Card>
         <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
           <FilterTabs
@@ -65,7 +74,8 @@ export default async function RoutersPage({ searchParams }: { searchParams: Prom
                 <tr>
                   <Th>Router</Th>
                   <Th>Status</Th>
-                  <Th>Authentication</Th>
+                  <Th>Health</Th>
+                  <Th>Load</Th>
                   <Th>Services</Th>
                   <Th className="text-right">Subscriptions</Th>
                   <Th className="text-right">Sessions</Th>
@@ -88,14 +98,40 @@ export default async function RoutersPage({ searchParams }: { searchParams: Prom
                     </Td>
                     <Td label="Status">
                       <div className="min-w-0 text-right md:text-left">
-                        <RouterStatusBadge status={r.status} adapter={adapter} />
+                        <span className="flex flex-wrap justify-end gap-1 md:justify-start">
+                          <RouterStatusBadge status={r.status} adapter={adapter} />
+                          {r.maintenanceMode ? <Badge tone="warning">Maintenance</Badge> : null}
+                        </span>
                         <span className="block text-xs text-muted-foreground">{r.lastCheckedAt ? `Checked ${formatDateTime(r.lastCheckedAt, tz)}` : "Never checked"}</span>
                       </div>
                     </Td>
-                    <Td label="Authentication">{r.pppoeAuth === "RADIUS" ? "RADIUS" : "Local secrets"}</Td>
+                    <Td label="Health">
+                      <div className="min-w-0 text-right md:text-left">
+                        {r.health.score === null ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <Badge tone={r.health.grade === "good" ? "success" : r.health.grade === "fair" ? "warning" : "danger"}>
+                            {r.health.score} · {r.health.grade === "good" ? "Good" : r.health.grade === "fair" ? "Fair" : "Poor"}
+                          </Badge>
+                        )}
+                        <span className="block text-xs text-muted-foreground">{r.availability24h === null ? "No checks in 24 h" : `${r.availability24h}% reachable, 24 h`}</span>
+                      </div>
+                    </Td>
+                    <Td label="Load">
+                      {r.latest ? (
+                        <div className="min-w-0 text-right text-xs md:text-left">
+                          <span className="tabular block">
+                            CPU {r.latest.cpuLoad ?? "—"}% · Mem {r.latest.memoryUsedPct ?? "—"}%
+                          </span>
+                          <span className="block text-muted-foreground">Up {formatDuration(r.latest.uptimeSeconds)}{r.latest.simulated ? " · simulated" : ""}</span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </Td>
                     <Td label="Services">
                       <span className="flex flex-wrap gap-1">
-                        {r.pppoeEnabled ? <Badge tone="neutral">PPPoE</Badge> : null}
+                        {r.pppoeEnabled ? <Badge tone="neutral">{r.pppoeAuth === "RADIUS" ? "PPPoE · RADIUS" : "PPPoE"}</Badge> : null}
                         {r.hotspotEnabled ? <Badge tone="neutral">Hotspot</Badge> : null}
                       </span>
                     </Td>

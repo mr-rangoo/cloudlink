@@ -6,9 +6,10 @@ import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { decryptSecret, encryptSecret } from "@/server/security/crypto";
 import { checkRouterHost } from "@/server/domain/network-address";
-import { networkAdapter, networkAdapterName, type RouterTarget } from "@/server/integrations/network";
+import { networkAdapter, networkAdapterName, type RouterHealth, type RouterTarget } from "@/server/integrations/network";
 import { dispatchOperation, enqueueOperation, PermanentError } from "@/server/jobs/operations";
 import { searchTerm } from "@/server/services/common";
+import { availability, healthScore, type TelemetrySample } from "@/server/domain/router-telemetry";
 import { logger } from "@/server/observability/logger";
 import type { Prisma, Router } from "@/generated/prisma/client";
 
@@ -42,6 +43,10 @@ const routerFields = {
       z.literal("").transform(() => null),
     ])
     .nullable(),
+  /** Interface whose traffic is charted; empty = the first running Ethernet port. */
+  uplinkInterface: z.union([z.string().trim().regex(/^[A-Za-z0-9._<>/-]{1,64}$/, "Enter an interface name such as ether1"), z.literal("").transform(() => null)]).nullable(),
+  maintenanceMode: z.boolean(),
+  maintenanceNote: z.string().trim().max(200).nullable(),
 };
 
 const apiUsername = z.string().trim().min(1).max(64).refine(noControl, "Invalid characters").refine((v) => !/\s/.test(v), "Must not contain spaces");
@@ -74,6 +79,9 @@ export const routerUpdateInput = z
     branchId: routerFields.branchId.optional(),
     notes: routerFields.notes.optional(),
     hotspotDnsName: routerFields.hotspotDnsName.optional(),
+    uplinkInterface: routerFields.uplinkInterface.optional(),
+    maintenanceMode: routerFields.maintenanceMode.optional(),
+    maintenanceNote: routerFields.maintenanceNote.optional(),
     username: apiUsername.optional(),
     password: apiPassword.optional(),
   })
@@ -104,6 +112,9 @@ export const routerPublicSelect = {
   pppoeEnabled: true,
   hotspotEnabled: true,
   hotspotDnsName: true,
+  uplinkInterface: true,
+  maintenanceMode: true,
+  maintenanceNote: true,
   status: true,
   identity: true,
   routerOsVersion: true,
@@ -223,7 +234,7 @@ export async function updateRouter(ctx: StaffContext, id: string, raw: z.input<t
   if (input.host !== undefined || input.useTls !== undefined) assertConnectionPolicy(host, useTls);
   if (input.branchId !== undefined) await assertBranchAccess(ctx, input.branchId);
   const data: Prisma.RouterUpdateInput = {};
-  for (const key of ["name", "host", "apiPort", "useTls", "pppoeAuth", "pppoeEnabled", "hotspotEnabled", "hotspotDnsName", "branchId", "notes"] as const) {
+  for (const key of ["name", "host", "apiPort", "useTls", "pppoeAuth", "pppoeEnabled", "hotspotEnabled", "hotspotDnsName", "uplinkInterface", "maintenanceMode", "maintenanceNote", "branchId", "notes"] as const) {
     if (input[key] !== undefined) (data as Record<string, unknown>)[key] = input[key];
   }
   const rotated = input.username !== undefined && input.password !== undefined;
@@ -274,6 +285,28 @@ export async function listRouters(ctx: StaffContext, query: z.infer<typeof route
     db.branch.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true, name: true } }),
   ]);
   const count = <T extends { _count: { _all: number } }>(list: T[], key: (t: T) => string | null, id: string) => list.find((x) => key(x) === id)?._count._all ?? 0;
+  const now = new Date();
+  const [samples, byStatus, maintenance] = await Promise.all([
+    db.routerMetricSample.findMany({
+      where: { organizationId: ctx.organizationId, routerId: { in: ids }, takenAt: { gte: new Date(now.getTime() - 86_400_000) } },
+      select: { routerId: true, takenAt: true, reachable: true, simulated: true, responseMs: true, cpuLoad: true, memoryUsedPct: true, diskUsedPct: true, uptimeSeconds: true },
+      orderBy: { takenAt: "asc" },
+    }),
+    db.router.groupBy({ by: ["status"], where: { ...listWhere(ctx), archivedAt: null }, _count: { _all: true } }),
+    db.router.count({ where: { ...listWhere(ctx), archivedAt: null, maintenanceMode: true } }),
+  ]);
+  const telemetry = (id: string) => {
+    const mine: TelemetrySample[] = samples
+      .filter((x) => x.routerId === id)
+      .map((x) => ({ ...x, temperatureC: null, rxBps: null, txBps: null, sessions: null }));
+    const latestUp = [...mine].reverse().find((x) => x.reachable);
+    return {
+      health: healthScore(mine, now),
+      availability24h: availability(mine),
+      latest: latestUp ? { cpuLoad: latestUp.cpuLoad, memoryUsedPct: latestUp.memoryUsedPct, uptimeSeconds: latestUp.uptimeSeconds, simulated: latestUp.simulated } : null,
+    };
+  };
+  const statusCount = (st: string) => byStatus.find((b) => b.status === st)?._count._all ?? 0;
   return {
     rows: rows.map((r) => ({
       ...r,
@@ -281,8 +314,16 @@ export async function listRouters(ctx: StaffContext, query: z.infer<typeof route
       provisionedSubscriptions: count(subs, (s) => s.networkRouterId, r.id),
       activeSessions: count(sessions, (s) => s.routerId, r.id),
       openAlerts: count(alerts, (a) => a.routerId, r.id),
+      ...telemetry(r.id),
     })),
     total,
+    summary: {
+      total: byStatus.reduce((a, b) => a + b._count._all, 0),
+      online: statusCount("ONLINE"),
+      offline: statusCount("OFFLINE") + statusCount("ERROR"),
+      unknown: statusCount("UNKNOWN"),
+      maintenance,
+    },
     adapter: networkAdapterName(),
   };
 }
@@ -300,13 +341,14 @@ export async function routerOptions(ctx: StaffContext, purpose: "pppoe" | "hotsp
 export async function getRouter(ctx: StaffContext, id: string) {
   requirePermission(ctx, "routers.read");
   const router = await findRouter(ctx, id);
-  const [credential, branch, provisioned, openAlerts] = await Promise.all([
+  const [credential, branch, provisioned, openAlerts, activeSessions] = await Promise.all([
     db.routerCredential.findUnique({ where: { routerId: id }, select: { updatedAt: true } }),
     router.branchId ? db.branch.findUnique({ where: { id: router.branchId }, select: { name: true } }) : null,
     db.subscription.count({ where: { organizationId: ctx.organizationId, networkRouterId: id } }),
     db.routerAlert.count({ where: { organizationId: ctx.organizationId, routerId: id, status: "OPEN" } }),
+    db.networkSession.count({ where: { organizationId: ctx.organizationId, routerId: id, endedAt: null } }),
   ]);
-  return { ...router, branchName: branch?.name ?? null, credentialsUpdatedAt: credential?.updatedAt ?? null, provisionedSubscriptions: provisioned, openAlerts, adapter: networkAdapterName() };
+  return { ...router, branchName: branch?.name ?? null, credentialsUpdatedAt: credential?.updatedAt ?? null, provisionedSubscriptions: provisioned, openAlerts, activeSessions, adapter: networkAdapterName() };
 }
 
 /** Queue a health check for one router (all router I/O happens in the worker). */
@@ -332,21 +374,54 @@ async function openAlert(organizationId: string, data: { routerId?: string | nul
 }
 export { openAlert };
 
-/** Check one router or every active router of an organization; records status and raises/resolves offline alerts. */
+const pct = (v: number | undefined) => (v === undefined || !Number.isFinite(v) ? null : Math.min(100, Math.max(0, Math.round(v))));
+const nonNegative = (v: bigint | undefined) => (v === undefined || v < BigInt(0) ? null : v);
+
+/** One telemetry row per check (charts, health score, reachability heatmap). */
+function sampleOf(router: Router, health: RouterHealth, responseMs: number, sessions: number, takenAt: Date): Prisma.RouterMetricSampleCreateManyInput {
+  const m = health.online ? (health.metrics ?? {}) : {};
+  return {
+    organizationId: router.organizationId,
+    routerId: router.id,
+    takenAt,
+    reachable: health.online,
+    simulated: Boolean(health.simulated),
+    responseMs: health.online ? Math.max(0, Math.round(responseMs)) : null,
+    cpuLoad: pct(m.cpuLoad),
+    memoryUsedPct: pct(m.memoryUsedPct),
+    diskUsedPct: pct(m.diskUsedPct),
+    temperatureC: m.temperatureC !== undefined && Math.abs(m.temperatureC) < 1000 ? m.temperatureC.toFixed(1) : null,
+    uptimeSeconds: m.uptimeSeconds !== undefined && m.uptimeSeconds >= 0 ? Math.min(m.uptimeSeconds, 2_147_483_647) : null,
+    rxBps: nonNegative(m.rxBps),
+    txBps: nonNegative(m.txBps),
+    sessions: health.online ? sessions : null,
+  };
+}
+
+/**
+ * Check one router or every active router of an organization: records status and a telemetry sample, and raises or
+ * resolves offline alerts (not while the router is in maintenance mode).
+ */
 export async function runRouterHealthChecks(organizationId: string, routerId?: string) {
   const routers = await db.router.findMany({ where: { organizationId, archivedAt: null, ...(routerId ? { id: routerId } : {}) } });
   const adapter = networkAdapter();
   let online = 0;
   for (const router of routers) {
     const now = new Date();
-    let health: { online: boolean; simulated?: boolean; identity?: string; version?: string; board?: string; detail: string };
+    let health: RouterHealth;
+    const started = Date.now();
     try {
       assertExecutable(router);
-      health = await adapter.health(await routerTarget(router));
+      health = await adapter.health(await routerTarget(router), { uplinkInterface: router.uplinkInterface });
     } catch (err) {
       health = { online: false, detail: err instanceof Error ? err.message : "Health check failed" };
     }
+    const responseMs = Date.now() - started;
     if (health.online) online++;
+    if (adapter.name !== "disabled") {
+      const sessions = await db.networkSession.count({ where: { organizationId, routerId: router.id, endedAt: null } });
+      await db.routerMetricSample.createMany({ data: [sampleOf(router, health, responseMs, sessions, now)] });
+    }
     const status = health.simulated && health.online ? "UNKNOWN" : health.online ? "ONLINE" : "OFFLINE";
     await db.router.update({
       where: { id: router.id },
@@ -358,8 +433,8 @@ export async function runRouterHealthChecks(organizationId: string, routerId?: s
       },
     });
     if (!health.online) {
-      await openAlert(organizationId, { routerId: router.id, type: "ROUTER_OFFLINE", severity: "warning", message: `${router.name} is unreachable: ${health.detail}`.slice(0, 300) });
-      logger.warn({ routerId: router.id, organizationId }, "router health check failed");
+      if (!router.maintenanceMode) await openAlert(organizationId, { routerId: router.id, type: "ROUTER_OFFLINE", severity: "warning", message: `${router.name} is unreachable: ${health.detail}`.slice(0, 300) });
+      logger.warn({ routerId: router.id, organizationId, maintenance: router.maintenanceMode }, "router health check failed");
     } else {
       await db.routerAlert.updateMany({ where: { organizationId, routerId: router.id, type: "ROUTER_OFFLINE", status: "OPEN" }, data: { status: "RESOLVED", resolvedAt: now } });
     }

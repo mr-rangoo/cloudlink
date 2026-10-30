@@ -11,6 +11,7 @@ import { db } from "@/server/db/client";
 import { generateExport } from "@/server/services/exports";
 import { enforcePlanSchedules, ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperations, syncNetworkSessions } from "@/server/services/network";
 import { runRouterHealthChecks } from "@/server/services/routers";
+import { pruneRouterTelemetry } from "@/server/services/router-insights";
 import { processStkEvent, runStatusQuery } from "@/server/services/mobile-money";
 import { pruneRoutineOperations } from "@/server/jobs/scheduler";
 import { pruneAssistantConversations } from "@/server/assistant/service";
@@ -92,12 +93,13 @@ export const operationHandlers: OperationHandlers = {
     await processStkEvent(eventId, { final: op.attempts >= op.maxAttempts });
   },
 
-  /** Daily: remove old succeeded routine operations (session syncs, health checks) and expired assistant chats. */
+  /** Daily: remove old succeeded routine operations (session syncs, health checks), router telemetry past retention and expired assistant chats. */
   "maintenance.prune": async (op) => {
     if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
     const operations = await pruneRoutineOperations(op.organizationId);
     const chats = await pruneAssistantConversations(op.organizationId);
-    return { operations: operations.deleted, assistantChats: chats.deleted };
+    const telemetry = await pruneRouterTelemetry(op.organizationId);
+    return { operations: operations.deleted, assistantChats: chats.deleted, routerSamples: telemetry.samples, routerSnapshots: telemetry.snapshots };
   },
 
   /** Switch scheduled plans (e.g. night plans) on or off at their time-window boundaries. */

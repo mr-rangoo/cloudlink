@@ -18,6 +18,7 @@ import { auditQuery, branchInput, branchUpdateInput, roleInput, setPasswordInput
 import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/inventory";
 import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput } from "@/server/services/vouchers";
 import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from "@/server/services/routers";
+import { telemetryQuery } from "@/server/services/router-insights";
 import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
 import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } from "@/server/services/mobile-money";
 import { mpesaConfigInput } from "@/server/services/mpesa-config";
@@ -239,8 +240,11 @@ export const operations: Operation[] = [
   { method: "post", path: "/routers/:id/archive", summary: "Archive a router (refused while subscriptions are provisioned on it)", tag: "Network", auth: "session", permission: "routers.write" },
   { method: "post", path: "/routers/:id/health-check", summary: "Queue a reachability check (runs in the worker)", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },
   { method: "post", path: "/routers/:id/sync-plans", summary: "Push every plan this router uses as a router profile", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },
+  { method: "get", path: "/routers/:id/telemetry", summary: "Health score, resource/traffic series, 7-day reachability heatmap and outages (from health checks)", tag: "Network", auth: "session", permission: "routers.read", query: telemetryQuery },
+  { method: "get", path: "/routers/:id/snapshots", summary: "Latest fetched router logs and diagnosis checks", tag: "Network", auth: "session", permission: "network.read" },
+  { method: "get", path: "/routers/:id/report", summary: "Router reports: collections (payments.read only), sessions, peak hours, subscriptions by status", tag: "Network", auth: "session", permission: "routers.read" },
   { method: "get", path: "/routers/:id/sessions", summary: "Sessions seen on one router", tag: "Network", auth: "session", permission: "network.read", query: sessionListQuery.omit({ routerId: true }) },
-  { method: "post", path: "/routers/:id/operations", summary: "Request an allowlisted operation (pppoe.sync | session.disconnect)", tag: "Network", auth: "session", permission: "network.operate", body: routerOperationInput, responses: { "202": "Queued" } },
+  { method: "post", path: "/routers/:id/operations", summary: "Request an allowlisted operation: pppoe.sync, session.disconnect, router.diagnose, router.logs; with routers.write also router.reboot, router.identity, router.clock, hotspot.walled_garden, hotspot.login_page", tag: "Network", auth: "session", permission: "network.operate", body: routerOperationInput, responses: { "202": "Queued" } },
   { method: "get", path: "/network/operations", summary: "Durable network operations (status, attempts, verification)", tag: "Network", auth: "session", permission: "network.read", query: operationListQuery },
   { method: "get", path: "/network/operations/:id", summary: "Operation with its append-only attempt log and alerts", tag: "Network", auth: "session", permission: "network.read" },
   { method: "post", path: "/network/operations/:id/retry", summary: "Re-queue a failed operation", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },

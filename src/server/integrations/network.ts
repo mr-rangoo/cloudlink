@@ -94,6 +94,7 @@ export interface OpResult {
   /** true = read back and matched; false = read back and did NOT match; null = verification not supported. */
   verified: boolean | null;
   detail: string;
+  snapshot?: OpSnapshot;
 }
 
 export interface RouterHealth {
@@ -102,8 +103,49 @@ export interface RouterHealth {
   identity?: string;
   version?: string;
   board?: string;
+  metrics?: RouterMetrics;
   detail: string;
 }
+
+/** Resources read during a health check. Every field is optional: older boards do not report all of them. */
+export interface RouterMetrics {
+  cpuLoad?: number;
+  memoryUsedPct?: number;
+  diskUsedPct?: number;
+  temperatureC?: number;
+  uptimeSeconds?: number;
+  /** Uplink traffic in bits per second, from the router's point of view (rx = received). */
+  rxBps?: bigint;
+  txBps?: bigint;
+  interfaceName?: string;
+}
+
+/** What a diagnosis checks against (the organization's expectations for this router). */
+export interface DiagnosisContext {
+  pppoe: boolean;
+  hotspot: boolean;
+  radiusAddress: string | null;
+  walledGardenHost: string | null;
+  timezone: string;
+  /** Router profiles Cloudlink's plans use on this router. */
+  profiles: Array<{ name: string; kind: "PPPOE" | "HOTSPOT" }>;
+}
+
+export interface DiagnosisCheck {
+  id: string;
+  label: string;
+  status: "ok" | "warning" | "problem" | "skipped";
+  detail: string;
+}
+
+export interface LogLine {
+  time: string;
+  topics: string;
+  message: string;
+}
+
+/** Read-only results some operations bring back (stored as router snapshots). */
+export type OpSnapshot = { kind: "diagnosis"; data: { checks: DiagnosisCheck[] } } | { kind: "logs"; data: { lines: LogLine[] } };
 
 export interface ActiveSession {
   /** BINDING = a device let through by MAC (no login), seen in the hotspot host table. */
@@ -137,8 +179,19 @@ export interface NetworkAdapter {
   upsertProfile(r: RouterTarget, p: ServiceProfile, x: ExecContext): Promise<OpResult>;
   setHotspotAccess(r: RouterTarget, a: HotspotAccess, x: ExecContext): Promise<OpResult>;
   setDeviceBinding(r: RouterTarget, b: DeviceBinding, x: ExecContext): Promise<OpResult>;
-  health(r: RouterTarget): Promise<RouterHealth>;
+  health(r: RouterTarget, opts?: { uplinkInterface?: string | null }): Promise<RouterHealth>;
   listSessions(r: RouterTarget, hint?: SessionHint): Promise<ActiveSession[]>;
+  /** Restart the router. The connection drops as the router goes down, which counts as sent (not verifiable). */
+  reboot(r: RouterTarget, x: ExecContext): Promise<OpResult>;
+  setIdentity(r: RouterTarget, name: string, x: ExecContext): Promise<OpResult>;
+  /** Time zone and NTP client, so logs, schedules and expiries line up. */
+  syncClock(r: RouterTarget, timezone: string, x: ExecContext): Promise<OpResult>;
+  /** Let devices reach Cloudlink's captive portal before logging in (HTTP and HTTPS entries). */
+  syncWalledGarden(r: RouterTarget, host: string, x: ExecContext): Promise<OpResult>;
+  /** Download Cloudlink's login page into every hotspot profile's directory and allow PAP login. */
+  installLoginPage(r: RouterTarget, url: string, x: ExecContext): Promise<OpResult>;
+  diagnose(r: RouterTarget, ctx: DiagnosisContext): Promise<DiagnosisCheck[]>;
+  readLogs(r: RouterTarget, limit: number): Promise<LogLine[]>;
 }
 
 // ───────── Error classification ─────────
@@ -198,12 +251,73 @@ class MockNetworkAdapter implements NetworkAdapter {
   }
   async health(r: RouterTarget): Promise<RouterHealth> {
     if (r.name.includes("[offline]")) return { online: false, simulated: true, detail: "Mock router is offline (simulated)" };
-    return { online: true, simulated: true, detail: "Mock adapter: simulated health check. No router was contacted." };
+    return { online: true, simulated: true, metrics: simulatedMetrics(r.id, new Date()), detail: "Mock adapter: simulated health check. No router was contacted." };
+  }
+  async reboot(r: RouterTarget, x: ExecContext) {
+    this.gate(r, x);
+    return this.sim("the router would restart");
+  }
+  async setIdentity(r: RouterTarget, name: string, x: ExecContext) {
+    this.gate(r, x);
+    return this.sim(`the router identity would be set to ${name}`);
+  }
+  async syncClock(r: RouterTarget, timezone: string, x: ExecContext) {
+    this.gate(r, x);
+    return this.sim(`the time zone would be set to ${timezone} with NTP enabled`);
+  }
+  async syncWalledGarden(r: RouterTarget, host: string, x: ExecContext) {
+    this.gate(r, x);
+    return this.sim(`${host} would be allowed before login (HTTP and HTTPS)`);
+  }
+  async installLoginPage(r: RouterTarget, url: string, x: ExecContext) {
+    this.gate(r, x);
+    return this.sim(`the hotspot login page would be downloaded from ${new URL(url).host}`);
+  }
+  async diagnose(r: RouterTarget, ctx: DiagnosisContext): Promise<DiagnosisCheck[]> {
+    if (r.name.includes("[offline]")) throw new RetryableError("Mock router is offline (simulated timeout)", "ROUTER_TIMEOUT");
+    // Nothing is checked, so nothing is reported as passing: every check is "skipped" with what it would compare.
+    const sim = "Not checked: the mock adapter does not contact routers.";
+    return [
+      { id: "api", label: "API login", status: "skipped", detail: sim },
+      { id: "clock", label: "Clock and time zone", status: "skipped", detail: `Would expect ${ctx.timezone}. ${sim}` },
+      { id: "pppoe", label: "PPPoE server", status: "skipped", detail: ctx.pppoe ? sim : "PPPoE is not used on this router." },
+      { id: "hotspot", label: "Hotspot server", status: "skipped", detail: ctx.hotspot ? sim : "The hotspot is not used on this router." },
+      { id: "profiles", label: "Plan profiles", status: "skipped", detail: `${ctx.profiles.length} profile(s) expected. ${sim}` },
+    ];
+  }
+  async readLogs(r: RouterTarget, limit: number): Promise<LogLine[]> {
+    if (r.name.includes("[offline]")) throw new RetryableError("Mock router is offline (simulated timeout)", "ROUTER_TIMEOUT");
+    const now = new Date();
+    return [
+      { time: now.toISOString(), topics: "system,info", message: "Simulated log line: the mock adapter does not read router logs." },
+      { time: new Date(now.getTime() - 60_000).toISOString(), topics: "hotspot,info", message: "Simulated: a device logged in." },
+    ].slice(0, limit);
   }
   async listSessions(r: RouterTarget, hint?: SessionHint): Promise<ActiveSession[]> {
     if (r.name.includes("[offline]")) throw new RetryableError("Mock router is offline (simulated timeout)", "ROUTER_TIMEOUT");
     return hint ? simulatedSessions(hint, new Date()) : [];
   }
+}
+
+/**
+ * Deterministic resource readings for the mock adapter (same router and minute → same values), so charts and the
+ * health score can be exercised without hardware. Samples taken this way are stored as simulated.
+ */
+export function simulatedMetrics(routerId: string, now: Date): RouterMetrics {
+  const h = fnv1a(routerId);
+  const t = now.getTime() / 1000;
+  const wave = (period: number, phase: number) => 0.5 + 0.5 * Math.sin((2 * Math.PI * t) / period + phase);
+  const evening = wave(86_400, (h % 628) / 100);
+  return {
+    cpuLoad: Math.round(8 + 45 * evening * wave(1800, h % 7)),
+    memoryUsedPct: Math.round(40 + 25 * evening),
+    diskUsedPct: 30 + (h % 25),
+    temperatureC: Math.round(380 + 80 * evening) / 10,
+    uptimeSeconds: Math.floor(t - (h % 2_000_000)) % 2_592_000,
+    rxBps: BigInt(Math.round(2_000_000 + 38_000_000 * evening * wave(900, h % 5))),
+    txBps: BigInt(Math.round(400_000 + 6_000_000 * evening * wave(1100, h % 3))),
+    interfaceName: "ether1",
+  };
 }
 
 /** Simulated PPPoE users reconnect every three days, so uptime grows and resets like a real line. */
@@ -311,6 +425,18 @@ export function rosDuration(seconds: number): string {
 }
 
 const yes = (v: string | undefined) => v === "true" || v === "yes";
+
+function intOf(v: string | undefined): number | undefined {
+  return v && /^\d{1,6}$/.test(v) ? Number(v) : undefined;
+}
+
+/** Percentage used from RouterOS free/total readings (bytes); undefined when either is missing. */
+export function usedPct(free: string | undefined, total: string | undefined): number | undefined {
+  const f = Number(free);
+  const t = Number(total);
+  if (!free || !total || !Number.isFinite(f) || !Number.isFinite(t) || t <= 0) return undefined;
+  return Math.min(100, Math.max(0, Math.round(((t - f) / t) * 100)));
+}
 
 async function findByName(c: RouterOsClient, path: string, name: string) {
   const rows = await c.command([`${path}/print`, query("name", name)]);
@@ -485,17 +611,201 @@ class RouterOsAdapter implements NetworkAdapter {
     }
   }
 
-  async health(r: RouterTarget): Promise<RouterHealth> {
+  async health(r: RouterTarget, opts: { uplinkInterface?: string | null } = {}): Promise<RouterHealth> {
     try {
       return await withRouter(rosOpts(r), async (c) => {
         const [res] = await c.command(["/system/resource/print"]);
         const [id] = await c.command(["/system/identity/print"]);
-        return { online: true, identity: id?.name, version: res?.version, board: res?.["board-name"], detail: `Uptime ${res?.uptime ?? "unknown"}, CPU ${res?.["cpu-load"] ?? "?"}%` };
+        const metrics: RouterMetrics = {
+          cpuLoad: intOf(res?.["cpu-load"]),
+          memoryUsedPct: usedPct(res?.["free-memory"], res?.["total-memory"]),
+          diskUsedPct: usedPct(res?.["free-hdd-space"], res?.["total-hdd-space"]),
+          uptimeSeconds: parseUptime(res?.uptime),
+        };
+        // Optional readings: boards without sensors or the interface simply leave them out.
+        const health = await c.command(["/system/health/print"]).catch(() => [] as Array<Record<string, string>>);
+        const temp = health.find((row) => row.name === "temperature" || row.name === "cpu-temperature")?.value ?? health[0]?.temperature;
+        if (temp !== undefined && Number.isFinite(Number(temp))) metrics.temperatureC = Number(temp);
+        const iface = opts.uplinkInterface || (await c.command(["/interface/print", query("type", "ether"), query("running", "true")]).catch(() => []))[0]?.name;
+        if (iface) {
+          const [traffic] = await c.command(["/interface/monitor-traffic", attr("interface", iface), attr("once", "")]).catch(() => [] as Array<Record<string, string>>);
+          metrics.rxBps = counter(traffic?.["rx-bits-per-second"]);
+          metrics.txBps = counter(traffic?.["tx-bits-per-second"]);
+          metrics.interfaceName = iface;
+        }
+        return { online: true, identity: id?.name, version: res?.version, board: res?.["board-name"], metrics, detail: `Uptime ${res?.uptime ?? "unknown"}, CPU ${res?.["cpu-load"] ?? "?"}%` };
       });
     } catch (err) {
       if (err instanceof RouterOsTrapError && err.category === "auth") return { online: false, detail: "Login rejected. Check the API user and password." };
       if (err instanceof RouterOsConnectionError) return { online: false, detail: err.message };
       return { online: false, detail: "Health check failed" };
+    }
+  }
+
+  async reboot(r: RouterTarget): Promise<OpResult> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        try {
+          await c.command(["/system/reboot"]);
+        } catch (err) {
+          // The router drops the connection as it goes down: that is the expected answer to a reboot.
+          if (!(err instanceof RouterOsConnectionError)) throw err;
+        }
+        return { status: "SUCCEEDED" as const, verified: null, detail: "Reboot command sent; the router restarts and is back in a minute or two" };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
+  async setIdentity(r: RouterTarget, name: string): Promise<OpResult> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        await c.command(["/system/identity/set", attr("name", name)]);
+        const [check] = await c.command(["/system/identity/print"]);
+        return { status: "SUCCEEDED" as const, verified: check?.name === name, detail: `Router identity set to ${name}` };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
+  async syncClock(r: RouterTarget, timezone: string): Promise<OpResult> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        await c.command(["/system/clock/set", attr("time-zone-autodetect", "no"), attr("time-zone-name", timezone)]).catch(async (err) => {
+          if (!(err instanceof RouterOsTrapError)) throw err;
+          await c.command(["/system/clock/set", attr("time-zone-name", timezone)]); // RouterOS 6 has no autodetect switch
+        });
+        // RouterOS 7 takes server names; RouterOS 6 calls the field server-dns-names.
+        const ntp = await c
+          .command(["/system/ntp/client/set", attr("enabled", "yes"), attr("servers", "pool.ntp.org")])
+          .then(() => "enabled")
+          .catch(() =>
+            c
+              .command(["/system/ntp/client/set", attr("enabled", "yes"), attr("server-dns-names", "pool.ntp.org")])
+              .then(() => "enabled")
+              .catch(() => "not available"),
+          );
+        const [clock] = await c.command(["/system/clock/print"]);
+        return { status: "SUCCEEDED" as const, verified: clock?.["time-zone-name"] === timezone, detail: `Time zone ${timezone}; NTP client ${ntp}` };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
+  async syncWalledGarden(r: RouterTarget, host: string): Promise<OpResult> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        for (const path of ["/ip/hotspot/walled-garden", "/ip/hotspot/walled-garden/ip"]) {
+          for (const row of await c.command([`${path}/print`, query("comment", "cloudlink")])) await c.command([`${path}/remove`, attr(".id", row[".id"]!)]);
+        }
+        await c.command(["/ip/hotspot/walled-garden/add", attr("dst-host", host), attr("comment", "cloudlink")]);
+        await c.command(["/ip/hotspot/walled-garden/ip/add", attr("dst-host", host), attr("action", "accept"), attr("comment", "cloudlink")]);
+        const http = await c.command(["/ip/hotspot/walled-garden/print", query("comment", "cloudlink")]);
+        const ip = await c.command(["/ip/hotspot/walled-garden/ip/print", query("comment", "cloudlink")]);
+        return { status: "SUCCEEDED" as const, verified: http.length === 1 && ip.length === 1, detail: `${host} allowed before login (HTTP and HTTPS)` };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
+  async installLoginPage(r: RouterTarget, url: string): Promise<OpResult> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        const profiles = await c.command(["/ip/hotspot/profile/print"]);
+        if (!profiles.length) throw new PermanentError("The router has no hotspot profile. Set up the hotspot first.", "NO_HOTSPOT_PROFILE");
+        const files: string[] = [];
+        for (const p of profiles) {
+          const dir = p["html-directory"] || "hotspot";
+          await c.command(["/tool/fetch", attr("url", url), attr("dst-path", `${dir}/login.html`)]);
+          await c.command(["/ip/hotspot/profile/set", attr(".id", p[".id"]!), attr("login-by", "cookie,http-chap,http-pap")]);
+          files.push(`${dir}/login.html`);
+        }
+        let present = 0;
+        for (const f of files) present += (await c.command(["/file/print", query("name", f)])).length ? 1 : 0;
+        return { status: "SUCCEEDED" as const, verified: present === files.length, detail: `Login page installed in ${files.join(", ")}; plain-password login allowed` };
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
+  async diagnose(r: RouterTarget, ctx: DiagnosisContext): Promise<DiagnosisCheck[]> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        const checks: DiagnosisCheck[] = [];
+        const read = (words: string[]) => c.command(words).catch((err) => (err instanceof RouterOsTrapError ? null : Promise.reject(err)));
+        const [res] = await c.command(["/system/resource/print"]);
+        const major = Number((res?.version ?? "").split(".")[0]);
+        checks.push({ id: "api", label: "API login", status: "ok", detail: `Logged in. RouterOS ${res?.version ?? "unknown"} on ${res?.["board-name"] ?? "unknown board"}.` });
+        checks.push({ id: "version", label: "RouterOS version", status: major >= 7 ? "ok" : "warning", detail: major >= 7 ? "RouterOS 7." : "RouterOS 6: supported, but version 7 is recommended." });
+        const mem = usedPct(res?.["free-memory"], res?.["total-memory"]);
+        const disk = usedPct(res?.["free-hdd-space"], res?.["total-hdd-space"]);
+        const cpu = intOf(res?.["cpu-load"]);
+        const busy = [cpu !== undefined && cpu > 85 ? `CPU ${cpu}%` : null, mem !== undefined && mem > 90 ? `memory ${mem}% used` : null, disk !== undefined && disk > 90 ? `storage ${disk}% used` : null].filter(Boolean);
+        checks.push({ id: "resources", label: "Resources", status: busy.length ? "warning" : "ok", detail: busy.length ? `High: ${busy.join(", ")}.` : `CPU ${cpu ?? "?"}%, memory ${mem ?? "?"}% used, storage ${disk ?? "?"}% used.` });
+
+        const [clock] = (await read(["/system/clock/print"])) ?? [];
+        const tz = clock?.["time-zone-name"];
+        checks.push({ id: "clock", label: "Clock and time zone", status: tz === ctx.timezone ? "ok" : "warning", detail: tz === ctx.timezone ? `${tz}.` : `Time zone is ${tz ?? "unknown"}; expected ${ctx.timezone}. Use “Sync router time”.` });
+        const [ntp] = (await read(["/system/ntp/client/print"])) ?? [];
+        checks.push({ id: "ntp", label: "NTP client", status: yes(ntp?.enabled) ? "ok" : "warning", detail: yes(ntp?.enabled) ? "Enabled." : "Not enabled: the clock may drift. Use “Sync router time”." });
+
+        if (ctx.pppoe) {
+          const servers = (await read(["/interface/pppoe-server/server/print"])) ?? [];
+          const on = servers.filter((s) => !yes(s.disabled));
+          checks.push({ id: "pppoe", label: "PPPoE server", status: on.length ? "ok" : "problem", detail: on.length ? `${on.length} PPPoE server(s) on ${on.map((s) => s.interface).join(", ")}.` : "No enabled PPPoE server: customers cannot dial in." });
+        } else checks.push({ id: "pppoe", label: "PPPoE server", status: "skipped", detail: "PPPoE is not used on this router." });
+
+        if (ctx.hotspot) {
+          const servers = (await read(["/ip/hotspot/print"])) ?? [];
+          const on = servers.filter((s) => !yes(s.disabled));
+          checks.push({ id: "hotspot", label: "Hotspot server", status: on.length ? "ok" : "problem", detail: on.length ? `${on.length} hotspot server(s) on ${on.map((s) => s.interface).join(", ")}.` : "No enabled hotspot server: the captive portal cannot appear." });
+          const profiles = (await read(["/ip/hotspot/profile/print"])) ?? [];
+          const pap = profiles.length > 0 && profiles.every((p) => (p["login-by"] ?? "").includes("http-pap"));
+          checks.push({ id: "login", label: "Portal login method", status: pap ? "ok" : "warning", detail: pap ? "Plain-password login allowed." : "HTTP PAP login is off, so the portal cannot sign devices in. Use “Reinstall hotspot login page”." });
+          if (ctx.walledGardenHost) {
+            const http = (await read(["/ip/hotspot/walled-garden/print"])) ?? [];
+            const ip = (await read(["/ip/hotspot/walled-garden/ip/print"])) ?? [];
+            const ok = http.some((w) => w["dst-host"] === ctx.walledGardenHost) && ip.some((w) => w["dst-host"] === ctx.walledGardenHost);
+            checks.push({ id: "walled-garden", label: "Walled garden", status: ok ? "ok" : "warning", detail: ok ? `${ctx.walledGardenHost} reachable before login.` : `${ctx.walledGardenHost} is not fully in the walled garden. Use “Resync walled garden”.` });
+          }
+        } else checks.push({ id: "hotspot", label: "Hotspot server", status: "skipped", detail: "The hotspot is not used on this router." });
+
+        if (ctx.radiusAddress) {
+          const radius = (await read(["/radius/print"])) ?? [];
+          const ok = radius.some((x) => x.address === ctx.radiusAddress && (x.service ?? "").includes("ppp"));
+          checks.push({ id: "radius", label: "RADIUS", status: ok ? "ok" : "problem", detail: ok ? `PPP authenticates against ${ctx.radiusAddress}.` : `No RADIUS entry for ${ctx.radiusAddress} with service ppp.` });
+        }
+
+        const services = (await read(["/ip/service/print"])) ?? [];
+        const open = services.filter((s) => (s.name === "api" || s.name === "api-ssl") && !yes(s.disabled) && !s.address);
+        checks.push({ id: "api-access", label: "API access restricted", status: open.length ? "warning" : "ok", detail: open.length ? `${open.map((s) => s.name).join(", ")} accepts connections from any address. Run the setup command to restrict it.` : "API limited to management addresses." });
+
+        if (ctx.profiles.length) {
+          const ppp = new Set(((await read(["/ppp/profile/print"])) ?? []).map((p) => p.name));
+          const hs = new Set(((await read(["/ip/hotspot/user/profile/print"])) ?? []).map((p) => p.name));
+          const missing = ctx.profiles.filter((p) => !(p.kind === "PPPOE" ? ppp : hs).has(p.name)).map((p) => p.name);
+          checks.push({ id: "profiles", label: "Plan profiles", status: missing.length ? "warning" : "ok", detail: missing.length ? `Missing: ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? "…" : ""}. Use “Push plans”.` : `All ${ctx.profiles.length} plan profile(s) present.` });
+        }
+        return checks;
+      });
+    } catch (err) {
+      classify(err);
+    }
+  }
+
+  async readLogs(r: RouterTarget, limit: number): Promise<LogLine[]> {
+    try {
+      return await withRouter(rosOpts(r), async (c) => {
+        const rows = await c.command(["/log/print"]);
+        return rows.slice(-limit).reverse().map((l) => ({ time: l.time ?? "", topics: l.topics ?? "", message: (l.message ?? "").slice(0, 500) }));
+      });
+    } catch (err) {
+      classify(err);
     }
   }
 
@@ -557,6 +867,27 @@ class DisabledNetworkAdapter implements NetworkAdapter {
   }
   async listSessions(): Promise<ActiveSession[]> {
     return [];
+  }
+  async reboot(): Promise<OpResult> {
+    this.fail();
+  }
+  async setIdentity(): Promise<OpResult> {
+    this.fail();
+  }
+  async syncClock(): Promise<OpResult> {
+    this.fail();
+  }
+  async syncWalledGarden(): Promise<OpResult> {
+    this.fail();
+  }
+  async installLoginPage(): Promise<OpResult> {
+    this.fail();
+  }
+  async diagnose(): Promise<DiagnosisCheck[]> {
+    this.fail();
+  }
+  async readLogs(): Promise<LogLine[]> {
+    this.fail();
   }
 }
 

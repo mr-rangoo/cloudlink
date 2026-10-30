@@ -7,7 +7,7 @@ import { audit } from "@/server/audit/audit";
 import { AppError, notFound } from "@/server/errors";
 import { decryptSecret, encryptSecret } from "@/server/security/crypto";
 import { dispatchOperation, enqueueOperation, PermanentError, RetryableError } from "@/server/jobs/operations";
-import { networkAdapter, networkAdapterName, type ActiveSession, type NetworkAdapter, type OpResult, type SessionHint } from "@/server/integrations/network";
+import { networkAdapter, networkAdapterName, type ActiveSession, type DiagnosisContext, type NetworkAdapter, type OpResult, type SessionHint } from "@/server/integrations/network";
 import { routerRateLimit, type RateSpec } from "@/lib/plans";
 import { radiusActiveSessions, radiusConfigured, radiusRemoveUser, radiusUpsertUser } from "@/server/integrations/radius";
 import { assertExecutable, openAlert, routerTarget } from "@/server/services/routers";
@@ -40,10 +40,19 @@ export const NETWORK_OPERATION_TYPES = [
   "hotspot.access.disable",
   "device.binding.enable",
   "device.binding.disable",
+  "router.reboot",
+  "router.identity",
+  "router.clock",
+  "hotspot.walled_garden",
+  "hotspot.login_page",
+  "router.diagnose",
+  "router.logs",
 ] as const;
 export type NetworkOperationType = (typeof NETWORK_OPERATION_TYPES)[number];
 /** Operations that set a subscription's access state; only the newest one decides its network status. */
 const STATE_TYPES: NetworkOperationType[] = ["pppoe.enable", "pppoe.disable", "hotspot.access.enable", "hotspot.access.disable", "device.binding.enable", "device.binding.disable"];
+/** Router maintenance actions: a newer request of the same type for the same router replaces a queued older one. */
+const ROUTER_TYPES: NetworkOperationType[] = ["router.identity", "router.clock", "hotspot.walled_garden", "hotspot.login_page", "router.diagnose", "router.logs"];
 const isEnableType = (t: string) => t.endsWith(".enable");
 const TERMINAL: NetworkOperationStatus[] = ["SUCCEEDED", "SIMULATED", "FAILED", "CANCELLED"];
 export const NETWORK_MAX_ATTEMPTS = 5;
@@ -60,6 +69,13 @@ export const OPERATION_LABEL: Record<NetworkOperationType, string> = {
   "hotspot.access.disable": "Disable hotspot access",
   "device.binding.enable": "Let device through (MAC)",
   "device.binding.disable": "Remove device access (MAC)",
+  "router.reboot": "Reboot router",
+  "router.identity": "Rename router (identity)",
+  "router.clock": "Sync router time",
+  "hotspot.walled_garden": "Resync walled garden",
+  "hotspot.login_page": "Reinstall hotspot login page",
+  "router.diagnose": "Diagnose router",
+  "router.logs": "Fetch router logs",
 };
 
 /** How a subscription reaches the network: PPPoE secret, hotspot login, or a device bound by MAC. */
@@ -135,7 +151,8 @@ export async function requestNetworkOperationTx(tx: Tx, ctx: ActorContext, input
       idempotencyKey: input.idempotencyKey,
       requestedById: actorUserId(ctx),
       requestedBy: actorType(ctx),
-      maxAttempts: NETWORK_MAX_ATTEMPTS,
+      // A reboot is never retried later on its own: a restart minutes after the request would surprise staff.
+      maxAttempts: input.type === "router.reboot" ? 1 : NETWORK_MAX_ATTEMPTS,
     },
   });
   if (input.type === "profile.sync") {
@@ -143,6 +160,12 @@ export async function requestNetworkOperationTx(tx: Tx, ctx: ActorContext, input
     await tx.networkOperation.updateMany({
       where: { organizationId, routerId: input.routerId, type: "profile.sync", status: { in: ["QUEUED", "RETRYING"] }, id: { not: op.id }, params: { path: ["packageId"], equals: String(input.params.packageId ?? "") } },
       data: { status: "CANCELLED", resultDetail: "Superseded by a newer version of the plan", completedAt: new Date() },
+    });
+  }
+  if (ROUTER_TYPES.includes(input.type)) {
+    await tx.networkOperation.updateMany({
+      where: { organizationId, routerId: input.routerId, type: input.type, status: { in: ["QUEUED", "RETRYING"] }, id: { not: op.id } },
+      data: { status: "CANCELLED", resultDetail: "Superseded by a newer request", completedAt: new Date() },
     });
   }
   if (input.subscriptionId && STATE_TYPES.includes(input.type)) {
@@ -373,14 +396,70 @@ export const routerOperationInput = z.discriminatedUnion("type", [
     username: z.string().trim().regex(SESSION_USERNAME_RE, "Enter the session's username"),
     reason: z.string().trim().max(300).optional(),
   }),
+  z.object({ type: z.literal("router.reboot") }),
+  z.object({
+    type: z.literal("router.identity"),
+    name: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/, "Use up to 64 letters, digits, spaces, dots, dashes or underscores"),
+  }),
+  z.object({ type: z.literal("router.clock") }),
+  z.object({ type: z.literal("hotspot.walled_garden") }),
+  z.object({ type: z.literal("hotspot.login_page") }),
+  z.object({ type: z.literal("router.diagnose") }),
+  z.object({ type: z.literal("router.logs") }),
 ]);
 
-export async function requestRouterOperation(ctx: StaffContext, routerId: string, input: z.infer<typeof routerOperationInput>) {
+/** Router actions that change the router itself (not a customer's access) also need router write permission. */
+const ROUTER_WRITE_TYPES = ["router.reboot", "router.identity", "router.clock", "hotspot.walled_garden", "hotspot.login_page"];
+export const ROUTER_LOG_LINES = 100;
+
+/** Where routers reach Cloudlink's captive portal (APP_URL). */
+function portalBase(): { base: string; host: string } | null {
+  try {
+    const url = new URL(process.env.APP_URL ?? "");
+    return { base: url.origin, host: url.hostname };
+  } catch {
+    return null;
+  }
+}
+
+function routerActionParams(ctx: StaffContext, router: Router, input: z.infer<typeof routerOperationInput>): RequestOperationInput["params"] {
+  switch (input.type) {
+    case "router.identity":
+      return { name: input.name };
+    case "router.clock":
+      return { timezone: ctx.organization.timezone };
+    case "hotspot.walled_garden":
+    case "hotspot.login_page": {
+      if (!router.hotspotEnabled) throw new AppError("INVALID_STATE", "The hotspot is not enabled on this router.");
+      const portal = portalBase();
+      if (!portal) throw new AppError("INVALID_STATE", "APP_URL is not set, so routers cannot be pointed at Cloudlink's captive portal.");
+      return input.type === "hotspot.walled_garden" ? { host: portal.host } : { url: `${portal.base}/api/v1/hotspot-files/${router.id}/login.html` };
+    }
+    case "router.logs":
+      return { limit: ROUTER_LOG_LINES };
+    default:
+      return {};
+  }
+}
+
+export async function requestRouterOperation(ctx: StaffContext, routerId: string, raw: z.input<typeof routerOperationInput>) {
   requirePermission(ctx, "network.operate");
+  const input = routerOperationInput.parse(raw);
+  if (ROUTER_WRITE_TYPES.includes(input.type)) requirePermission(ctx, "routers.write");
   const router = await db.router.findFirst({ where: { id: routerId, ...tenantWhere(ctx) } });
   if (!router) throw notFound("router");
   if (router.archivedAt) throw new AppError("INVALID_STATE", "Archived routers cannot run operations.");
+  if (input.type === "router.reboot") {
+    const pending = await db.networkOperation.findFirst({ where: { organizationId: ctx.organizationId, routerId, type: "router.reboot", status: { in: ["QUEUED", "RETRYING", "RUNNING"] } } });
+    if (pending) throw new AppError("CONFLICT", "A reboot of this router is already in progress.");
+  }
   const op = await db.$transaction(async (tx) => {
+    if (input.type !== "pppoe.sync" && input.type !== "session.disconnect") {
+      return requestNetworkOperationTx(tx, ctx, { type: input.type, routerId: router.id, params: routerActionParams(ctx, router, input), idempotencyKey: `staff:${randomUUID()}` });
+    }
     if (input.type === "pppoe.sync") {
       const sub = await tx.subscription.findFirst({ where: { id: input.subscriptionId, ...tenantWhere(ctx) } });
       if (!sub) throw notFound("subscription");
@@ -542,13 +621,75 @@ async function perform(op: NetworkOperation, attempt: number): Promise<Outcome> 
         x,
       );
     }
+    case "router.reboot":
+      return adapter.reboot(target, x);
+    case "router.identity": {
+      const name = String(params.name ?? "");
+      if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(name)) throw new PermanentError("Invalid router name", "INVALID_INPUT");
+      return adapter.setIdentity(target, name, x);
+    }
+    case "router.clock":
+      return adapter.syncClock(target, String(params.timezone ?? "Africa/Nairobi"), x);
+    case "hotspot.walled_garden": {
+      if (!router.hotspotEnabled) return { cancelled: "The hotspot is no longer enabled on this router" };
+      const host = String(params.host ?? "");
+      if (!/^[a-z0-9.-]{1,253}$/i.test(host)) throw new PermanentError("Invalid portal host", "INVALID_INPUT");
+      return adapter.syncWalledGarden(target, host, x);
+    }
+    case "hotspot.login_page": {
+      if (!router.hotspotEnabled) return { cancelled: "The hotspot is no longer enabled on this router" };
+      const url = String(params.url ?? "");
+      if (!/^https?:\/\//.test(url) || !url.endsWith(`/api/v1/hotspot-files/${router.id}/login.html`)) throw new PermanentError("Invalid login page address", "INVALID_INPUT");
+      return adapter.installLoginPage(target, url, x);
+    }
+    case "router.diagnose": {
+      const checks = await adapter.diagnose(target, await diagnosisContext(router));
+      const count = (s: string) => checks.filter((c) => c.status === s).length;
+      return {
+        status: adapter.name === "mock" ? "SIMULATED" : "SUCCEEDED",
+        verified: null,
+        detail: `${count("ok")} passed, ${count("warning")} warning(s), ${count("problem")} problem(s)`,
+        snapshot: { kind: "diagnosis", data: { checks } },
+      };
+    }
+    case "router.logs": {
+      const lines = await adapter.readLogs(target, Math.min(Number(params.limit) || ROUTER_LOG_LINES, 500));
+      return { status: adapter.name === "mock" ? "SIMULATED" : "SUCCEEDED", verified: null, detail: `${lines.length} log line(s) read`, snapshot: { kind: "logs", data: { lines } } };
+    }
     default:
       throw new PermanentError("This operation type is not allowed", "TYPE_NOT_ALLOWED");
   }
 }
 
+/** What a diagnosis compares the router against: enabled access types, RADIUS, portal host and the plans it should carry. */
+async function diagnosisContext(router: Router): Promise<DiagnosisContext> {
+  const org = await db.organization.findUniqueOrThrow({ where: { id: router.organizationId }, select: { timezone: true } });
+  const serviceTypes = [...(router.pppoeEnabled ? ["PPPOE" as const] : []), ...(router.hotspotEnabled ? ["HOTSPOT" as const] : [])];
+  const plans = await db.package.findMany({
+    where: { organizationId: router.organizationId, status: { in: ["ACTIVE", "INACTIVE"] }, serviceType: { in: serviceTypes } },
+    include: { routers: { select: { routerId: true } } },
+  });
+  const profiles = new Map<string, "PPPOE" | "HOTSPOT">();
+  for (const p of plans) {
+    if (!routerRateLimit(p) || (p.routers.length && !p.routers.some((r) => r.routerId === router.id))) continue;
+    profiles.set(profileNameOf(p), p.serviceType === "PPPOE" ? "PPPOE" : "HOTSPOT");
+  }
+  const radius = process.env.RADIUS_SERVER_ADDRESS;
+  return {
+    pppoe: router.pppoeEnabled,
+    hotspot: router.hotspotEnabled,
+    radiusAddress: router.pppoeEnabled && router.pppoeAuth === "RADIUS" && radius ? radius : null,
+    walledGardenHost: router.hotspotEnabled ? (portalBase()?.host ?? null) : null,
+    timezone: org.timezone,
+    profiles: [...profiles].map(([name, kind]) => ({ name, kind })),
+  };
+}
+
 /** Apply the operation's outcome to the records that display it (subscription network status, voucher activation). */
 async function applyOutcomeTx(tx: Tx, op: NetworkOperation, outcome: "succeeded" | "simulated" | "failed", detail: string) {
+  if (op.type === "router.identity" && outcome === "succeeded" && op.routerId) {
+    await tx.router.update({ where: { id: op.routerId }, data: { identity: String((op.params as Record<string, unknown>).name ?? "") || null } });
+  }
   if (op.type === "hotspot.user.upsert" && op.redemptionId) {
     const activationStatus = outcome === "succeeded" ? "ACTIVE" : outcome === "simulated" ? "SIMULATED" : "FAILED";
     await tx.voucherRedemption.update({
@@ -647,7 +788,17 @@ export async function executeNetworkOperation(networkOperationId: string): Promi
     });
     await tx.routerAlert.updateMany({ where: { operationId: op.id, status: "OPEN" }, data: { status: "RESOLVED", resolvedAt: now } });
     await applyOutcomeTx(tx, op, result.status === "SIMULATED" ? "simulated" : "succeeded", result.detail);
+    if (result.snapshot && op.routerId) {
+      await tx.routerSnapshot.create({
+        data: { organizationId: op.organizationId, routerId: op.routerId, kind: result.snapshot.kind, data: result.snapshot.data as unknown as Prisma.InputJsonValue, simulated: result.status === "SIMULATED", operationId: op.id, takenAt: now },
+      });
+    }
   });
+  if (op.type === "router.reboot" && op.routerId) {
+    // See the router come back: check it once it has had time to restart.
+    const check = await enqueueOperation({ type: "routers.healthcheck", organizationId: op.organizationId, payload: { routerId: op.routerId }, dedupeKey: `routers.healthcheck:${op.routerId}:reboot:${op.id}`, runAfter: new Date(now.getTime() + 120_000), maxAttempts: 1 });
+    await dispatchOperation(check);
+  }
   log.info({ status: result.status }, "network operation completed");
   return { status: result.status };
 }

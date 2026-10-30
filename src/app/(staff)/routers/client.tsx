@@ -23,6 +23,7 @@ export interface RouterFormValues {
   branchId: string | null;
   notes: string | null;
   hotspotDnsName: string | null;
+  uplinkInterface?: string | null;
 }
 
 /** Register or edit a router. Credentials are only collected on creation (rotation has its own dialog). */
@@ -43,7 +44,7 @@ export function RouterFormDialog({ router, branches }: { router?: RouterFormValu
       branchId: v.branchId ?? null,
       notes: v.notes ?? null,
       hotspotDnsName: v.hotspotDnsName ?? null,
-      ...(router ? {} : { username: v.username, password: v.password }),
+      ...(router ? { uplinkInterface: v.uplinkInterface ?? null } : { username: v.username, password: v.password }),
     };
     const ok = await mutate(router ? `/routers/${router.id}` : "/routers", { method: router ? "PATCH" : "POST", body }, { success: router ? "Router updated" : "Router registered" });
     if (ok) setOpen(false);
@@ -103,6 +104,17 @@ export function RouterFormDialog({ router, branches }: { router?: RouterFormValu
             >
               <Input name="hotspotDnsName" defaultValue={router?.hotspotDnsName ?? ""} placeholder="wifi.login" autoComplete="off" spellCheck={false} />
             </Field>
+            {router ? (
+              <Field
+                id={`r-uplink-${p}`}
+                label="Uplink interface (optional)"
+                error={errors.uplinkInterface}
+                hint="Interface whose traffic is charted, e.g. ether1 or sfp-sfpplus1. Empty = the first running Ethernet port."
+                className="sm:col-span-2"
+              >
+                <Input name="uplinkInterface" defaultValue={router.uplinkInterface ?? ""} placeholder="ether1" autoComplete="off" spellCheck={false} />
+              </Field>
+            ) : null}
           </div>
           <fieldset className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <legend className="sr-only">Connection and services</legend>

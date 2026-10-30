@@ -161,6 +161,10 @@
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+  /* Secondary encoding for status cells (e.g. unreachable hours): a 45° hatch so state never relies on colour alone. */
+  .hatch {
+    background-image: repeating-linear-gradient(45deg, transparent 0 3px, color-mix(in oklab, var(--surface) 60%, transparent) 3px 5px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

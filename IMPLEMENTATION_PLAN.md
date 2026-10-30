@@ -189,9 +189,32 @@ Defects found and fixed during the phase: a move between hotspots would have can
 | `prisma migrate deploy` (dev, test, e2e) | `20261030150000_hotspot_settings` applied; no drift |
 | `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
 | `npm run test` | 16 files, 136 tests passed |
-| `npm run test:integration` | see phase 13 commit (adds settings → portal test: template, steps, contacts, tabs, validation, permission) |
+| `npm run test:integration` | 23 files, 189 tests passed (adds settings → portal test: template, steps, contacts, tabs, validation, permission) |
 | `npm run build` | exit 0 |
 | `npm run test:e2e` | 25 passed (adds: owner picks the Guided template with a custom step; the portal shows it) |
+
+### Phase 14 — Router telemetry, health score, diagnostics and actions ✅ (not verified on hardware)
+- [x] Migration `20261030180000_router_telemetry`: `RouterMetricSample` (range CHECKs), `RouterSnapshot` (kind CHECK), `Router.uplinkInterface` (name CHECK), `maintenanceMode`, `maintenanceNote`.
+- [x] Health checks every 5 minutes store a sample: reachability, API response time, CPU, memory, storage, temperature, uptime, open sessions, uplink rx/tx (`/interface/monitor-traffic once`); readings a board does not report stay empty. Mock samples are generated deterministically and stored as `simulated`. Samples and snapshots older than 35 days are pruned daily.
+- [x] New allowlisted operations (`src/server/services/network.ts`, RouterOS adapter in `src/server/integrations/network.ts`): `router.diagnose` and `router.logs` (results stored as snapshots), `router.clock` (time zone + NTP, RouterOS 7 and 6 parameters), `hotspot.walled_garden`, `hotspot.login_page`, `router.identity` (read-back verified), `router.reboot` (one pending per router, never retried automatically, follow-up health check). Changes to the router need `routers.write` as well as `network.operate`.
+- [x] Maintenance mode (no offline alerts while set) and uplink interface on the router form.
+- [x] Insights (`src/server/domain/router-telemetry.ts`, `src/server/services/router-insights.ts`): chart buckets, availability, 7 × 24 reachability heatmap in local time, outages, health score (availability 50, CPU 10, memory 10, storage 10, API response 20; rescaled when readings are missing; ≤ 25 while unreachable); router reports (collections for `payments.read` only, sessions per day, unique users, average session, peak hours, subscriptions by status). API: `GET /routers/:id/telemetry|snapshots|report`.
+- [x] UI: routers list with summary strip, health score, 24 h availability and load; router page tabs Overview / Performance / Diagnostics / Reports / Activity. Charts follow the data-viz rules: existing validated palette slots, one axis per chart, 2 px lines with dashes for the second series, legend for two series, crosshair tooltips, a data table per chart, status colours with labels and a hatch for unreachable hours.
+- [x] Honesty fixes found in review: the mock diagnosis reported "OK" for checks it never ran (now "Skipped"); a reboot that could not connect would have been retried for minutes (now fails at once).
+- [ ] Configuration backups — not possible over the RouterOS API (no file download); documented as a manual export.
+- [ ] Guided "link a router" wizard — not built in this phase; onboarding still uses the setup command dialog. Next candidate with phase 15.
+- [ ] Hardware verification — **blocked** (no router over VPN). Procedure: `docs/NETWORK.md` → "Testing against a real router", step 6.
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261030180000_router_telemetry` applied; `migrate diff` against dev: empty; `migrate status`: up to date |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 17 files, 143 tests passed (adds `tests/unit/router-telemetry.test.ts`) |
+| `npm run test:integration` | 24 files, 198 tests passed (adds `tests/integration/router-telemetry.test.ts`, 9 tests: samples with resources/temperature/uplink and a missing uplink, maintenance mode, simulated samples, retention, diagnosis → fixes → clean diagnosis on the fake RouterOS server, identity/logs/reboot incl. unreachable reboot not retried, RouterOS 6 clock fallback, refusals, permissions and tenancy, reports) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 26 passed (adds the router page flow: health score after a check, performance charts, simulated diagnosis all skipped, confirmed reboot listed as simulated) |
+
+Visual check against a production build (`next start -p 3102`, e2e database, mock adapters, 7 days of simulated samples inserted for one router): routers list, overview, performance (7 days), diagnostics, reports and activity at 1440 px and 390 px. Fixes from it: the all-zero collections chart now says there were no payments; overview columns rebalanced; the log table scrolls sideways on phones instead of breaking words. The database CHECK rejected a bad fixture row (negative uptime), as intended.
 
 ## Work log
 

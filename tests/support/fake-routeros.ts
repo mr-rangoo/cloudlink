@@ -3,8 +3,9 @@ import { encodeSentence, parseAttributes, SentenceReader } from "@/server/integr
 
 /**
  * In-process fake RouterOS API server speaking the real wire protocol. It models the subset Cloudlink uses:
- * /login, /system/resource|identity print, /ppp/secret, /ppp/active, /ppp/profile, /ip/hotspot/user, /ip/hotspot/user/profile,
- * /ip/hotspot/active. Failure injection lets tests exercise timeouts, dropped connections and !trap errors.
+ * /login, /system/resource|identity|health|clock|ntp, /system/reboot, /interface (print, monitor-traffic), /ppp/secret, /ppp/active,
+ * /ppp/profile, /ip/hotspot (servers, profiles, users, walled garden, …), /tool/fetch, /file, /log, /radius, /ip/service.
+ * Failure injection lets tests exercise timeouts, dropped connections and !trap errors.
  */
 type Row = Record<string, string>;
 
@@ -24,7 +25,23 @@ export class FakeRouterOs {
     "/ip/hotspot/cookie": [],
     "/ip/hotspot/ip-binding": [],
     "/ip/hotspot/host": [],
+    "/ip/hotspot": [],
+    "/ip/hotspot/profile": [],
+    "/ip/hotspot/walled-garden": [],
+    "/ip/hotspot/walled-garden/ip": [],
+    "/interface": [],
+    "/interface/pppoe-server/server": [],
+    "/radius": [],
+    "/ip/service": [],
+    "/file": [],
+    "/log": [],
   };
+  identity = "FakeRouter";
+  clock: Row = { "time-zone-name": "UTC", "time-zone-autodetect": "true" };
+  ntp: Row = { enabled: "false" };
+  reboots = 0;
+  /** RouterOS 6 boards: no time-zone-autodetect, NTP takes server-dns-names. */
+  v6 = false;
   readonly log: string[][] = [];
   private nextId = 1;
   private server?: net.Server;
@@ -48,6 +65,16 @@ export class FakeRouterOs {
     for (const key of Object.keys(this.tables)) this.tables[key] = [];
     this.failures = [];
     this.log.length = 0;
+    this.identity = "FakeRouter";
+    this.clock = { "time-zone-name": "UTC", "time-zone-autodetect": "true" };
+    this.ntp = { enabled: "false" };
+    this.reboots = 0;
+    this.v6 = false;
+  }
+
+  /** Add a row to a table (servers, profiles, interfaces, log lines …) with a fresh .id. */
+  seed(path: string, row: Row) {
+    this.tables[path]!.push({ ".id": `*${this.nextId++}`, ...row });
   }
 
   /** Commands received (first word of each sentence), for asserting what was sent. */
@@ -98,6 +125,11 @@ export class FakeRouterOs {
           sock.destroy();
           return;
         }
+        if (cmd === "/system/reboot") {
+          // A real router drops the connection as it goes down, without answering.
+          this.reboots++;
+          return void sock.destroy();
+        }
         this.exec(cmd, words.slice(1), attrs).forEach((s) => sock.write(encodeSentence(s)));
       }
     });
@@ -105,8 +137,48 @@ export class FakeRouterOs {
   }
 
   private exec(cmd: string, words: string[], attrs: Row): string[][] {
-    if (cmd === "/system/resource/print") return [["!re", "=version=7.14.3 (stable)", "=board-name=hEX S", "=uptime=3d4h", "=cpu-load=7"], ["!done"]];
-    if (cmd === "/system/identity/print") return [["!re", "=name=FakeRouter"], ["!done"]];
+    const row = (r: Row) => ["!re", ...Object.entries(r).map(([k, v]) => `=${k}=${v}`)];
+    if (cmd === "/system/resource/print") {
+      return [
+        row({
+          version: this.v6 ? "6.49.10 (long-term)" : "7.14.3 (stable)",
+          "board-name": "hEX S",
+          uptime: "3d4h",
+          "cpu-load": "7",
+          "free-memory": "201326592",
+          "total-memory": "268435456",
+          "free-hdd-space": "12582912",
+          "total-hdd-space": "16777216",
+        }),
+        ["!done"],
+      ];
+    }
+    if (cmd === "/system/identity/print") return [row({ name: this.identity }), ["!done"]];
+    if (cmd === "/system/identity/set") {
+      this.identity = attrs.name ?? this.identity;
+      return [["!done"]];
+    }
+    if (cmd === "/system/health/print") return [row({ name: "temperature", value: "41", type: "C" }), ["!done"]];
+    if (cmd === "/system/clock/print") return [row(this.clock), ["!done"]];
+    if (cmd === "/system/clock/set") {
+      if (this.v6 && "time-zone-autodetect" in attrs) return [["!trap", "=message=unknown parameter time-zone-autodetect"], ["!done"]];
+      Object.assign(this.clock, attrs);
+      return [["!done"]];
+    }
+    if (cmd === "/system/ntp/client/print") return [row(this.ntp), ["!done"]];
+    if (cmd === "/system/ntp/client/set") {
+      if (this.v6 && "servers" in attrs) return [["!trap", "=message=unknown parameter servers"], ["!done"]];
+      Object.assign(this.ntp, attrs);
+      return [["!done"]];
+    }
+    if (cmd === "/interface/monitor-traffic") {
+      if (!this.tables["/interface"]!.some((r) => r.name === attrs.interface)) return [["!trap", "=message=no such item"], ["!done"]];
+      return [row({ name: attrs.interface!, "rx-bits-per-second": "18500000", "tx-bits-per-second": "2400000" }), ["!done"]];
+    }
+    if (cmd === "/tool/fetch") {
+      this.seed("/file", { name: attrs["dst-path"] ?? "fetched", type: ".html file", contents: `(fetched from ${attrs.url})` });
+      return [row({ status: "finished" }), ["!done"]];
+    }
     const slash = cmd.lastIndexOf("/");
     const path = cmd.slice(0, slash);
     const verb = cmd.slice(slash + 1);

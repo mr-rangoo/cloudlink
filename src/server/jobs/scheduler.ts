@@ -18,7 +18,8 @@ export const RECURRING_JOBS: RecurringJob[] = [
   { type: "billing.run_recurring", everyMinutes: 60 },
   // Every minute: hotspot plans last minutes or hours and must end on time.
   { type: "subscriptions.expire_due", everyMinutes: 1 },
-  { type: "routers.healthcheck", everyMinutes: 15, scope: "routers" },
+  // Every five minutes: each check also stores a telemetry sample (charts, health score, reachability).
+  { type: "routers.healthcheck", everyMinutes: 5, scope: "routers" },
   { type: "network.sync_sessions", everyMinutes: 5, scope: "routers" },
   { type: "network.monitor", everyMinutes: 15, scope: "routers" },
   { type: "plans.enforce_schedules", everyMinutes: 1, scope: "routers" },

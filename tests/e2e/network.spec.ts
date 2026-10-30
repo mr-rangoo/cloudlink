@@ -110,3 +110,47 @@ test("unauthorized staff cannot execute a router action (UI and API)", async ({ 
   const health = await page.request.post(`/api/v1/routers/${routerId}/health-check`, { headers: { origin } });
   expect(health.status()).toBe(403);
 });
+
+test("router page: health check feeds the performance view, diagnosis and reboot run as simulated operations", async ({ page }) => {
+  await login(page, E2E_USERS.owner);
+  const origin = new URL(page.url()).origin;
+  const name = `Tower ${uniq()}`;
+  const created = await page.request.post("/api/v1/routers", {
+    headers: { origin },
+    data: { name, host: "10.0.0.9", username: "cloudlink-api", password: "not-a-real-password", hotspotEnabled: true },
+  });
+  expect(created.status()).toBe(201);
+  const routerId = ((await created.json()) as { data: { id: string } }).data.id;
+
+  await page.goto(`/routers/${routerId}`);
+  await page.getByRole("button", { name: "Check now" }).click();
+  await expect(async () => {
+    await page.reload();
+    await expect(page.getByText("Good · simulated")).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
+  await page.getByRole("link", { name: "Performance" }).click();
+  await expect(page.getByRole("heading", { name: "CPU and memory" })).toBeVisible();
+  await expect(page.getByText(/simulated readings \(mock adapter\)/)).toBeVisible();
+  await expect(page.getByRole("table", { name: "Reachability by day and hour" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Diagnostics" }).click();
+  await page.getByRole("button", { name: "Run diagnosis" }).click();
+  await expect(async () => {
+    await page.reload();
+    await expect(page.getByText(/Taken .* simulated \(mock adapter\)/)).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
+  // The mock adapter checks nothing, so nothing is reported as passing.
+  await expect(page.getByText("· Skipped").first()).toBeVisible();
+  await expect(page.getByText("· OK")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Reboot" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(/loses service while it restarts/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Reboot now" }).click();
+  await expect(dialog).toBeHidden();
+  await page.goto(`/routers/${routerId}?tab=activity`);
+  await expect(async () => {
+    await page.reload();
+    await expect(page.getByRole("row", { name: /Reboot router.*Simulated/ })).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
+});

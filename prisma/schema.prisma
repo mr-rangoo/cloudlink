@@ -1493,6 +1493,11 @@ model Router {
   pppoeEnabled    Boolean       @default(true)
   /// Host name of the hotspot login page (e.g. "wifi.login"); the captive portal only posts logins to this host or a private address.
   hotspotDnsName  String?
+  /// Interface whose traffic is charted (e.g. "ether1"); empty = the first running Ethernet port.
+  uplinkInterface String?
+  /// Planned work: offline alerts are not raised and the router page says so.
+  maintenanceMode Boolean       @default(false)
+  maintenanceNote String?
   status          RouterStatus  @default(UNKNOWN)
   identity        String?
   routerOsVersion String?
@@ -1512,6 +1517,8 @@ model Router {
 
   credential RouterCredential?
   packages   PackageRouter[]
+  samples    RouterMetricSample[]
+  snapshots  RouterSnapshot[]
 
   @@unique([organizationId, name])
   @@index([organizationId, status])
@@ -1604,6 +1611,50 @@ model NetworkSession {
   @@unique([routerId, kind, externalId])
   @@index([organizationId, endedAt])
   @@index([subscriberId])
+}
+
+/// One health check: reachability and the router's resources at that moment (kept 35 days).
+model RouterMetricSample {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  routerId       String   @db.Uuid
+  takenAt        DateTime @db.Timestamptz(6)
+  reachable      Boolean
+  /// Mock adapter: values are simulated, not read from a router.
+  simulated      Boolean  @default(false)
+  /// Time to connect, log in and read the router's resources over the API (not ICMP ping).
+  responseMs     Int?
+  cpuLoad        Int?
+  memoryUsedPct  Int?
+  diskUsedPct    Int?
+  temperatureC   Decimal? @db.Decimal(5, 1)
+  uptimeSeconds  Int?
+  /// Uplink traffic at that moment, bits per second (rx = into the router, tx = out of it).
+  rxBps          BigInt?
+  txBps          BigInt?
+  /// Sessions open on the router at that moment (from the latest session sync).
+  sessions       Int?
+
+  router Router @relation(fields: [routerId], references: [id], onDelete: Cascade)
+
+  @@index([routerId, takenAt])
+  @@index([organizationId, takenAt])
+}
+
+/// Read-only results fetched from a router on request: recent log lines, diagnosis checks.
+model RouterSnapshot {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  routerId       String   @db.Uuid
+  kind           String // logs | diagnosis
+  data           Json
+  simulated      Boolean  @default(false)
+  operationId    String?  @db.Uuid
+  takenAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  router Router @relation(fields: [routerId], references: [id], onDelete: Cascade)
+
+  @@index([routerId, kind, takenAt])
 }
 
 model RouterAlert {
