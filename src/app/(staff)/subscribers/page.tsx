@@ -48,7 +48,7 @@ export default async function SubscribersPage({ searchParams }: { searchParams: 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Subscribers"
+        title="Your subscribers"
         description="Customer accounts, contacts and their subscriptions."
         actions={
           <>

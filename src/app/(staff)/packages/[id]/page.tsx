@@ -38,7 +38,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <PageHeader eyebrow={`Plans · ${canWrite ? "Edit" : "View"}`} title={plan.name} description="Changes apply to new sales. Existing subscriptions keep the price and terms they were sold with." />
+      <PageHeader title={plan.name} description="Changes apply to new sales. Existing subscriptions keep the price and terms they were sold with." />
       {plan.availability === "ARCHIVED" ? <Alert tone="warning" title="Archived">This plan is no longer sold. Restore it from the plans list to edit it.</Alert> : null}
       <PlanForm
         initial={{

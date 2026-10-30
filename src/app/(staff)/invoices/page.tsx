@@ -31,7 +31,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Invoices"
+        title="Customer invoices"
         description={`Outstanding in this view: ${formatMoney(outstanding, cur)}`}
         actions={
           <>

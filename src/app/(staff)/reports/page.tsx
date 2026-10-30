@@ -33,7 +33,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Reports" description="Figures come from the ledger and persisted records. Months follow the organization timezone." />
+      <PageHeader title="Business analytics" description="Figures come from the ledger and persisted records. Months follow the organization timezone." />
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <FilterTabs label="Report" active={tab} items={TABS.filter((t) => t !== "exports" || canExport).map((t) => ({ value: t, label: humanize(t), href: link(t) }))} />
         {tab !== "exports" && tab !== "receivables" ? (

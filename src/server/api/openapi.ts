@@ -32,6 +32,7 @@ import { activeGatewayInput, kopokopoConfigInput } from "@/server/services/payme
 import { brandingInput } from "@/server/services/branding";
 import { paymentMethodInput, paymentMethodUpdate } from "@/server/services/payment-methods";
 import { assistantMessageInput, assistantSettingsInput, conversationListQuery } from "@/server/assistant/service";
+import { staffAskInput } from "@/server/assistant/staff";
 import { c2bConfirmationSchema, stkCallbackSchema } from "@/server/domain/mpesa";
 import { accessStatusInput, purchaseInput, purchaseSimulateInput, purchaseStatusInput, reconnectInput } from "@/server/services/hotspot-sales";
 import { hotspotSettingsInput } from "@/server/services/hotspot-settings";
@@ -299,6 +300,7 @@ export const operations: Operation[] = [
   // Phase 10: customer-portal AI assistant
   { method: "get", path: "/settings/assistant", summary: "Assistant settings and deployment status (adapter, model; no secrets)", tag: "Settings", auth: "session", permission: "settings.write" },
   { method: "put", path: "/settings/assistant", summary: "Turn the portal assistant on/off, name it, add organization guidance", tag: "Settings", auth: "session", permission: "settings.write", body: assistantSettingsInput },
+  { method: "post", path: "/assistant/ask", summary: "Ask AI (staff): a question answered from records the asking user may see; read-only tools, text-only history", tag: "Support", auth: "session", permission: "dashboard.view", body: staffAskInput, responses: { "429": "Too many questions", "503": "Assistant not set up" } },
   { method: "get", path: "/assistant/conversations", summary: "Customer chats with the assistant (branch-scoped)", tag: "Support", auth: "session", permission: "support.read", query: conversationListQuery },
   { method: "get", path: "/assistant/conversations/:id", summary: "Chat transcript with the tools the assistant used (results summarised)", tag: "Support", auth: "session", permission: "support.read" },
   { method: "get", path: "/customer/assistant", summary: "Whether the assistant is available, its name, and the open chat", tag: "Customer portal", auth: "session" },

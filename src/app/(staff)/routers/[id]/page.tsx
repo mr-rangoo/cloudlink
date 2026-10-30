@@ -79,7 +79,6 @@ export default async function RouterDetailPage({ params, searchParams }: { param
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Router"
         title={router.name}
         description={`${router.host}:${router.apiPort} · ${router.useTls ? "API-SSL (TLS)" : "plain API"} · ${router.pppoeAuth === "RADIUS" ? "PPPoE via RADIUS" : "local PPP secrets"}`}
         actions={

@@ -36,6 +36,12 @@ const t = (accent: string, accentHover: string, accentSoft: string, accentForegr
 
 export const THEME_PRESETS: ThemePreset[] = [
   {
+    id: "violet",
+    name: "Cloudlink violet",
+    light: t("#7c3aed", "#6d28d9", "#f3edff", "#ffffff", "#a78bfa", "#161616", "#202020", "#2a2a2a", "#262626"),
+    dark: t("#a77bf3", "#b994f6", "#2b2140", "#140b24", "#c4b5fd", "#1b1b1b", "#232323", "#2b2b2b", "#2c2c2c"),
+  },
+  {
     id: "midnight",
     name: "Midnight blue",
     light: t("#1d6fe8", "#155ccb", "#e7f0fe", "#ffffff", "#3b82f6", "#0b1424", "#121e33", "#1a2a46", "#1c2a42"),
@@ -79,10 +85,10 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
 ];
 
-export const DEFAULT_THEME = "midnight";
+export const DEFAULT_THEME = "violet";
 export const LIGHT_SURFACE = "#ffffff";
-export const DARK_SURFACE = "#111b2c";
-const DARK_INK = "#0a111e";
+export const DARK_SURFACE = "#1f1f1f";
+const DARK_INK = "#121212";
 
 // ───────── colour maths ─────────
 

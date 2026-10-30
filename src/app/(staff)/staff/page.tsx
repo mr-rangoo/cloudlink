@@ -27,7 +27,7 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Staff & Permissions"
+        title="Team and permissions"
         description="Who can sign in to this organization and what they can do. Permission changes apply immediately; role or branch changes sign the person out."
         actions={canWrite && tab === "staff" ? <InviteStaffDialog roles={roleOptions} branches={branches} canGrantOwner={ctx.roles.includes("owner")} /> : null}
       />

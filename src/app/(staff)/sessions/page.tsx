@@ -36,7 +36,7 @@ export default async function NetworkPage({ searchParams }: { searchParams: Prom
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Network sessions"
+        title="Live sessions"
         description="Live PPPoE and hotspot sessions, the durable log of every router or RADIUS change, and network alerts."
         actions={tab === "sessions" ? <RefreshSessionsButton /> : null}
       />

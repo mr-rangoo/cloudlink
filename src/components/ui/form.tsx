@@ -5,7 +5,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   <input
     ref={ref}
     className={cn(
-      "flex h-9 w-full rounded-md border border-border-strong bg-surface px-3 py-1 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-danger",
+      "flex h-10 w-full rounded-lg border border-border-strong bg-background px-3 py-1 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-danger",
       className,
     )}
     {...props}
@@ -17,7 +17,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
   <textarea
     ref={ref}
     className={cn(
-      "flex min-h-20 w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring disabled:opacity-60 aria-[invalid=true]:border-danger",
+      "flex min-h-20 w-full rounded-lg border border-border-strong bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring disabled:opacity-60 aria-[invalid=true]:border-danger",
       className,
     )}
     {...props}
@@ -29,7 +29,7 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
   <select
     ref={ref}
     className={cn(
-      "flex h-9 w-full rounded-md border border-border-strong bg-surface px-2.5 text-sm text-foreground shadow-sm focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring disabled:opacity-60 aria-[invalid=true]:border-danger",
+      "flex h-10 w-full rounded-lg border border-border-strong bg-background px-2.5 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring disabled:opacity-60 aria-[invalid=true]:border-danger",
       className,
     )}
     {...props}

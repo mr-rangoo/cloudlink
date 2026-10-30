@@ -2,32 +2,33 @@
 
 /*
  * Cloudlink design tokens.
- * Original palette: deep navy chrome, neutral slate surfaces, a single blue→cyan accent family.
+ * Original palette: neutral charcoal chrome and surfaces (dark is the default appearance), one accent colour per
+ * organization theme (Cloudlink violet by default).
  * Status colours are always paired with text/icons, never used alone.
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #f6f8fb;
-  --foreground: #0f172a;
+  --background: #f5f5f6;
+  --foreground: #161618;
   --surface: #ffffff;
-  --surface-muted: #f1f4f9;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --muted-foreground: #5b6b82;
-  --accent: #1d6fe8;
-  --accent-hover: #155ccb;
+  --surface-muted: #f2f2f4;
+  --border: #e4e4e7;
+  --border-strong: #d0d0d6;
+  --muted-foreground: #5f5f6b;
+  --accent: #7c3aed;
+  --accent-hover: #6d28d9;
   --accent-foreground: #ffffff;
-  --accent-soft: #e7f0fe;
+  --accent-soft: #f3edff;
   --cyan: #0ea5c6;
-  --ring: #3b82f6;
+  --ring: #a78bfa;
 
-  --sidebar: #0b1424;
-  --sidebar-elevated: #121e33;
-  --sidebar-foreground: #c8d3e6;
-  --sidebar-muted: #7d8ca6;
-  --sidebar-active: #1a2a46;
-  --sidebar-border: #1c2a42;
+  --sidebar: #161616;
+  --sidebar-elevated: #202020;
+  --sidebar-foreground: #d6d6d6;
+  --sidebar-muted: #8b8b8b;
+  --sidebar-active: #2a2a2a;
+  --sidebar-border: #262626;
 
   --success: #15803d;
   --success-soft: #e8f6ee;
@@ -40,59 +41,59 @@
   --neutral-soft: #eef1f6;
 
   /* Chart series slots: fixed order, validated (CVD + normal-vision floors) on the light card surface. */
-  --series-1: #2a78d6;
+  --series-1: #7c3aed;
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
   --series-5: #e87ba4;
   --series-6: #008300;
-  --chart-grid: #e8ebf0;
-  --chart-axis: #cbd5e1;
-  --chart-ink: #5b6b82;
+  --chart-grid: #ececef;
+  --chart-axis: #d0d0d6;
+  --chart-ink: #5f5f6b;
 }
 
 .dark {
-  --background: #0a111e;
-  --foreground: #e5ebf5;
-  --surface: #111b2c;
-  --surface-muted: #16223a;
-  --border: #1f2c44;
-  --border-strong: #2c3b58;
-  --muted-foreground: #8d9bb5;
-  --accent: #3b8bff;
-  --accent-hover: #5b9dff;
-  --accent-foreground: #ffffff;
-  --accent-soft: #14284a;
+  --background: #171717;
+  --foreground: #ededed;
+  --surface: #1f1f1f;
+  --surface-muted: #272727;
+  --border: #2e2e2e;
+  --border-strong: #3d3d3d;
+  --muted-foreground: #9d9d9d;
+  --accent: #a77bf3;
+  --accent-hover: #b994f6;
+  --accent-foreground: #140b24;
+  --accent-soft: #2b2140;
   --cyan: #22c3e6;
-  --ring: #60a5fa;
+  --ring: #c4b5fd;
 
-  --sidebar: #070d18;
-  --sidebar-elevated: #0e1828;
-  --sidebar-foreground: #c8d3e6;
-  --sidebar-muted: #6e7d98;
-  --sidebar-active: #15233c;
-  --sidebar-border: #141f33;
+  --sidebar: #1b1b1b;
+  --sidebar-elevated: #232323;
+  --sidebar-foreground: #d6d6d6;
+  --sidebar-muted: #8b8b8b;
+  --sidebar-active: #2b2b2b;
+  --sidebar-border: #2c2c2c;
 
   --success: #4ade80;
-  --success-soft: #0f2a1c;
+  --success-soft: #13261b;
   --warning: #fbbf24;
-  --warning-soft: #2e2210;
+  --warning-soft: #2d2412;
   --danger: #f87171;
-  --danger-soft: #2f1416;
+  --danger-soft: #2f1718;
   --info: #60a5fa;
-  --info-soft: #14284a;
-  --neutral-soft: #1a2538;
+  --info-soft: #172435;
+  --neutral-soft: #262626;
 
-  /* Dark steps of the same hues, validated against the dark card surface (#111b2c). */
-  --series-1: #3987e5;
+  /* Dark steps of the same hues, for the dark card surface (#1f1f1f). */
+  --series-1: #9061f0;
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
   --series-5: #d55181;
   --series-6: #008300;
-  --chart-grid: #1f2c44;
-  --chart-axis: #2c3b58;
-  --chart-ink: #8d9bb5;
+  --chart-grid: #2b2b2b;
+  --chart-axis: #3a3a3a;
+  --chart-ink: #9d9d9d;
 }
 
 @theme inline {
@@ -132,8 +133,9 @@
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+  --radius-2xl: 18px;
 
-  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 1px rgb(15 23 42 / 0.03);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04);
   --shadow-pop: 0 10px 30px -10px rgb(15 23 42 / 0.25), 0 2px 6px rgb(15 23 42 / 0.08);
 }
 

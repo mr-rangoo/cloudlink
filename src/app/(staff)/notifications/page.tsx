@@ -35,7 +35,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Notifications" description="SMS and email sent to subscribers. Messages are marked simulated when a mock adapter is used, and skipped (never faked) when no provider is configured." />
+      <PageHeader title="Messages and campaigns" description="SMS and email sent to subscribers. Messages are marked simulated when a mock adapter is used, and skipped (never faked) when no provider is configured." />
       <div className="grid gap-4 sm:grid-cols-2">
         {(["sms", "email"] as const).map((ch) => (
           <Card key={ch}>

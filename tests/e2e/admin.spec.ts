@@ -26,9 +26,9 @@ test("owner invites a support agent who sets a password and sees only permitted 
   await expect(agent.getByText("Your password is set")).toBeVisible();
   await login(agent, email, "Agent-Password-123");
   const nav = agent.getByRole("navigation", { name: "Main navigation" });
-  await expect(nav.getByRole("link", { name: /Support/ })).toBeVisible();
+  await expect(nav.getByRole("link", { name: /Tickets/ })).toBeVisible();
   await expect(nav.getByRole("link", { name: /Staff & Permissions/ })).toHaveCount(0);
-  await expect(nav.getByRole("link", { name: /Reports/ })).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: /Analytics/ })).toHaveCount(0);
   await agent.goto("/settings");
   await expect(agent.getByText("Access restricted")).toBeVisible();
   // The setup link cannot be reused.

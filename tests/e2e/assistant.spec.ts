@@ -59,3 +59,16 @@ test("staff enable the assistant; a customer asks about their balance and gets a
   await expect(page.getByText("Looked up:").first()).toBeVisible();
   await expect(page.getByText("Account summary")).toBeVisible();
 });
+
+test("staff ask AI about today's business from the top bar", async ({ page }) => {
+  await login(page, E2E_USERS.owner);
+  await page.getByRole("button", { name: "Ask AI" }).first().click();
+  const panel = page.getByRole("dialog", { name: "Ask AI" });
+  await expect(panel.getByText("Test mode", { exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "How much have we collected today?" }).click();
+  await expect(panel.getByText(/Collected today: KES/)).toBeVisible();
+  await expect(panel.getByText("Looked at: Business snapshot")).toBeVisible();
+  await panel.getByLabel("Ask about your business").fill("Which routers are offline?");
+  await panel.getByLabel("Ask about your business").press("Enter");
+  await expect(panel.getByText("Looked at: Routers")).toBeVisible();
+});

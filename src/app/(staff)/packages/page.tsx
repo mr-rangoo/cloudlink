@@ -35,8 +35,7 @@ export default async function PackagesPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Network · Plans"
-        title={archived ? "Archived plans" : "Plans"}
+        title={archived ? "Archived plans" : "Internet plans"}
         description={archived ? "Plans no longer sold. Existing records keep referring to them." : `Every plan you offer, by type. ${stats.live} live for customers.`}
         actions={
           canWrite && !archived ? (

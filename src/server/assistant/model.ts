@@ -96,7 +96,14 @@ function modelError(err: unknown): AppError {
 
 // ───────── Mock ─────────
 
-type Intent = { tool: string; input: Record<string, unknown> };
+export type Intent = { tool: string; input: Record<string, unknown> };
+
+/** Test-mode behaviour of one assistant: which tool a message asks for, and how to word a tool's result. */
+export interface MockRules {
+  intent(text: string): Intent | null;
+  describe(tool: string, result: Record<string, unknown>): string;
+  help: string;
+}
 
 const CONNECTIVITY = /\b(internet|connection|connected|online|offline|slow|down|wi-?fi|router|no network|mtandao)\b/i;
 
@@ -175,10 +182,14 @@ function fakeMessage(content: Json[], stop: "end_turn" | "tool_use"): Anthropic.
   } as unknown as Anthropic.Beta.BetaMessage;
 }
 
+const CUSTOMER_RULES: MockRules = { intent: mockIntent, describe: mockDescribe, help: HELP };
+
 class MockModel implements AssistantModel {
   readonly name = "mock" as const;
   readonly model = "mock";
   private seq = 0;
+
+  constructor(private readonly rules: MockRules = CUSTOMER_RULES) {}
 
   async reply(req: ModelRequest): Promise<Anthropic.Beta.BetaMessage> {
     const last = req.messages.at(-1);
@@ -193,9 +204,9 @@ class MockModel implements AssistantModel {
           const raw = typeof r.content === "string" ? r.content : "";
           if (r.is_error) return `Sorry, I couldn't do that: ${raw}`;
           try {
-            return mockDescribe(name, JSON.parse(raw) as Json);
+            return this.rules.describe(name, JSON.parse(raw) as Json);
           } catch {
-            return HELP;
+            return this.rules.help;
           }
         })
         .join("\n\n");
@@ -205,15 +216,16 @@ class MockModel implements AssistantModel {
       .filter((b) => b.type === "text")
       .map((b) => String(b.text))
       .join("\n");
-    const intent = mockIntent(said);
-    if (!intent) return fakeMessage([{ type: "text", text: HELP, citations: null }], "end_turn");
+    const intent = this.rules.intent(said);
+    if (!intent) return fakeMessage([{ type: "text", text: this.rules.help, citations: null }], "end_turn");
     return fakeMessage([{ type: "tool_use", id: `toolu_mock_${Date.now().toString(36)}_${++this.seq}`, name: intent.tool, input: intent.input }], "tool_use");
   }
 }
 
-export function assistantModel(): AssistantModel | null {
+/** The configured model, or null when the assistant is disabled. `rules` sets the test-mode behaviour (customer by default). */
+export function assistantModel(rules?: MockRules): AssistantModel | null {
   const name = assistantAdapterName();
   if (name === "anthropic") return new ClaudeModel();
-  if (name === "mock") return new MockModel();
+  if (name === "mock") return new MockModel(rules);
   return null;
 }

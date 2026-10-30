@@ -8,6 +8,7 @@ import {
   HandCoins,
   LayoutDashboard,
   LifeBuoy,
+  Megaphone,
   Package,
   Plug,
   Receipt,
@@ -21,6 +22,7 @@ import {
   UserPlus,
   Users,
   Wallet,
+  Wifi,
   type LucideIcon,
 } from "lucide-react";
 
@@ -34,6 +36,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   HandCoins,
   LayoutDashboard,
   LifeBuoy,
+  Megaphone,
   Package,
   Plug,
   Receipt,
@@ -47,4 +50,5 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   UserPlus,
   Users,
   Wallet,
+  Wifi,
 };

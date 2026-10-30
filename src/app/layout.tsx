@@ -12,14 +12,15 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f6f8fb" },
-    { media: "(prefers-color-scheme: dark)", color: "#0a111e" },
+    { media: "(prefers-color-scheme: light)", color: "#f5f5f6" },
+    { media: "(prefers-color-scheme: dark)", color: "#171717" },
   ],
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const theme = (await cookies()).get("cloudlink_theme")?.value;
-  const mode = theme === "dark" || theme === "light" || theme === "system" ? theme : "light";
+  // Dark is the default appearance until someone chooses otherwise.
+  const mode = theme === "dark" || theme === "light" || theme === "system" ? theme : "dark";
   return (
     <html lang="en" className={mode === "dark" ? "dark" : undefined} suppressHydrationWarning>
       <body>

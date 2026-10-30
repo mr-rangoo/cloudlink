@@ -117,6 +117,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <AutoRefresh seconds={60} />
       <PageHeader
+        eyebrow={`${ctx.organization.name} — ${health ? `${health.online} online right now` : dateLine}`}
         title={`${greeting(local.hour)}, ${ctx.userName.split(" ")[0]}`}
         description={`${dateLine} · ${ctx.organization.name}${ctx.activeBranchId ? " · one branch" : ""}`}
         actions={

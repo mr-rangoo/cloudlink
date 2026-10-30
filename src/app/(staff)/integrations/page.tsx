@@ -21,7 +21,7 @@ export default async function IntegrationsPage() {
   const groups = ["payments", "network", "messaging", "infrastructure"] as const;
   return (
     <div className="space-y-6">
-      <PageHeader title="Integrations" description="Live status of external providers and infrastructure. Nothing is marked tested or verified without a recorded real test." />
+      <PageHeader title="Connected services" description="Live status of external providers and infrastructure. Nothing is marked tested or verified without a recorded real test." />
       {rows.some((r) => r.status === "mock") ? (
         <Alert tone="warning" title="Mock adapters active">
           Simulated adapters never move real money, change real routers or deliver real messages. They are rejected automatically when the app runs in production mode.

@@ -3,6 +3,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { getStaffContext } from "@/server/auth/page";
 import { listAccessibleBranches, listUserOrganizations } from "@/server/auth/service";
 import { brandingFor } from "@/server/services/branding";
+import { staffAssistantStatus } from "@/server/assistant/staff";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +23,10 @@ export default async function StaffLayout({ children }: { children: React.ReactN
       activeBranchId={ctx.activeBranchId}
       branchScope={ctx.branchIds === null ? "all" : "restricted"}
       permissions={[...ctx.permissions]}
-      theme={theme === "dark" || theme === "system" ? theme : "light"}
+      theme={theme === "light" || theme === "system" ? theme : "dark"}
       isDemo={process.env.ENABLE_DEMO_SEED === "true" && process.env.APP_ENV !== "production"}
       brand={{ name: ctx.organization.name, logoUrl: branding.logoUrl }}
+      askAi={staffAssistantStatus()}
     >
       {children}
     </AppShell>

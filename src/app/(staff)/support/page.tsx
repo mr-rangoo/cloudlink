@@ -32,7 +32,7 @@ export default async function SupportPage({ searchParams }: { searchParams: Prom
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Support" description="Customer tickets from the portal, phone and walk-ins." actions={
+      <PageHeader title="Support tickets" description="Customer tickets from the portal, phone and walk-ins." actions={
           <div className="flex flex-wrap gap-2">
             <Link href="/support/assistant" className={buttonVariants({ variant: "secondary" })}>
               <MessageCircle /> Assistant chats

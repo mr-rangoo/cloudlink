@@ -332,7 +332,49 @@ Visual check (production build on :3102, e2e database): sign-in with the new lin
 
 Visual check (production build on :3102, e2e database): Integrations → Payment gateways with Kopo Kopo active, the settings dialog, and the 390 px layout.
 
-**Exact next task**: Phase 19 — loyalty points (earn per spend, redeem for account credit, ledger-backed).
+**Exact next task** (superseded): Phase 19 — loyalty points.
+
+### Phase 18b — Look and layout parity with the reference screenshots, staff Ask AI ✅ (user request 2026-10-31: "it doesn't match the screenshots")
+The 29 reference screenshots from the earlier session were recovered from that session's transcript and compared page by page. Cloudlink keeps its own name, logo, wording and code (AGENTS.md: original branding and visual design); layout, structure, dark/violet style and workflows now follow the reference.
+- [x] **Design tokens:** neutral charcoal dark palette; new default theme "Cloudlink violet" (WCAG-checked); dark is the default appearance (migration `20261101150000_dark_default`); first chart series violet (palette validated with the dataviz checker, light and dark).
+- [x] **Shell:**
+  - floating rounded sidebar with the organization name and a collapse control;
+  - groups Customers / Network / Finance / Outreach / Insights;
+  - collapsible Devices (Routers, Equipment) and Billing (Payments, Invoices, Expenses, Reconciliation, Collections);
+  - Administration at the bottom;
+  - floating top bar with a centered "Search subscribers, routers, payments…" and **Ask AI**;
+  - content in a centered column.
+- [x] **Shared components:**
+  - page header with a "SECTION — PAGE" label from the navigation and the title's last word in the accent colour;
+  - pill buttons and pill tabs with counts;
+  - uppercase table headers;
+  - rounded cards and stat strips;
+  - long money values shrink instead of being cut off.
+- [x] **Renamed:** navigation labels (Overview, Leads, Tickets, Live sessions, Plans, Equipment, Communications, Analytics) and two-word page titles.
+- [x] **Settings:** side menu with icon tiles and search; new **Payments** section (gateway cards incl. Cash and bank, M-Pesa settings) and **Communications** section (SMS and email providers).
+- [x] **Ask AI for staff** (`src/server/assistant/staff.ts`):
+  - six read-only tools that run as the asking staff member (permissions and branch scope apply);
+  - text-only history and nothing stored;
+  - rate-limited, with a test-mode rule set;
+  - shown in the top bar and on phones.
+- [ ] **Not done** from the reference screenshots:
+  - fiber map, ticket analytics, promo banners and hotspot ads, TR-069;
+  - loyalty points;
+  - WhatsApp;
+  - the overview "Today" event feed in its exact form (Cloudlink shows payments and activity in "What's next" and the activity feed).
+
+| Command (2026-10-31) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261101150000_dark_default` applied; `migrate diff`: empty |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 18 files, 149 passed |
+| `npm run test:integration` | 31 files, 237 passed (Ask AI: 3 new tests) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 33 passed (nav and title assertions updated); new Ask AI browser test passes (assistant.spec: 2 passed) |
+
+Visual check (production build on :3102, e2e database, dark): overview, live sessions, subscribers, plans, routers, payments, Settings → Payments, Settings → Hotspot, Ask AI panel, subscribers at 390 px.
+
+**Exact next task**: Phase 19 — loyalty points (earn per spend, redeem for account credit, ledger-backed), then fiber map / ticket analytics / promo banners.
 
 ## Work log
 

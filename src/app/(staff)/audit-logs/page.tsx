@@ -23,7 +23,7 @@ export default async function AuditLogsPage({ searchParams }: { searchParams: Pr
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Audit Logs" description="Security and change history for this organization. Sensitive values are redacted before they are recorded." />
+      <PageHeader title="Audit log" description="Security and change history for this organization. Sensitive values are redacted before they are recorded." />
       <Card>
         <form method="get" action="/audit-logs" className="grid gap-3 border-b border-border p-4 sm:grid-cols-2 lg:grid-cols-6 lg:items-end">
           <label className="space-y-1 text-sm lg:col-span-2">

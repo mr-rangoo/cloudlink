@@ -3,9 +3,9 @@
 These features were added in phase 10. Each organization sets them up itself under **Settings**.
 
 ## Branding and theme (Settings → Branding & theme)
-- **Theme presets.** There are seven: Midnight blue, Forest green, Ocean, Plum, Ember, Crimson and Graphite. Each one sets the accent colour, the sidebar colours and the focus ring, with light and dark previews. Every preset passes WCAG AA contrast (`tests/unit/themes.test.ts`).
+- **Theme presets.** There are eight: Cloudlink violet (the default), Midnight blue, Forest green, Ocean, Plum, Ember, Crimson and Graphite. Each one sets the accent colour, the sidebar colours and the focus ring, with light and dark previews. Every preset passes WCAG AA contrast (`tests/unit/themes.test.ts`).
 - **Brand colour.** You can enter your own hex colour instead of a preset. It is rejected if white text on it would fall below 4.5:1 contrast. Lighter and darker shades are derived from it automatically.
-- **Default appearance.** Choose light, dark or follow the device. It applies at sign-in to anyone who has not picked a mode. Customers can switch mode in the portal header, and staff can switch in the account menu. The choice is kept in the `cloudlink_theme` cookie.
+- **Default appearance.** Choose light, dark or follow the device. Dark is the default for organizations that have not chosen. It applies at sign-in to anyone who has not picked a mode. Customers can switch mode in the portal header, and staff can switch in the account menu. The choice is kept in the `cloudlink_theme` cookie.
 - **Logo.** PNG, JPEG or WebP up to 512 KB. The file contents are checked, so SVG and renamed files are refused. The logo is served publicly from `/api/v1/branding/<slug>/logo` with `nosniff` and a locked-down content security policy.
 - **Portal texts.** A welcome message on the portal home page, and support hours in the portal footer.
 - **Where it shows.** The staff app, the customer portal, the portal sign-in and activation pages, and the hotspot captive portal. Changes are audited as `settings.branding.update`.

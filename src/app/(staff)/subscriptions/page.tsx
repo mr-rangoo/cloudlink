@@ -28,7 +28,7 @@ export default async function SubscriptionsPage({ searchParams }: { searchParams
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Subscriptions" description="Billing status of every subscription. Manage a subscription from its subscriber page." />
+      <PageHeader title="All subscriptions" description="Billing status of every subscription. Manage a subscription from its subscriber page." />
       <Card>
         <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
           <FilterTabs

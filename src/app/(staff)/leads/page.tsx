@@ -36,7 +36,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   return (
     <div className="space-y-6">
       <PageHeader
-        title="CRM / Leads"
+        title="Sales leads"
         description="Track prospects from first contact to conversion."
         actions={canWrite ? <NewLeadDialog staff={staff} packages={packages.map((p) => ({ id: p.id, name: p.name }))} currentUserId={ctx.userId} /> : null}
       />

@@ -33,7 +33,7 @@ export default async function RoutersPage({ searchParams }: { searchParams: Prom
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Routers"
+        title="Your routers"
         description="MikroTik routers reached over private or VPN addresses. API credentials are encrypted and never shown again."
         actions={canWrite ? <RouterFormDialog branches={branches.map((b) => ({ id: b.id, name: b.name }))} /> : null}
       />

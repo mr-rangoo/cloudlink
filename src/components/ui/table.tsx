@@ -16,11 +16,11 @@ export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTab
 }
 
 export function THead(props: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className="hidden border-b border-border bg-surface-muted/60 text-left text-xs font-medium text-muted-foreground md:table-header-group" {...props} />;
+  return <thead className="hidden border-b border-border text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground md:table-header-group" {...props} />;
 }
 
 export function Th({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
-  return <th scope="col" className={cn("px-4 py-2.5 font-medium whitespace-nowrap", className)} {...props} />;
+  return <th scope="col" className={cn("px-4 py-3 font-semibold whitespace-nowrap", className)} {...props} />;
 }
 
 export function TBody(props: React.HTMLAttributes<HTMLTableSectionElement>) {
@@ -36,7 +36,7 @@ export function Td({ className, label, ...props }: React.TdHTMLAttributes<HTMLTa
     <td
       data-label={label}
       className={cn(
-        "flex items-center justify-between gap-4 py-1 md:table-cell md:px-4 md:py-3",
+        "flex items-center justify-between gap-4 py-1 md:table-cell md:px-4 md:py-3.5",
         "before:text-xs before:font-medium before:text-muted-foreground before:content-[attr(data-label)] md:before:content-none",
         className,
       )}
@@ -53,20 +53,20 @@ export function Pagination({ page, totalPages, total, hrefFor }: { page: number;
       </p>
       <div className="flex gap-2">
         {page > 1 ? (
-          <Link href={hrefFor(page - 1)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 hover:bg-surface-muted" rel="prev">
+          <Link href={hrefFor(page - 1)} className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 hover:bg-surface-muted" rel="prev">
             <ChevronLeft className="size-4" /> Previous
           </Link>
         ) : (
-          <span className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 opacity-40" aria-disabled>
+          <span className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 opacity-40" aria-disabled>
             <ChevronLeft className="size-4" /> Previous
           </span>
         )}
         {page < totalPages ? (
-          <Link href={hrefFor(page + 1)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 hover:bg-surface-muted" rel="next">
+          <Link href={hrefFor(page + 1)} className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 hover:bg-surface-muted" rel="next">
             Next <ChevronRight className="size-4" />
           </Link>
         ) : (
-          <span className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 opacity-40" aria-disabled>
+          <span className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 opacity-40" aria-disabled>
             Next <ChevronRight className="size-4" />
           </span>
         )}

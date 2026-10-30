@@ -13,7 +13,7 @@ export default async function NewPlanPage() {
   const routers = await planRouterChoices(ctx);
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <PageHeader eyebrow="Plans · New" title="Create a plan" description="Price, duration, speed limits, scheduling and router restrictions. Existing subscriptions are never changed by plan edits." />
+      <PageHeader title="Create a plan" description="Price, duration, speed limits, scheduling and router restrictions. Existing subscriptions are never changed by plan edits." />
       <PlanForm routers={routers} currency={ctx.organization.currency} canSync={ctx.permissions.has("network.operate")} />
     </div>
   );

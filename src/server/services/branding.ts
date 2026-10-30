@@ -42,7 +42,7 @@ function view(slug: string, row: { themePreset: string; customAccent: string | n
   return {
     themePreset,
     customAccent,
-    defaultMode: (row?.defaultMode as BrandingView["defaultMode"]) ?? "light",
+    defaultMode: (row?.defaultMode as BrandingView["defaultMode"]) ?? "dark",
     logoUrl: row?.logoKey ? `/api/v1/branding/${slug}/logo?v=${row.logoUpdatedAt?.getTime() ?? 0}` : null,
     portalWelcome: row?.portalWelcome ?? null,
     supportHours: row?.supportHours ?? null,

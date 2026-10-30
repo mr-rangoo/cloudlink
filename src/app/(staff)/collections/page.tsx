@@ -33,7 +33,7 @@ export default async function CollectionsPage({ searchParams }: { searchParams: 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Collections"
+        title="Cash collections"
         description="Money received, refunded and spent per month, and where it is held according to the ledger."
         actions={canWrite ? <WithdrawalDialog currency={cur} branches={branches} /> : null}
       />

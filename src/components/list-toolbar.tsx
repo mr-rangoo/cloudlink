@@ -18,7 +18,7 @@ export function SearchForm({ action, q, placeholder, hidden }: { action: string;
         name="q"
         defaultValue={q}
         placeholder={placeholder}
-        className="h-9 w-full rounded-md border border-border-strong bg-surface pl-8 pr-3 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        className="h-9 w-full rounded-full border border-border-strong bg-surface pl-8 pr-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring"
       />
       {Object.entries(hidden ?? {}).map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
     </form>
@@ -27,21 +27,26 @@ export function SearchForm({ action, q, placeholder, hidden }: { action: string;
 
 export function FilterTabs({ items, active, label }: { items: Array<{ value: string; label: string; href: string; count?: number }>; active: string; label: string }) {
   return (
-    <nav aria-label={label} className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
-      {items.map((i) => (
-        <Link
-          key={i.value}
-          href={i.href}
-          aria-current={i.value === active ? "page" : undefined}
-          className={cn(
-            "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-medium",
-            i.value === active ? "bg-accent-soft text-accent" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground",
-          )}
-        >
-          {i.label}
-          {i.count !== undefined ? <span className="tabular rounded bg-surface px-1.5 text-xs text-muted-foreground">{i.count}</span> : null}
-        </Link>
-      ))}
+    <nav aria-label={label} className="max-w-full overflow-x-auto">
+      <div className="inline-flex gap-0.5 rounded-full border border-border bg-surface p-1">
+        {items.map((i) => {
+          const on = i.value === active;
+          return (
+            <Link
+              key={i.value}
+              href={i.href}
+              aria-current={on ? "page" : undefined}
+              className={cn(
+                "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium transition-colors",
+                on ? "bg-foreground text-background" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground",
+              )}
+            >
+              {i.label}
+              {i.count !== undefined ? <span className={cn("tabular rounded-full px-1.5 text-[11px] font-semibold", on ? "bg-background/15" : "bg-surface-muted")}>{i.count}</span> : null}
+            </Link>
+          );
+        })}
+      </div>
     </nav>
   );
 }

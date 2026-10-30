@@ -19,7 +19,11 @@ import {
 import { mockIntent } from "@/server/assistant/model";
 import { resetRateLimit } from "@/server/security/rate-limit";
 import { POST as sendRoute } from "@/app/api/v1/customer/assistant/messages/route";
-import { contextFor, createOrg, createStaff, noParams, request } from "./fixtures";
+import { POST as askRoute } from "@/app/api/v1/assistant/ask/route";
+import { askStaff, STAFF_MOCK_RULES, staffAssistantStatus } from "@/server/assistant/staff";
+import { createRouter } from "@/server/services/routers";
+import { recordManualPayment, manualPaymentInput } from "@/server/services/payments";
+import { contextFor, createOrg, createStaff, noParams, request, sessionFor } from "./fixtures";
 
 const meta = { correlationId: "assistant-test-01", ipAddress: "10.9.0.3", userAgent: "vitest" };
 let seq = 0;
@@ -285,5 +289,78 @@ describe("assistant (Claude adapter)", () => {
     expect(real.conversationId).not.toBe(mockChat.conversationId);
     expect(recorded[0]!.body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "hello" }] }]);
     expect((await db.assistantConversation.findUniqueOrThrow({ where: { id: mockChat.conversationId } })).status).toBe("CLOSED");
+  });
+});
+
+describe("Ask AI for staff (test mode)", () => {
+  it("answers from the organization's records, within the asker's permissions", async () => {
+    const { org, ctx, customer } = await setup();
+    const { subscriber } = await customer("Wairimu");
+    await createRouter(ctx, { name: "Core-1", host: "10.20.0.1", username: "cloudlink", password: "router-pass" });
+    await recordManualPayment(ctx, manualPaymentInput.parse({ subscriberId: subscriber.id, amount: "500.00", method: "CASH", receivedAt: new Date() }));
+    const ask = (c: typeof ctx, text: string) => askStaff(c, { messages: [{ role: "user", text }] });
+
+    expect(staffAssistantStatus()).toEqual({ available: true, simulated: true });
+    const today = await ask(ctx, "How much have we collected today?");
+    expect(today).toMatchObject({ tools: ["business_snapshot"], simulated: true });
+    expect(today.reply).toMatch(/Collected today: KES 500\.00/);
+
+    const found = await ask(ctx, "find Wairimu");
+    expect(found.reply).toContain(subscriber.accountNumber);
+    const details = await ask(ctx, `What about ${subscriber.accountNumber}?`);
+    expect(details).toMatchObject({ tools: ["subscriber_details"] });
+    expect(details.reply).toMatch(/Wairimu Test .* owes KES 2,000\.00/);
+    expect(details.reply).toContain("Last payment KES 500.00 by CASH");
+    expect((await ask(ctx, "Show the latest payments")).reply).toContain("KES 500.00 CASH from Wairimu Test");
+    expect((await ask(ctx, "Which routers are offline?")).reply).toMatch(/^Core-1: unknown, 0 online/);
+
+    // A cashier cannot see routers: the tool refuses, whatever the question.
+    const cashier = await createStaff(org.organization.id, "cashier");
+    const denied = await ask(await contextFor(cashier.user.id, org.organization.id), "Which routers are offline?");
+    expect(denied.reply).toBe("Sorry, I couldn't do that: You do not have access to this information.");
+
+    // Another organization's subscriber is never found.
+    const other = await createOrg("Other ISP");
+    const otherCtx = await contextFor(other.owner.id, other.organization.id);
+    expect((await ask(otherCtx, `What about ${subscriber.accountNumber}?`)).reply).toContain("No subscriber with that account number");
+
+    // Through the API route with a staff session.
+    const token = await sessionFor(org.owner.id, org.organization.id);
+    const res = await askRoute(request("/api/v1/assistant/ask", { token, body: { messages: [{ role: "user", text: "Who expires in the next 24 hours?" }] } }), noParams);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: { tools: string[] } }).data.tools).toEqual(["expiring_subscriptions"]);
+    expect((await askRoute(request("/api/v1/assistant/ask", { token, body: { messages: [{ role: "assistant", text: "hi" }] } }), noParams)).status).toBe(400);
+
+    process.env.ASSISTANT_ADAPTER = "disabled";
+    expect(staffAssistantStatus().available).toBe(false);
+    await expect(ask(ctx, "hello")).rejects.toMatchObject({ code: "INTEGRATION_UNAVAILABLE" });
+  });
+
+  it("routes questions to the right lookup", () => {
+    expect(STAFF_MOCK_RULES.intent("show A000123")?.tool).toBe("subscriber_details");
+    expect(STAFF_MOCK_RULES.intent("who is 0712 345 678")?.input).toEqual({ query: "0712345678" });
+    expect(STAFF_MOCK_RULES.intent("who expires this week")?.input).toEqual({ within: "7d" });
+    expect(STAFF_MOCK_RULES.intent("any mikrotik offline?")?.tool).toBe("router_status");
+    expect(STAFF_MOCK_RULES.intent("tell me a joke")).toBeNull();
+  });
+
+  it("sends Claude the staff tools and a text-only history", async () => {
+    process.env.ASSISTANT_ADAPTER = "anthropic";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test-key";
+    process.env.ASSISTANT_BASE_URL = baseURL;
+    recorded.length = 0;
+    const { ctx } = await setup();
+    script.push({ body: msg([{ type: "tool_use", id: "toolu_s1", name: "business_snapshot", input: {} }], "tool_use") });
+    script.push({ body: msg([{ type: "text", text: "You collected KES 0.00 today.", citations: null }], "end_turn") });
+    const r = await askStaff(ctx, { messages: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hello!" }, { role: "user", text: "How is today going?" }] });
+    expect(r).toEqual({ reply: "You collected KES 0.00 today.", tools: ["business_snapshot"], simulated: false });
+    const first = recorded[0]!.body as { tools: Array<{ name: string }>; system: Array<{ text: string }>; messages: unknown[] };
+    expect(first.tools.map((t) => t.name)).toEqual(["business_snapshot", "find_subscribers", "subscriber_details", "recent_payments", "expiring_subscriptions", "router_status"]);
+    expect(first.system[0]!.text).toContain("assistant for staff of");
+    expect(first.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      { role: "assistant", content: [{ type: "text", text: "Hello!" }] },
+      { role: "user", content: [{ type: "text", text: "How is today going?" }] },
+    ]);
   });
 });

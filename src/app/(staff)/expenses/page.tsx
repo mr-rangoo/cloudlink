@@ -66,7 +66,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Expenses"
+        title="Operating expenses"
         description="Operating costs paid from cash, bank or M-Pesa. Each expense posts to the ledger; corrections are reversals."
         actions={
           <>

@@ -17,7 +17,7 @@ export default async function BranchesPage() {
   const canWrite = ctx.permissions.has("branches.write");
   return (
     <div className="space-y-6">
-      <PageHeader title="Branches" description="Branches scope subscribers, invoices and staff access. Archiving is blocked while subscribers are assigned." actions={canWrite && !ctx.branchIds ? <BranchDialog /> : null} />
+      <PageHeader title="Your branches" description="Branches scope subscribers, invoices and staff access. Archiving is blocked while subscribers are assigned." actions={canWrite && !ctx.branchIds ? <BranchDialog /> : null} />
       <Card>
         <Table>
           <THead>

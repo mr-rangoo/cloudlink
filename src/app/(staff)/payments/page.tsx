@@ -57,7 +57,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Payments"
+        title="Payments ledger"
         description={`Showing ${periodText}. Payments are confirmed by staff entry or provider callbacks, never by a browser redirect.`}
         actions={
           <>

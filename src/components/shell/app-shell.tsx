@@ -5,11 +5,12 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Dialog, DropdownMenu } from "radix-ui";
-import { Bell, Building, ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Menu, Monitor, Moon, Search, Sun, X } from "lucide-react";
+import { Bell, Building, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, LogOut, Menu, Monitor, Moon, Search, Sun, X } from "lucide-react";
 import { toast } from "sonner";
-import { NAV_ITEMS, type NavItem } from "@/lib/navigation";
+import { NAV_ITEMS, NAV_PARENTS, type NavItem } from "@/lib/navigation";
 import { NAV_ICONS } from "@/components/shell/icons";
 import { CloudlinkWordmark } from "@/components/shell/logo";
+import { AskAi } from "@/components/shell/ask-ai";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,8 @@ export interface ShellProps {
   isDemo: boolean;
   /** Organization logo for the sidebar; the Cloudlink wordmark is shown when there is none. */
   brand?: { name: string; logoUrl: string | null };
+  /** Ask AI in the top bar, when the deployment has an assistant adapter. */
+  askAi?: { available: boolean; simulated: boolean };
   children: React.ReactNode;
 }
 
@@ -130,31 +133,26 @@ export function AppShell(props: ShellProps) {
   const items = React.useMemo(() => NAV_ITEMS.filter((i) => permissions.includes(i.permission)), [permissions]);
 
   return (
-    <div className="flex min-h-dvh bg-background">
+    <div className="flex min-h-dvh gap-3 bg-background lg:p-3">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-surface focus:px-3 focus:py-2 focus:shadow">
         Skip to content
       </a>
 
-      {/* Desktop sidebar */}
+      {/* Desktop sidebar: a floating panel */}
       <aside
-        className={cn("sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 lg:flex", collapsed ? "w-[68px]" : "w-64")}
+        className={cn(
+          "sticky top-3 hidden h-[calc(100dvh-1.5rem)] shrink-0 flex-col overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar transition-[width] duration-200 lg:flex",
+          collapsed ? "w-[68px]" : "w-60",
+        )}
         aria-label="Primary"
       >
-        <SidebarContent items={items} collapsed={collapsed} pathname={pathname} brand={props.brand} counts={counts} />
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          className="mx-3 mb-3 flex h-9 items-center justify-center gap-2 rounded-md text-xs text-sidebar-muted hover:bg-sidebar-active hover:text-white"
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? <ChevronsRight className="size-4" /> : <><ChevronsLeft className="size-4" /> Collapse</>}
-        </button>
+        <SidebarContent items={items} collapsed={collapsed} pathname={pathname} brand={props.brand} counts={counts} onToggleCollapsed={toggleCollapsed} />
       </aside>
 
       {/* Mobile drawer */}
       <Dialog.Root open={mobileOpen} onOpenChange={setMobileOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 lg:hidden" />
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 lg:hidden" />
           <Dialog.Content className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-sidebar lg:hidden" aria-describedby={undefined}>
             <Dialog.Title className="sr-only">Navigation</Dialog.Title>
             <Dialog.Close className="absolute right-3 top-4 rounded-md p-1.5 text-sidebar-muted hover:text-white" aria-label="Close navigation">
@@ -168,13 +166,14 @@ export function AppShell(props: ShellProps) {
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar {...props} onOpenMobile={() => setMobileOpen(true)} onOpenCommand={() => setCommandOpen(true)} />
         {props.isDemo ? (
-          <div className="border-b border-warning/30 bg-warning-soft px-4 py-1.5 text-center text-xs font-medium text-warning" role="status">
+          <div className="mt-3 rounded-xl border border-warning/30 bg-warning-soft px-4 py-1.5 text-center text-xs font-medium text-warning" role="status">
             Demo environment — records are fictional and integrations run in mock mode. No real money or network changes.
           </div>
         ) : null}
-        <main id="main" className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main id="main" className="mx-auto w-full max-w-[1120px] flex-1 px-4 py-8 sm:px-6">
           <PageTransition pathname={pathname}>{children}</PageTransition>
         </main>
+        <footer className="pb-4 text-center font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground/70">Cloudlink · ISP billing &amp; network</footer>
       </div>
 
       <CommandMenu open={commandOpen} onOpenChange={setCommandOpen} items={items} />
@@ -192,78 +191,193 @@ function PageTransition({ pathname, children }: { pathname: string; children: Re
   );
 }
 
-function SidebarContent({ items, collapsed, pathname, onNavigate, brand, counts }: { items: NavItem[]; collapsed: boolean; pathname: string; onNavigate?: () => void; brand?: ShellProps["brand"]; counts: NavCounts | null }) {
+const OPEN_KEY = "cloudlink.nav.open";
+
+function readOpen(): string[] {
+  try {
+    return JSON.parse(window.localStorage.getItem(OPEN_KEY) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+function NavLink({ item, active, collapsed, counts, onNavigate, nested }: { item: NavItem; active: boolean; collapsed: boolean; counts: NavCounts | null; onNavigate?: () => void; nested?: boolean }) {
+  const Icon = NAV_ICONS[item.icon] ?? NAV_ICONS.LayoutDashboard!;
+  const badge = navBadge(item.slug, counts);
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      title={collapsed ? `${item.label}${item.available ? "" : " (not yet available)"}${badge ? `: ${badge.label}` : ""}` : badge?.label}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "group flex items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors",
+        nested ? "h-8" : "h-9",
+        active ? "bg-sidebar-active text-white" : "text-sidebar-foreground hover:bg-sidebar-elevated hover:text-white",
+        collapsed && "justify-center px-0",
+      )}
+    >
+      {nested && !collapsed ? null : <Icon className={cn("size-4 shrink-0", active ? "text-white" : "text-sidebar-muted group-hover:text-sidebar-foreground")} aria-hidden />}
+      {!collapsed ? (
+        <>
+          <span className="truncate">{item.label}</span>
+          {badge ? (
+            <span
+              className={cn(
+                "tabular ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                badge.tone === "danger" ? "bg-danger-soft text-danger" : badge.tone === "warning" ? "bg-warning-soft text-warning" : item.slug === "sessions" ? "bg-success-soft text-success" : "bg-sidebar-elevated text-sidebar-foreground",
+              )}
+            >
+              {badge.value > 999 ? "999+" : badge.value}
+              <span className="sr-only"> ({badge.label})</span>
+            </span>
+          ) : null}
+          {!item.available ? <span className="ml-auto rounded bg-sidebar-elevated px-1.5 py-0.5 text-[10px] font-medium text-sidebar-muted">Soon</span> : null}
+        </>
+      ) : null}
+    </Link>
+  );
+}
+
+function SidebarContent({
+  items,
+  collapsed,
+  pathname,
+  onNavigate,
+  brand,
+  counts,
+  onToggleCollapsed,
+}: {
+  items: NavItem[];
+  collapsed: boolean;
+  pathname: string;
+  onNavigate?: () => void;
+  brand?: ShellProps["brand"];
+  counts: NavCounts | null;
+  onToggleCollapsed?: () => void;
+}) {
+  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  // Sub-menus: open while one of their pages is shown, or when the person opened them (remembered).
+  const [opened, setOpened] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    const saved = readOpen();
+    if (saved.length) queueMicrotask(() => setOpened(saved));
+  }, []);
+  const toggle = (key: string) =>
+    setOpened((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      try {
+        window.localStorage.setItem(OPEN_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable: not remembered */
+      }
+      return next;
+    });
+
+  // Group → ordered entries, where an entry is a plain link or a sub-menu of links.
   const groups = React.useMemo(() => {
-    const map = new Map<string, NavItem[]>();
-    for (const i of items) map.set(i.group, [...(map.get(i.group) ?? []), i]);
+    const map = new Map<string, Array<{ parent: string; children: NavItem[] } | NavItem>>();
+    for (const i of items) {
+      const list = map.get(i.group) ?? [];
+      if (i.parent) {
+        const existing = list.find((e): e is { parent: string; children: NavItem[] } => "parent" in e && !("slug" in e) && e.parent === i.parent);
+        if (existing) existing.children.push(i);
+        else list.push({ parent: i.parent, children: [i] });
+      } else list.push(i);
+      map.set(i.group, list);
+    }
     return [...map.entries()];
   }, [items]);
 
   return (
     <>
-      <div className={cn("flex h-16 items-center border-b border-sidebar-border", collapsed ? "justify-center px-2" : "px-5")}>
-        <Link href="/dashboard" className="rounded-md" aria-label={`${brand?.name ?? "Cloudlink"} dashboard`}>
+      <div className={cn("flex h-14 shrink-0 items-center gap-2", collapsed ? "justify-center px-2" : "px-4")}>
+        <Link href="/dashboard" className="min-w-0 rounded-md" aria-label={`${brand?.name ?? "Cloudlink"} overview`}>
           {brand?.logoUrl ? (
             <span className="flex items-center gap-2.5">
               {/* eslint-disable-next-line @next/next/no-img-element -- organization logo served by the app */}
-              <img src={brand.logoUrl} alt="" className="size-8 rounded-md bg-white object-contain p-0.5" />
-              {collapsed ? <span className="sr-only">{brand.name}</span> : <span className="max-w-[10rem] truncate text-[15px] font-semibold tracking-tight text-white">{brand.name}</span>}
+              <img src={brand.logoUrl} alt="" className="size-7 rounded-md bg-white object-contain p-0.5" />
+              {collapsed ? <span className="sr-only">{brand.name}</span> : <span className="block max-w-[9.5rem] truncate text-[15px] font-bold tracking-tight text-white">{brand.name}</span>}
             </span>
+          ) : collapsed ? (
+            <CloudlinkWordmark collapsed />
           ) : (
-            <CloudlinkWordmark collapsed={collapsed} />
+            <span className="block max-w-[10rem] truncate text-[15px] font-bold tracking-tight text-white">{brand?.name ?? "Cloudlink"}</span>
           )}
         </Link>
+        {onToggleCollapsed && !collapsed ? (
+          <button type="button" onClick={onToggleCollapsed} className="ml-auto rounded-md p-1 text-sidebar-muted hover:bg-sidebar-elevated hover:text-white" aria-label="Collapse sidebar">
+            <ChevronsLeft className="size-4" />
+          </button>
+        ) : null}
       </div>
-      <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Main navigation">
-        {groups.map(([group, groupItems]) => (
-          <div key={group} className="mb-4">
-            {!collapsed ? <p className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-wider text-sidebar-muted">{group}</p> : null}
-            <ul className="space-y-0.5">
-              {groupItems.map((item) => {
-                const Icon = NAV_ICONS[item.icon] ?? NAV_ICONS.LayoutDashboard!;
-                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                const badge = navBadge(item.slug, counts);
-                return (
-                  <li key={item.slug}>
-                    <Link
-                      href={item.href}
-                      onClick={onNavigate}
-                      title={collapsed ? `${item.label}${item.available ? "" : " (not yet available)"}${badge ? `: ${badge.label}` : ""}` : badge?.label}
-                      aria-current={active ? "page" : undefined}
-                      className={cn(
-                        "group flex h-9 items-center gap-3 rounded-md px-2.5 text-[13px] font-medium transition-colors",
-                        active ? "bg-sidebar-active text-white" : "text-sidebar-foreground hover:bg-sidebar-elevated hover:text-white",
-                        collapsed && "justify-center px-0",
-                      )}
-                    >
-                      <Icon className={cn("size-[18px] shrink-0", active ? "text-cyan" : "text-sidebar-muted group-hover:text-sidebar-foreground")} aria-hidden />
-                      {!collapsed ? (
-                        <>
-                          <span className="truncate">{item.label}</span>
-                          {badge ? (
-                            <span
-                              className={cn(
-                                "tabular ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
-                                badge.tone === "danger" ? "bg-danger-soft text-danger" : badge.tone === "warning" ? "bg-warning-soft text-warning" : "bg-sidebar-elevated text-sidebar-foreground",
-                              )}
-                            >
-                              {badge.value > 999 ? "999+" : badge.value}
-                              <span className="sr-only"> ({badge.label})</span>
-                            </span>
-                          ) : null}
-                          {!item.available ? (
-                            <span className="ml-auto rounded bg-sidebar-elevated px-1.5 py-0.5 text-[10px] font-medium text-sidebar-muted">Soon</span>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
+      <nav className="flex-1 overflow-y-auto px-2.5 pb-3" aria-label="Main navigation">
+        {groups.map(([group, entries]) => {
+          const admin = group === "Administration";
+          const adminOpen = !admin || opened.includes("admin") || entries.some((e) => "slug" in e && isActive(e.href));
+          return (
+            <div key={group} className={cn("mt-3", admin && "mt-5 border-t border-sidebar-border pt-3")}>
+              {!collapsed ? (
+                admin ? (
+                  <button type="button" onClick={() => toggle("admin")} aria-expanded={adminOpen} className="mb-1 flex w-full items-center px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted hover:text-sidebar-foreground">
+                    {group}
+                    <ChevronRight className={cn("ml-auto size-3.5 transition-transform", adminOpen && "rotate-90")} aria-hidden />
+                  </button>
+                ) : group !== "Overview" ? (
+                  <p className="mb-1 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted">{group}</p>
+                ) : null
+              ) : null}
+              {adminOpen || collapsed ? (
+                <ul className="space-y-0.5">
+                  {entries.map((entry) => {
+                    if ("slug" in entry) {
+                      return (
+                        <li key={entry.slug}>
+                          <NavLink item={entry} active={isActive(entry.href)} collapsed={collapsed} counts={counts} onNavigate={onNavigate} />
+                        </li>
+                      );
+                    }
+                    const meta = NAV_PARENTS[entry.parent] ?? { label: entry.parent, icon: "LayoutDashboard" };
+                    const ParentIcon = NAV_ICONS[meta.icon] ?? NAV_ICONS.LayoutDashboard!;
+                    const childActive = entry.children.some((c) => isActive(c.href));
+                    const open = collapsed || childActive || opened.includes(entry.parent);
+                    return (
+                      <li key={entry.parent}>
+                        {!collapsed ? (
+                          <button
+                            type="button"
+                            onClick={() => toggle(entry.parent)}
+                            aria-expanded={open}
+                            className={cn("group flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors", childActive ? "text-white" : "text-sidebar-foreground hover:bg-sidebar-elevated hover:text-white")}
+                          >
+                            <ParentIcon className="size-4 shrink-0 text-sidebar-muted group-hover:text-sidebar-foreground" aria-hidden />
+                            <span className="truncate">{meta.label}</span>
+                            <ChevronRight className={cn("ml-auto size-3.5 text-sidebar-muted transition-transform", open && "rotate-90")} aria-hidden />
+                          </button>
+                        ) : null}
+                        {open ? (
+                          <ul className={cn("space-y-0.5", !collapsed && "ml-[1.15rem] mt-0.5 border-l border-sidebar-border pl-2")}>
+                            {entry.children.map((c) => (
+                              <li key={c.slug}>
+                                <NavLink item={c} nested={!collapsed} active={isActive(c.href)} collapsed={collapsed} counts={counts} onNavigate={onNavigate} />
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </div>
+          );
+        })}
       </nav>
+      {onToggleCollapsed && collapsed ? (
+        <button type="button" onClick={onToggleCollapsed} className="mx-2 mb-3 flex h-9 items-center justify-center rounded-lg text-sidebar-muted hover:bg-sidebar-elevated hover:text-white" aria-label="Expand sidebar">
+          <ChevronsRight className="size-4" />
+        </button>
+      ) : null}
     </>
   );
 }
@@ -307,8 +421,8 @@ function Breadcrumbs() {
   );
 }
 
-const menuItemClass = "flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-surface-muted";
-const menuContentClass = "z-50 min-w-56 rounded-md border border-border bg-surface p-1 shadow-(--shadow-pop)";
+const menuItemClass = "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-surface-muted";
+const menuContentClass = "z-50 min-w-56 rounded-xl border border-border bg-surface p-1 shadow-(--shadow-pop)";
 
 function Topbar(props: ShellProps & { onOpenMobile: () => void; onOpenCommand: () => void }) {
   const router = useRouter();
@@ -346,31 +460,42 @@ function Topbar(props: ShellProps & { onOpenMobile: () => void; onOpenCommand: (
   const activeBranch = props.branches.find((b) => b.id === props.activeBranchId);
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur sm:px-6">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-surface/90 px-3 backdrop-blur sm:px-4 lg:top-3 lg:rounded-2xl lg:border">
       <button type="button" onClick={props.onOpenMobile} className="rounded-md p-2 hover:bg-surface-muted lg:hidden" aria-label="Open navigation">
         <Menu className="size-5" />
       </button>
-      <Breadcrumbs />
+      <div className="min-w-0 lg:w-56">
+        <Breadcrumbs />
+      </div>
 
-      <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+      <div className="mx-auto hidden min-w-0 max-w-md flex-1 items-center gap-2 md:flex">
         <button
           type="button"
           onClick={props.onOpenCommand}
-          className="hidden h-9 w-56 items-center gap-2 rounded-md border border-border bg-surface-muted px-3 text-sm text-muted-foreground hover:border-border-strong md:flex"
+          className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-full border border-border bg-background px-3.5 text-[13px] text-muted-foreground hover:border-border-strong"
         >
-          <Search className="size-4" aria-hidden />
-          <span>Search…</span>
-          <kbd className="ml-auto rounded border border-border bg-surface px-1.5 text-[10px] font-medium">Ctrl K</kbd>
+          <Search className="size-4 shrink-0" aria-hidden />
+          <span className="truncate">Search subscribers, routers, payments…</span>
+          <kbd className="ml-auto shrink-0 rounded border border-border bg-surface px-1.5 text-[10px] font-medium">Ctrl K</kbd>
         </button>
+        {props.askAi?.available ? <AskAi simulated={props.askAi.simulated} /> : null}
+      </div>
+
+      <div className="ml-auto flex items-center gap-1.5 sm:gap-2 md:ml-0">
         <button type="button" onClick={props.onOpenCommand} className="rounded-md p-2 hover:bg-surface-muted md:hidden" aria-label="Search">
           <Search className="size-5" />
         </button>
+        {props.askAi?.available ? (
+          <span className="md:hidden">
+            <AskAi simulated={props.askAi.simulated} />
+          </span>
+        ) : null}
 
         {/* Organization selector */}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger
             disabled={busy}
-            className="flex h-9 max-w-52 items-center gap-2 rounded-md border border-border px-2.5 text-sm hover:bg-surface-muted"
+            className="flex h-9 max-w-48 items-center gap-2 rounded-full border border-border px-3 text-[13px] hover:bg-surface-muted"
             aria-label={`Organization: ${props.organization.name}. Branch: ${activeBranch?.name ?? "All branches"}`}
           >
             <Building className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -536,9 +661,9 @@ function CommandMenu({ open, onOpenChange, items }: { open: boolean; onOpenChang
         {open ? (
           <Dialog.Portal forceMount>
             <Dialog.Overlay asChild>
-              <motion.div className="fixed inset-0 z-50 bg-slate-950/40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
+              <motion.div className="fixed inset-0 z-50 bg-black/50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
             </Dialog.Overlay>
-            <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-[15vh] z-50 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-surface shadow-(--shadow-pop)">
+            <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-[15vh] z-50 w-[min(600px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-2xl border border-border bg-surface shadow-(--shadow-pop)">
               <Dialog.Title className="sr-only">Search Cloudlink</Dialog.Title>
               <div className="flex items-center gap-2 border-b border-border px-3">
                 <Search className="size-4 text-muted-foreground" aria-hidden />
@@ -651,7 +776,7 @@ function NotificationCenter() {
 
   return (
     <DropdownMenu.Root onOpenChange={(o) => o && void load()}>
-      <DropdownMenu.Trigger className="relative rounded-md p-2 hover:bg-surface-muted" aria-label={total ? `Notifications: ${total} items need attention` : "Notifications"}>
+      <DropdownMenu.Trigger className="relative rounded-full p-2 hover:bg-surface-muted" aria-label={total ? `Notifications: ${total} items need attention` : "Notifications"}>
         <Bell className="size-5" />
         {total ? <span className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-danger text-[10px] font-semibold text-white">{total > 9 ? "9+" : total}</span> : null}
       </DropdownMenu.Trigger>

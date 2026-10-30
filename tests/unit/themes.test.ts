@@ -34,7 +34,7 @@ describe("brand colours", () => {
   it("rejects colours too light to read on white, and malformed values", () => {
     expect(tokensFromBrand("#ffd400", THEME_PRESETS[0]!)).toBeNull();
     expect(tokensFromBrand("red", THEME_PRESETS[0]!)).toBeNull();
-    expect(resolveTheme("forest", "#ffd400").light.accent).toBe(THEME_PRESETS[1]!.light.accent); // falls back to the preset
+    expect(resolveTheme("forest", "#ffd400").light.accent).toBe(THEME_PRESETS.find((p) => p.id === "forest")!.light.accent); // falls back to the preset
   });
 
   it("emits CSS variables only from validated colours", () => {

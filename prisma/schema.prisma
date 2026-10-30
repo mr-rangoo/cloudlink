@@ -1823,9 +1823,9 @@ model WebhookEvent {
 // Look and feel chosen by the organization: theme preset, optional brand colour, default light/dark mode, logo.
 model OrganizationBranding {
   organizationId  String    @id @db.Uuid
-  themePreset     String    @default("midnight")
+  themePreset     String    @default("violet")
   customAccent    String? // #rrggbb, contrast-checked on save
-  defaultMode     String    @default("light") // light | dark | system
+  defaultMode     String    @default("dark") // light | dark | system
   logoKey         String? // storage key; image sniffed as PNG/JPEG/WebP on upload
   logoContentType String?
   logoUpdatedAt   DateTime? @db.Timestamptz(6)

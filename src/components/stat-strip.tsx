@@ -18,17 +18,19 @@ const toneClass = { default: "", accent: "text-accent", danger: "text-danger", s
  */
 export function StatStrip({ stats, className }: { stats: StripStat[]; className?: string }) {
   return (
-    <div className={cn("flex flex-wrap overflow-hidden rounded-lg border border-border bg-surface shadow-(--shadow-card)", className)}>
+    <div className={cn("flex flex-wrap overflow-hidden rounded-2xl border border-border bg-surface", className)}>
       {stats.map((s) => {
         const body = (
           <>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{s.label}</p>
-            <p className={cn("tabular mt-1 truncate text-2xl font-semibold tracking-tight", toneClass[s.tone ?? "default"])}>{s.value}</p>
+            <p className={cn("tabular mt-1.5 truncate font-bold tracking-tight", typeof s.value === "string" && s.value.length > 11 ? "text-lg" : "text-2xl", toneClass[s.tone ?? "default"])} title={typeof s.value === "string" ? s.value : undefined}>
+              {s.value}
+            </p>
             {s.hint ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{s.hint}</p> : null}
           </>
         );
         return (
-          <div key={s.label} className="-ml-px -mt-px min-w-0 flex-1 basis-36 border-l border-t border-border px-4 py-3.5">
+          <div key={s.label} className="-ml-px -mt-px min-w-0 flex-1 basis-36 border-l border-t border-border px-4 py-4">
             {s.href ? (
               <Link href={s.href} className="block rounded-sm hover:opacity-80">
                 {body}

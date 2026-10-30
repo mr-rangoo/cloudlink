@@ -24,8 +24,8 @@ describe("branding and themes", () => {
     const org = await createOrg();
     const ctx = await contextFor(org.owner.id, org.organization.id);
     const initial = await brandingFor(org.organization.id);
-    expect(initial).toMatchObject({ themePreset: "midnight", customAccent: null, defaultMode: "light", logoUrl: null });
-    expect(initial.css).toContain(":root{--accent:#1d6fe8");
+    expect(initial).toMatchObject({ themePreset: "violet", customAccent: null, defaultMode: "dark", logoUrl: null });
+    expect(initial.css).toContain(":root{--accent:#7c3aed");
 
     const forest = await updateBranding(ctx, { themePreset: "forest", defaultMode: "dark", portalWelcome: "Karibu!", supportHours: "Mon–Sat 8–8" });
     expect(forest.css).toContain("--accent:#15803d");

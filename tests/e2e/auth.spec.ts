@@ -24,7 +24,7 @@ test("rejects invalid credentials with a generic message", async ({ page }) => {
 test("staff login and logout", async ({ page }) => {
   await login(page, E2E_USERS.owner);
   await expect(page).toHaveURL(/\/dashboard/);
-  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), Olive$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), Olive\.$/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Organization: Alpha Net/ })).toBeVisible();
 
   await page.getByRole("button", { name: "Account menu" }).click();
@@ -39,6 +39,8 @@ test("navigation is permission-aware and unbuilt modules say so", async ({ page 
   await login(page, E2E_USERS.cashier);
   await expect(page).toHaveURL(/\/dashboard/);
   const nav = page.getByRole("navigation", { name: "Main navigation" });
+  // Payments sits in the collapsible Billing menu.
+  await nav.getByRole("button", { name: "Billing" }).click();
   await expect(nav.getByRole("link", { name: /Payments/ })).toBeVisible();
   await expect(nav.getByRole("link", { name: /Staff & Permissions/ })).toHaveCount(0);
   await expect(nav.getByRole("link", { name: /Routers/ })).toHaveCount(0);
@@ -50,7 +52,7 @@ test("navigation is permission-aware and unbuilt modules say so", async ({ page 
   await page.goto("/vouchers");
   await expect(page.getByText("Access restricted").or(page.getByText("Vouchers is not yet available"))).toBeVisible();
   await page.goto("/payments");
-  await expect(page.getByRole("heading", { name: "Payments" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Payments ledger." })).toBeVisible();
 });
 
 test("the command menu opens with Ctrl+K and navigates", async ({ page }) => {

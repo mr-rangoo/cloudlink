@@ -17,6 +17,9 @@ import { HotspotSettingsForm } from "./hotspot-form";
 import { OperatorAlertsForm } from "./operator-alerts-form";
 import { getOperatorAlertSettings, OPERATOR_EVENT_LABEL, OPERATOR_EVENTS } from "@/server/services/operator-alerts";
 import { SettingsNav, type SettingsNavGroup } from "./nav";
+import { PaymentGatewaysCard } from "../integrations/gateways-card";
+import { MpesaSettingsCard } from "../integrations/mpesa-card";
+import { MessagingSettingsCard } from "../integrations/messaging-card";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -24,48 +27,60 @@ const NAV: SettingsNavGroup[] = [
   {
     group: "General",
     items: [
-      { tab: "general", label: "Organization", hint: "Name, timezone, invoice numbers, tax" },
-      { tab: "branding", label: "Branding", hint: "Logo, colours, light or dark" },
+      { tab: "general", icon: "Building2", label: "Organization", hint: "Name, timezone, invoice numbers, tax" },
+      { tab: "branding", icon: "Palette", label: "Branding", hint: "Logo, colours, light or dark" },
     ],
   },
   {
     group: "Network",
     items: [
-      { tab: "hotspot", label: "Hotspot", hint: "Captive portal, support contacts" },
-      { href: "/routers", label: "Routers", hint: "MikroTik routers and setup command" },
-      { href: "/packages", label: "Plans", hint: "Prices, speeds, schedules" },
+      { tab: "hotspot", icon: "Wifi", label: "Hotspot", hint: "Captive portal, support contacts" },
+      { href: "/routers", icon: "Router", label: "Routers", hint: "MikroTik routers and setup command" },
+      { href: "/packages", icon: "Package", label: "Plans", hint: "Prices, speeds, schedules" },
     ],
   },
   {
     group: "Billing & messaging",
     items: [
-      { tab: "payments", label: "Payment methods", hint: "Paybill, till and bank shown to customers" },
-      { href: "/integrations", label: "M-Pesa gateway", hint: "Daraja credentials and callbacks" },
-      { href: "/notifications", label: "Message templates", hint: "Receipts, reminders, invites" },
-      { tab: "alerts", label: "Operator alerts", hint: "Router down, failed changes, daily summary" },
-      { href: "/integrations", label: "SMS and email providers", hint: "Your own SMS and SMTP accounts" },
+      { tab: "gateways", icon: "CreditCard", label: "Payments", hint: "Payment gateways and credentials" },
+      { tab: "payments", icon: "Wallet", label: "Payment methods", hint: "Paybill, till and bank shown to customers" },
+      { tab: "messaging", icon: "MessageSquare", label: "Communications", hint: "SMS and email providers" },
+      { href: "/notifications?tab=templates", icon: "FileText", label: "Message templates", hint: "Receipts, reminders, invites" },
     ],
+  },
+  {
+    group: "Notifications",
+    items: [{ tab: "alerts", icon: "Bell", label: "Operator alerts", hint: "Router status and daily summary" }],
   },
   {
     group: "Integrations",
     items: [
-      { tab: "assistant", label: "AI assistant", hint: "Customer portal chat" },
-      { href: "/integrations", label: "Integration status", hint: "Providers and test modes" },
+      { tab: "assistant", icon: "Bot", label: "AI assistant", hint: "Portal chat and Ask AI" },
+      { href: "/integrations", icon: "Plug", label: "Integration status", hint: "Providers and test modes" },
     ],
   },
   {
     group: "Administration",
     items: [
-      { href: "/staff", label: "Staff & permissions", hint: "Invite staff, roles" },
-      { href: "/branches", label: "Branches", hint: "Offices and their staff" },
-      { href: "/audit-logs", label: "Audit log", hint: "Who changed what" },
+      { href: "/staff", icon: "ShieldCheck", label: "Staff & permissions", hint: "Invite staff, roles" },
+      { href: "/branches", icon: "Store", label: "Branches", hint: "Offices and their staff" },
+      { href: "/audit-logs", icon: "ScrollText", label: "Audit log", hint: "Who changed what" },
     ],
   },
 ];
 
-const TABS = ["general", "branding", "hotspot", "payments", "alerts", "assistant"] as const;
+const TABS = ["general", "branding", "hotspot", "gateways", "payments", "messaging", "alerts", "assistant"] as const;
 type Tab = (typeof TABS)[number];
-const TITLES: Record<Tab, string> = { general: "Organization", branding: "Branding", hotspot: "Captive portal", payments: "Payment methods", alerts: "Operator alerts", assistant: "AI assistant" };
+const TITLES: Record<Tab, string> = {
+  general: "Organization details",
+  branding: "Branding and theme",
+  hotspot: "Captive portal",
+  gateways: "Payment gateways",
+  payments: "Payment methods",
+  messaging: "SMS and email",
+  alerts: "Operator alerts",
+  assistant: "AI assistant",
+};
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const { ctx, allowed } = await getStaffContextWith("settings.write");
@@ -75,13 +90,32 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow={`Settings · ${TITLES[tab]}`} title="Settings" description="Changes are recorded in the audit log." />
-      <div className="grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
-        <aside className="lg:sticky lg:top-20 lg:self-start">
+      <div className="grid gap-8 lg:grid-cols-[16.5rem_minmax(0,1fr)]">
+        <aside className="lg:sticky lg:top-24 lg:self-start">
           <SettingsNav groups={NAV} active={tab} />
         </aside>
         <div className="min-w-0 space-y-6">
-          {tab === "general" ? <GeneralTab ctx={ctx} /> : tab === "branding" ? <BrandingTab ctx={ctx} /> : tab === "hotspot" ? <HotspotTab ctx={ctx} /> : tab === "payments" ? <PaymentsTab ctx={ctx} /> : tab === "alerts" ? <AlertsTab ctx={ctx} /> : <AssistantTab ctx={ctx} />}
+          <PageHeader eyebrow={`Settings — ${TITLES[tab]}`} title={TITLES[tab]} description="Changes are recorded in the audit log." />
+          {tab === "general" ? (
+            <GeneralTab ctx={ctx} />
+          ) : tab === "branding" ? (
+            <BrandingTab ctx={ctx} />
+          ) : tab === "hotspot" ? (
+            <HotspotTab ctx={ctx} />
+          ) : tab === "gateways" ? (
+            <>
+              <PaymentGatewaysCard ctx={ctx} />
+              <MpesaSettingsCard ctx={ctx} />
+            </>
+          ) : tab === "payments" ? (
+            <PaymentsTab ctx={ctx} />
+          ) : tab === "messaging" ? (
+            <MessagingSettingsCard ctx={ctx} />
+          ) : tab === "alerts" ? (
+            <AlertsTab ctx={ctx} />
+          ) : (
+            <AssistantTab ctx={ctx} />
+          )}
         </div>
       </div>
     </div>

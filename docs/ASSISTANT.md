@@ -16,6 +16,26 @@ The assistant works only through six server-side tools. Each tool takes its scop
 
 It cannot take payments, change packages, restart equipment, or grant refunds, credits or extensions. The system prompt tells it to state only facts that come from tool results, and to offer a ticket otherwise.
 
+## Ask AI for staff
+The **Ask AI** button in the staff top bar opens a side panel where staff ask questions about the business, for example "How much have we collected today?", "Who expires this week?", "Which routers are offline?" or "Show A000123". Code: `src/server/assistant/staff.ts`, `POST /api/v1/assistant/ask`.
+
+**Tools.** Six read-only tools, each running as the asking staff member, so their permissions and branch scope apply:
+
+| Tool | What it returns |
+| --- | --- |
+| `business_snapshot` | Collections today, people online, subscription counts, expiries, receivables |
+| `find_subscribers` | Matches by name, account number or phone |
+| `subscriber_details` | One account: services, balance, last payment, online now |
+| `recent_payments` | The latest ten payments |
+| `expiring_subscriptions` | Plans ending within 24 hours or 7 days |
+| `router_status` | Each router's status, last contact and open sessions |
+
+**Permission refusals.** A staff member without, say, `routers.read` gets "You do not have access to this information" from the tool.
+
+**Nothing is stored.** The panel sends the visible conversation as text with each question. It allows 30 questions per staff member per 10 minutes.
+
+**Availability.** It appears whenever the deployment has an assistant adapter (`ASSISTANT_ADAPTER=anthropic`, or `mock` in test mode). In test mode the panel is labelled and answers come from simple rules over the same tools.
+
 ## Turning it on
 1. **Deployment (server environment):**
    ```

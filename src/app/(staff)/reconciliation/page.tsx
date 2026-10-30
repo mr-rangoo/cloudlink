@@ -33,7 +33,7 @@ export default async function ReconciliationPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Reconciliation" description="Match unidentified receipts, and verify that cached balances agree with the payment, allocation and ledger records." actions={<RunChecksButton />} />
+      <PageHeader title="Payment reconciliation" description="Match unidentified receipts, and verify that cached balances agree with the payment, allocation and ledger records." actions={<RunChecksButton />} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>

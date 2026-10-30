@@ -37,7 +37,7 @@ export default async function VouchersPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Vouchers"
+        title="Hotspot vouchers"
         description="Hotspot voucher batches, resellers and redemptions."
         actions={canWrite && tab === "batches" ? <GenerateBatchDialog packages={packages.map((p) => ({ id: p.id, label: `${p.name} — ${describeInterval(p.billingUnit, p.billingCount)} · ${formatMoney(p.price.toString(), p.currency)} + tax` }))} agents={agents.agents.filter((a) => a.status === "ACTIVE").map((a) => ({ id: a.id, name: a.name }))} routers={hotspotRouters.map((r) => ({ id: r.id, name: r.name }))} canExport={ctx.permissions.has("vouchers.export")} /> : canWrite && tab === "agents" ? <AgentDialog /> : null}
       />

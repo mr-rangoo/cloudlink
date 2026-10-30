@@ -29,7 +29,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Inventory" description="Routers, ONUs and other equipment, with a full movement history per item." actions={canWrite ? <NewItemDialog /> : null} />
+      <PageHeader title="Equipment and stock" description="Routers, ONUs and other equipment, with a full movement history per item." actions={canWrite ? <NewItemDialog /> : null} />
       <Card>
         <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
           <FilterTabs
