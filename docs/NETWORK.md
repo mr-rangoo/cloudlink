@@ -139,6 +139,8 @@ These jobs run only for organizations with at least one active router.
 
 Staff can also queue a health check ("Check now") or a session refresh. Both run in the worker.
 
+The sessions page counts open PPPoE, hotspot and device (MAC) sessions, totals the bytes counted on open sessions (downloaded = the router's "out" towards customers), and shows each session's plan and when it ends (matched by login username, or by MAC for device plans). Byte counters come from the hotspot table or RADIUS accounting; PPPoE sessions read over the API have none.
+
 ## Secrets
 - **Router API credentials.** Encrypted with AES-256-GCM, bound to the router id (`router:<id>`). They are write-only through the API, never returned or logged, and decrypted only in the worker.
 - **PPPoE passwords.** 12 random characters, encrypted and bound to the subscription (`pppoe:<id>`). "Show credentials" requires `network.operate` and is audited without the password. Its response is never cached and never stored in the idempotency table. Removing access deletes the stored password.

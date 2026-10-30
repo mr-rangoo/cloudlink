@@ -24,7 +24,7 @@ test("rejects invalid credentials with a generic message", async ({ page }) => {
 test("staff login and logout", async ({ page }) => {
   await login(page, E2E_USERS.owner);
   await expect(page).toHaveURL(/\/dashboard/);
-  await expect(page.getByRole("heading", { name: "Welcome, Olive" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening), Olive$/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Organization: Alpha Net/ })).toBeVisible();
 
   await page.getByRole("button", { name: "Account menu" }).click();

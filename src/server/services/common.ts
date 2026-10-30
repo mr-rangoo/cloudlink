@@ -1,6 +1,15 @@
 import "server-only";
+import { Prisma } from "@/generated/prisma/client";
 import type { Tx } from "@/server/db/client";
 import type { ActorContext } from "@/server/auth/context";
+
+/** Raw-SQL equivalent of listWhere's branch condition on `column` (empty when the caller sees every branch). */
+export function branchFilterSql(ctx: ActorContext, column: Prisma.Sql) {
+  if (ctx.kind !== "staff") return Prisma.empty;
+  if (ctx.activeBranchId) return Prisma.sql`AND ${column} = ${ctx.activeBranchId}::uuid`;
+  if (ctx.branchIds) return ctx.branchIds.length ? Prisma.sql`AND ${column} IN (${Prisma.join(ctx.branchIds.map((b) => Prisma.sql`${b}::uuid`))})` : Prisma.sql`AND false`;
+  return Prisma.empty;
+}
 
 /** Atomically increment and return a per-organization counter (row-level lock via upsert). */
 export async function nextCounter(tx: Tx, organizationId: string, key: string): Promise<number> {

@@ -6,7 +6,7 @@ import { hasPermission, requirePermission, type ActorContext, type StaffContext 
 import { audit } from "@/server/audit/audit";
 import { AppError, notFound, type FieldIssue } from "@/server/errors";
 import { D, moneyInput, percentInput } from "@/server/domain/money";
-import { searchTerm } from "@/server/services/common";
+import { branchFilterSql, searchTerm } from "@/server/services/common";
 import { dispatchNetworkOperations, requestNetworkOperationTx } from "@/server/services/network";
 import { availabilityOf, burstProblem, defaultProfileName, hasBurst, planTypeOf, routerRateLimit, type Availability, type PlanType } from "@/lib/plans";
 import { Prisma, type Package } from "@/generated/prisma/client";
@@ -305,13 +305,6 @@ export async function listPackages(ctx: ActorContext, query: z.infer<typeof pack
     orderBy: [{ status: "asc" }, { sortOrder: "asc" }, { price: "asc" }],
   });
   return rows.map(({ _count, ...p }) => ({ ...p, activeSubscriptions: _count.subscriptions }));
-}
-
-function branchFilterSql(ctx: ActorContext, column: Prisma.Sql) {
-  if (ctx.kind !== "staff") return Prisma.empty;
-  if (ctx.activeBranchId) return Prisma.sql`AND ${column} = ${ctx.activeBranchId}::uuid`;
-  if (ctx.branchIds) return ctx.branchIds.length ? Prisma.sql`AND ${column} IN (${Prisma.join(ctx.branchIds.map((b) => Prisma.sql`${b}::uuid`))})` : Prisma.sql`AND false`;
-  return Prisma.empty;
 }
 
 /**

@@ -1,8 +1,11 @@
 import "server-only";
 import { db } from "@/server/db/client";
-import { hasPermission, listWhere, requirePermission, type ActorContext } from "@/server/auth/context";
+import { hasPermission, listWhere, requirePermission, type ActorContext, type StaffContext } from "@/server/auth/context";
 import { D, type DecimalValue } from "@/server/domain/money";
-import { fromWallTime, toWallTime } from "@/server/domain/time";
+import { addLocalDays, fromWallTime, localDateKey, startOfLocalDay, toWallTime } from "@/server/domain/time";
+import { healthScore, type TelemetrySample } from "@/server/domain/router-telemetry";
+import { branchFilterSql } from "@/server/services/common";
+import { Prisma } from "@/generated/prisma/client";
 import type { BillingUnit } from "@/server/domain/billing-period";
 
 /**
@@ -146,6 +149,138 @@ async function supportSummary(ctx: ActorContext) {
     db.supportTicket.count({ where: { ...scope, status: open, priority: { in: ["HIGH", "URGENT"] }, assigneeId: null } }),
   ]);
   return { openTickets, urgentUnassigned };
+}
+
+/**
+ * Overview "pulse" (each part only with its permission):
+ * - Collected today / yesterday: CONFIRMED payments in the organization currency by local day; "by this time" compares
+ *   today with yesterday up to the same time of day.
+ * - Collections, 14 days: the same per local day.
+ * - Expiring in 24 hours: ACTIVE subscriptions whose paid period ends within the next 24 hours (first 8 listed).
+ * - Renewals due: OPEN / PARTIALLY_PAID invoices due within the next 3 days.
+ * - Online / offline: ACTIVE subscriptions with network access, by whether a session for their username is open now.
+ * - Expired, 7 days: subscriptions that are EXPIRED and whose period ended in the last 7 days (not renewed).
+ * - Busiest routers: most open sessions now, with the 24-hour health score.
+ */
+export async function dashboardPulse(ctx: StaffContext) {
+  requirePermission(ctx, "dashboard.view");
+  const scope = listWhere(ctx);
+  const tz = ctx.organization.timezone;
+  const currency = ctx.organization.currency;
+  const now = new Date();
+  const today = startOfLocalDay(now, tz);
+  const yesterday = addLocalDays(today, -1, tz);
+  const sameTimeYesterday = new Date(yesterday.getTime() + (now.getTime() - today.getTime()));
+  const first = addLocalDays(today, -13, tz);
+  const canPayments = hasPermission(ctx, "payments.read");
+  const canSubscriptions = hasPermission(ctx, "subscriptions.read");
+  const canInvoices = hasPermission(ctx, "invoices.read");
+  const canNetwork = hasPermission(ctx, "network.read");
+  const canRouters = hasPermission(ctx, "routers.read");
+  const in24h = new Date(now.getTime() + 86_400_000);
+
+  const [daily, yesterdayByNow, payments, expiring, expiringCount, renewals, health, expired7d, busiest] = await Promise.all([
+    canPayments
+      ? db.$queryRaw<Array<{ day: string; total: string; n: number }>>`
+          SELECT to_char(p."receivedAt" AT TIME ZONE ${tz}, 'YYYY-MM-DD') AS day, SUM(p."amount")::text AS total, COUNT(*)::int AS n
+          FROM "Payment" p
+          WHERE p."organizationId" = ${ctx.organizationId}::uuid AND p."status" = 'CONFIRMED' AND p."currency" = ${currency}
+            AND p."receivedAt" >= ${first} AND p."receivedAt" <= ${now} ${branchFilterSql(ctx, Prisma.sql`p."branchId"`)}
+          GROUP BY 1`
+      : null,
+    canPayments ? db.payment.aggregate({ where: { ...scope, status: "CONFIRMED", currency, receivedAt: { gte: yesterday, lt: sameTimeYesterday } }, _sum: { amount: true } }) : null,
+    canPayments
+      ? db.payment.findMany({
+          where: { ...scope, status: "CONFIRMED" },
+          orderBy: { receivedAt: "desc" },
+          take: 8,
+          select: { id: true, amount: true, currency: true, method: true, receivedAt: true, receiptNumber: true, subscriberId: true },
+        })
+      : null,
+    canSubscriptions
+      ? db.subscription.findMany({
+          where: { ...scope, status: "ACTIVE", currentPeriodEnd: { gte: now, lte: in24h } },
+          orderBy: { currentPeriodEnd: "asc" },
+          take: 8,
+          select: { id: true, packageName: true, currentPeriodEnd: true, subscriber: { select: { id: true, displayName: true, accountNumber: true } } },
+        })
+      : null,
+    canSubscriptions ? db.subscription.count({ where: { ...scope, status: "ACTIVE", currentPeriodEnd: { gte: now, lte: in24h } } }) : null,
+    canInvoices
+      ? db.invoice.aggregate({ where: { ...scope, status: { in: ["OPEN", "PARTIALLY_PAID"] }, dueAt: { gte: now, lte: new Date(now.getTime() + 3 * 86_400_000) } }, _sum: { balanceDue: true }, _count: { _all: true } })
+      : null,
+    canSubscriptions && canNetwork
+      ? db.$queryRaw<Array<{ provisioned: number; online: number }>>`
+          SELECT COUNT(*)::int AS provisioned,
+                 COUNT(*) FILTER (WHERE EXISTS (
+                   SELECT 1 FROM "NetworkSession" ns WHERE ns."organizationId" = s."organizationId" AND ns."username" = s."networkUsername" AND ns."endedAt" IS NULL
+                 ))::int AS online
+          FROM "Subscription" s
+          WHERE s."organizationId" = ${ctx.organizationId}::uuid AND s."status" = 'ACTIVE' AND s."networkUsername" IS NOT NULL
+            ${branchFilterSql(ctx, Prisma.sql`s."branchId"`)}`
+      : null,
+    canSubscriptions ? db.subscription.count({ where: { ...scope, status: "EXPIRED", currentPeriodEnd: { gte: new Date(now.getTime() - 7 * 86_400_000) } } }) : null,
+    canRouters && canNetwork ? busiestRouters(ctx, now) : null,
+  ]);
+
+  const payers = payments?.length
+    ? await db.subscriber.findMany({ where: { organizationId: ctx.organizationId, id: { in: payments.flatMap((p) => (p.subscriberId ? [p.subscriberId] : [])) } }, select: { id: true, displayName: true } })
+    : [];
+  const byDay = new Map((daily ?? []).map((d) => [d.day, d]));
+  const days = Array.from({ length: 14 }, (_, i) => localDateKey(addLocalDays(first, i, tz), tz));
+  const todayKey = localDateKey(now, tz);
+  const yesterdayKey = localDateKey(yesterday, tz);
+  return {
+    collections: daily
+      ? {
+          currency,
+          today: money(byDay.get(todayKey)?.total),
+          todayPayments: byDay.get(todayKey)?.n ?? 0,
+          yesterday: money(byDay.get(yesterdayKey)?.total),
+          yesterdayByNow: money(yesterdayByNow?._sum.amount),
+          days: days.map((day) => ({ day, amount: money(byDay.get(day)?.total), payments: byDay.get(day)?.n ?? 0 })),
+        }
+      : null,
+    recentPayments: payments?.map(({ subscriberId, ...p }) => ({ ...p, amount: money(p.amount), subscriber: payers.find((s) => s.id === subscriberId) ?? null })) ?? null,
+    expiring: expiring ? { count: expiringCount ?? 0, rows: expiring } : null,
+    renewalsDue: renewals ? { count: renewals._count._all, amount: money(renewals._sum.balanceDue) } : null,
+    subscriberHealth: health ? { provisioned: health[0]?.provisioned ?? 0, online: health[0]?.online ?? 0, expired7d: expired7d ?? 0 } : null,
+    busiestRouters: busiest,
+  };
+}
+
+/**
+ * Small counts shown next to sidebar items (each only with its permission, in the caller's scope):
+ * sessions open now, routers offline, open support tickets, confirmed payments not matched to a subscriber.
+ */
+export async function navigationCounts(ctx: StaffContext) {
+  const visibleRouters = hasPermission(ctx, "network.read") && ctx.branchIds ? (await db.router.findMany({ where: { ...listWhere(ctx), archivedAt: null }, select: { id: true } })).map((r) => r.id) : null;
+  const [sessions, routersOffline, support, reconciliation] = await Promise.all([
+    hasPermission(ctx, "network.read") ? db.networkSession.count({ where: { organizationId: ctx.organizationId, endedAt: null, ...(visibleRouters ? { routerId: { in: visibleRouters } } : {}) } }) : null,
+    hasPermission(ctx, "routers.read") ? db.router.count({ where: { ...listWhere(ctx), archivedAt: null, status: { in: ["OFFLINE", "ERROR"] } } }) : null,
+    hasPermission(ctx, "support.read") ? db.supportTicket.count({ where: { ...listWhere(ctx), status: { in: ["OPEN", "IN_PROGRESS", "WAITING_ON_CUSTOMER"] } } }) : null,
+    hasPermission(ctx, "payments.reconcile") ? db.payment.count({ where: { organizationId: ctx.organizationId, status: "CONFIRMED", subscriberId: null } }) : null,
+  ]);
+  return { sessions, routersOffline, support, reconciliation };
+}
+
+/** Money as a two-decimal string (missing = 0.00). */
+const money = (v: { toString(): string } | string | null | undefined) => new D(v === null || v === undefined ? 0 : v.toString()).toFixed(2);
+
+async function busiestRouters(ctx: StaffContext, now: Date) {
+  const routers = await db.router.findMany({ where: { ...listWhere(ctx), archivedAt: null }, select: { id: true, name: true, status: true, maintenanceMode: true } });
+  if (!routers.length) return [];
+  const sessions = await db.networkSession.groupBy({ by: ["routerId"], where: { organizationId: ctx.organizationId, endedAt: null, routerId: { in: routers.map((r) => r.id) } }, _count: { _all: true } });
+  const count = (id: string) => sessions.find((s) => s.routerId === id)?._count._all ?? 0;
+  const top = [...routers].sort((a, b) => count(b.id) - count(a.id) || a.name.localeCompare(b.name)).slice(0, 5);
+  const samples = await db.routerMetricSample.findMany({
+    where: { organizationId: ctx.organizationId, routerId: { in: top.map((r) => r.id) }, takenAt: { gte: new Date(now.getTime() - 86_400_000) } },
+    select: { routerId: true, takenAt: true, reachable: true, simulated: true, responseMs: true, cpuLoad: true, memoryUsedPct: true, diskUsedPct: true },
+  });
+  return top.map((r) => {
+    const mine: TelemetrySample[] = samples.filter((s) => s.routerId === r.id).map((s) => ({ ...s, temperatureC: null, uptimeSeconds: null, rxBps: null, txBps: null, sessions: null }));
+    return { ...r, sessions: count(r.id), health: healthScore(mine, now) };
+  });
 }
 
 export async function dashboardActivity(ctx: ActorContext, take = 15) {

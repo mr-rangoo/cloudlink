@@ -216,6 +216,26 @@ Defects found and fixed during the phase: a move between hotspots would have can
 
 Visual check against a production build (`next start -p 3102`, e2e database, mock adapters, 7 days of simulated samples inserted for one router): routers list, overview, performance (7 days), diagnostics, reports and activity at 1440 px and 390 px. Fixes from it: the all-zero collections chart now says there were no payments; overview columns rebalanced; the log table scrolls sideways on phones instead of breaking words. The database CHECK rejected a bad fixture row (negative uptime), as intended.
 
+### Phase 15 — Overview, subscribers, sessions, navigation and record search ✅
+- [x] Overview (`dashboardPulse` in `src/server/services/dashboard.ts`, `src/app/(staff)/dashboard/page.tsx`): time-of-day greeting, refresh every minute, headline strip (collected today vs yesterday by the same time, online now, active, expiring in 24 h, receivables, recurring revenue), 14-day collections chart with data table, "What's next" (expiring in 24 h with names, invoices due in 3 days, payments to match, failed operations, open alerts, urgent tickets), subscriber health (online / active-but-offline / expired and not renewed), busiest routers with health score, one feed of payments and subscriber events. Definitions in `docs/BILLING.md`.
+- [x] Subscribers: VIP flag (migration `20261030200000_subscriber_vip_compensation`), stats strip (accounts, with an active plan, online now, active but offline, at risk, VIP), filters (service, connection, router, joined, VIP, at risk) with empty "Any" values ignored, router and last-online columns.
+- [x] Compensation: free hours/days on active or suspended subscriptions, re-anchored billing (`periodIndex = -1`, CHECK relaxed from `>= 0` to `>= -1`) so renewals and recurring invoices continue from the new end; Idempotency-Key required; data bundles refused; hotspot logins updated on the router; event, activity and audit records.
+- [x] Sessions: device (MAC) count, downloaded/uploaded totals for open sessions, plan and plan end per session, Down / up column.
+- [x] Navigation: counts beside Network Sessions (online), Routers (offline), Support (open tickets) and Reconciliation (payments to match), with text labels for screen readers and on hover; `GET /navigation/counts`.
+- [x] Record search in Ctrl+K: `GET /search` across subscribers, invoices, payments (receipt, M-Pesa/bank reference, payer), routers, tickets and leads, each by its read permission and branch scope.
+- [ ] Not changed: the sidebar groups already follow the requested grouping (Overview, Customers, Billing, Network, Service, Insights, Administration).
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261030200000_subscriber_vip_compensation` applied; `migrate diff` against dev: empty |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 17 files, 143 tests passed |
+| `npm run test:integration` | 26 files, 206 tests passed (adds `tests/integration/overview.test.ts` — today vs yesterday, expiring, online/offline, busiest routers, branch scope and permissions, record search, sidebar counts — and `tests/integration/subscriber-insights.test.ts` — filters, stats, VIP, compensation re-anchoring with recurring invoice and renewal, API idempotency, refusals, permissions, hotspot router push; sessions test checks plan and traffic) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 27 passed (adds `overview.spec.ts`: Ctrl+K finds and opens a subscriber, VIP filter, one free day added from the subscriber page; the sign-in test expects the new greeting) |
+
+Visual check (production build on :3102, e2e database): overview at 1440 px and 390 px, subscribers list with filters, sessions, Ctrl+K record results. Fixes from it: truncated stat hints shortened; the offline part of the health meter was invisible on the card; phone numbers in search results are formatted. Found while building: the Payment model has no subscriber relation (names are looked up separately), and the support role can read payments (test corrected).
+
 ## Work log
 
 ### 2026-10-25 — Phase 1 (Foundation)

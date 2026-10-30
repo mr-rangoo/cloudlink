@@ -95,12 +95,22 @@ export const subscriberUpdate = z.object({
   notes: optionalText(2000),
   branchId: z.uuid().optional().nullable(),
   status: z.enum(["ACTIVE", "INACTIVE", "ARCHIVED"]).optional(),
+  vip: z.boolean().optional(),
 });
 
 export const subscriberListQuery = z.object({
   q: z.string().optional(),
   status: z.enum(["ACTIVE", "INACTIVE", "ARCHIVED", "ALL"]).default("ALL"),
   subscription: z.enum(["ACTIVE", "SUSPENDED", "EXPIRED", "NONE"]).optional(),
+  /** Has a live subscription of this access type. */
+  service: z.enum(["PPPOE", "HOTSPOT", "STATIC_IP", "OTHER"]).optional(),
+  /** online: a session is open now; offline: an active subscription with network access but no open session. */
+  connection: z.enum(["online", "offline"]).optional(),
+  routerId: z.uuid().optional(),
+  created: z.enum(["7d", "30d", "90d"]).optional(),
+  vip: z.enum(["1"]).optional(),
+  /** At risk: active and the paid period ends within 3 days, or expired within the last 7 days. */
+  risk: z.enum(["1"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
   sort: z.enum(["newest", "oldest", "name", "account"]).default("newest"),
@@ -134,6 +144,7 @@ export const subscriberListSelect = {
   email: true,
   phone: true,
   status: true,
+  vip: true,
   branchId: true,
   createdAt: true,
 } satisfies Prisma.SubscriberSelect;
@@ -194,18 +205,48 @@ export async function createSubscriber(ctx: ActorContext, input: z.infer<typeof 
   return result;
 }
 
+const LIVE = ["ACTIVE", "SUSPENDED", "PENDING"] as Array<"ACTIVE" | "SUSPENDED" | "PENDING">;
+
+/** Subscribers with a session open right now (any router; sessions are matched to subscribers at sync). */
+async function onlineSubscriberIds(organizationId: string): Promise<string[]> {
+  const rows = await db.networkSession.findMany({ where: { organizationId, endedAt: null, subscriberId: { not: null } }, select: { subscriberId: true }, distinct: ["subscriberId"] });
+  return rows.map((r) => r.subscriberId!);
+}
+
+/** Active with network access but not connected now. */
+const offlineWhere = (online: string[]): Prisma.SubscriberWhereInput => ({ id: { notIn: online }, subscriptions: { some: { status: "ACTIVE", networkUsername: { not: null } } } });
+
+const riskWhere = (now: Date): Prisma.SubscriberWhereInput => ({
+  subscriptions: {
+    some: {
+      OR: [
+        { status: "ACTIVE", currentPeriodEnd: { lte: new Date(now.getTime() + 3 * 86_400_000) } },
+        { status: "EXPIRED", currentPeriodEnd: { gte: new Date(now.getTime() - 7 * 86_400_000) } },
+      ],
+    },
+  },
+});
+
 export async function listSubscribers(ctx: ActorContext, query: z.infer<typeof subscriberListQuery>) {
   requirePermission(ctx, "subscribers.read");
   const q = searchTerm(query.q);
   const phoneQ = q ? normalizePhone(q) : null;
+  const now = new Date();
+  const online = query.connection ? await onlineSubscriberIds(ctx.organizationId) : [];
+  const and: Prisma.SubscriberWhereInput[] = [];
+  if (query.subscription === "NONE") and.push({ subscriptions: { none: { status: { in: LIVE } } } });
+  else if (query.subscription) and.push({ subscriptions: { some: { status: query.subscription } } });
+  if (query.service) and.push({ subscriptions: { some: { status: { in: LIVE }, serviceType: query.service } } });
+  if (query.routerId) and.push({ subscriptions: { some: { networkRouterId: query.routerId } } });
+  if (query.connection === "online") and.push({ id: { in: online } });
+  if (query.connection === "offline") and.push(offlineWhere(online));
+  if (query.risk) and.push(riskWhere(now));
   const where: Prisma.SubscriberWhereInput = {
     ...listWhere(ctx),
     ...(query.status !== "ALL" ? { status: query.status } : { status: { not: "ARCHIVED" } }),
-    ...(query.subscription === "NONE"
-      ? { subscriptions: { none: { status: { in: ["ACTIVE", "SUSPENDED", "PENDING"] } } } }
-      : query.subscription
-        ? { subscriptions: { some: { status: query.subscription } } }
-        : {}),
+    ...(query.vip ? { vip: true } : {}),
+    ...(query.created ? { createdAt: { gte: new Date(now.getTime() - Number(query.created.replace("d", "")) * 86_400_000) } } : {}),
+    ...(and.length ? { AND: and } : {}),
     ...(q
       ? {
           OR: [
@@ -227,12 +268,57 @@ export async function listSubscribers(ctx: ActorContext, query: z.infer<typeof s
       take: query.pageSize,
       select: {
         ...subscriberListSelect,
-        subscriptions: { where: { status: { in: ["ACTIVE", "SUSPENDED", "PENDING", "EXPIRED"] } }, select: { id: true, status: true, packageName: true, currentPeriodEnd: true }, orderBy: { createdAt: "desc" }, take: 3 },
+        subscriptions: {
+          where: { status: { in: ["ACTIVE", "SUSPENDED", "PENDING", "EXPIRED"] } },
+          select: { id: true, status: true, packageName: true, serviceType: true, currentPeriodEnd: true, networkRouterId: true },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+        },
       },
     }),
     db.subscriber.count({ where }),
   ]);
-  return { rows, total };
+  // Connection details for the page: open sessions and the last time each subscriber was seen online.
+  const ids = rows.map((r) => r.id);
+  const routerIds = [...new Set(rows.flatMap((r) => r.subscriptions.map((s) => s.networkRouterId).filter((x): x is string => Boolean(x))))];
+  const [seen, openNow, routers] = await Promise.all([
+    ids.length ? db.networkSession.groupBy({ by: ["subscriberId"], where: { organizationId: ctx.organizationId, subscriberId: { in: ids } }, _max: { lastSeenAt: true } }) : [],
+    ids.length ? db.networkSession.findMany({ where: { organizationId: ctx.organizationId, subscriberId: { in: ids }, endedAt: null }, select: { subscriberId: true }, distinct: ["subscriberId"] }) : [],
+    routerIds.length ? db.router.findMany({ where: { organizationId: ctx.organizationId, id: { in: routerIds } }, select: { id: true, name: true } }) : [],
+  ]);
+  return {
+    rows: rows.map((r) => {
+      const routerId = r.subscriptions.find((s) => s.networkRouterId)?.networkRouterId ?? null;
+      return {
+        ...r,
+        online: openNow.some((o) => o.subscriberId === r.id),
+        lastSeenAt: seen.find((x) => x.subscriberId === r.id)?._max.lastSeenAt ?? null,
+        router: routerId ? (routers.find((x) => x.id === routerId) ?? null) : null,
+      };
+    }),
+    total,
+  };
+}
+
+/**
+ * Subscriber list headline figures (same scope as the list): accounts (not archived), with an active subscription,
+ * online now, active-but-offline, at risk (see riskWhere), VIP, and new in the last 30 days.
+ */
+export async function subscriberStats(ctx: ActorContext) {
+  requirePermission(ctx, "subscribers.read");
+  const now = new Date();
+  const base: Prisma.SubscriberWhereInput = { ...listWhere(ctx), status: { not: "ARCHIVED" } };
+  const online = await onlineSubscriberIds(ctx.organizationId);
+  const [total, active, onlineCount, offline, atRisk, vip, recent] = await Promise.all([
+    db.subscriber.count({ where: base }),
+    db.subscriber.count({ where: { ...base, subscriptions: { some: { status: "ACTIVE" } } } }),
+    db.subscriber.count({ where: { ...base, id: { in: online } } }),
+    db.subscriber.count({ where: { ...base, ...offlineWhere(online) } }),
+    db.subscriber.count({ where: { ...base, ...riskWhere(now) } }),
+    db.subscriber.count({ where: { ...base, vip: true } }),
+    db.subscriber.count({ where: { ...base, createdAt: { gte: new Date(now.getTime() - 30 * 86_400_000) } } }),
+  ]);
+  return { total, active, online: onlineCount, offline, atRisk, vip, newLast30Days: recent };
 }
 
 export async function getSubscriber(ctx: ActorContext, id: string) {

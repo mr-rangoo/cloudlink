@@ -49,8 +49,21 @@ and a subscriber timeline entry, and is audited. Network provisioning status is 
   `payment:<id>`). The key is stored on the `SubscriptionEvent` with a unique constraint, so retries and
   duplicate callbacks cannot extend service twice, even concurrently.
 
+## Compensation (free time)
+Staff with `subscriptions.write` can add free hours or days (up to 90 days at a time, with a reason) to an ACTIVE or
+SUSPENDED subscription, for example after an outage: subscriber page → **Compensate**, or
+`POST /subscriptions/:id/compensate` with an `Idempotency-Key` (a retried request never adds the time twice).
+- The paid period end moves forward; no invoice, payment or ledger entry is created.
+- Billing is re-anchored at the new end: `billingAnchorAt = currentPeriodEnd` and `periodIndex = -1`, so the next
+  regular period (index 0) starts exactly at the compensated end, for renewals and recurring invoices alike.
+- An invoice already issued for the next period keeps its printed dates; when it is paid, the renewal still starts at
+  the compensated end and runs a full period.
+- Hotspot logins get the longer period pushed to the router. Data bundles are refused (time does not compensate a data
+  allowance).
+- Recorded as a `compensated` subscription event, a subscriber activity entry and an audit record.
+
 ## Expiry
-The worker schedules `subscriptions.expire_due` once per organization per hour (deduplicated by time bucket).
+The worker schedules `subscriptions.expire_due` once per organization every minute (deduplicated by time bucket).
 It expires ACTIVE/SUSPENDED subscriptions where `currentPeriodEnd + graceDays <= now`.
 
 ## Dashboard metric definitions
@@ -63,8 +76,23 @@ It expires ACTIVE/SUSPENDED subscriptions where `currentPeriodEnd + graceDays <=
 | Recurring revenue (monthly) | Sum of ACTIVE subscription snapshot prices normalised to one month (yearly ÷ 12, weekly × 52 ÷ 12, daily × 365 ÷ 12, hourly × 8760 ÷ 12), excluding tax, per currency. |
 | Open leads | Leads not in WON or LOST. |
 | Converted this month | Leads converted since the start of the current month. |
+| Collected today / yesterday | CONFIRMED payments in the organization currency by local day. "By now" compares today with yesterday up to the same time of day. |
+| Collections, 14 days | The same, per local day for the last 14 days. |
+| Online now | ACTIVE subscriptions with network access (a login username) that have a session open now, out of all such subscriptions. |
+| Expiring in 24 hours | ACTIVE subscriptions whose paid period ends within the next 24 hours. |
+| Invoices due in 3 days | OPEN or PARTIALLY_PAID invoices with a due date in the next 3 days. |
+| Expired in 7 days, not renewed | EXPIRED subscriptions whose period ended in the last 7 days. |
+| Busiest routers | Routers with the most open sessions now, with their 24-hour health score (see `docs/NETWORK.md`). |
 
-Metrics a user lacks permission for are hidden, not estimated. Invoice, payment and receivable metrics appear with phase 3.
+Metrics a user lacks permission for are hidden, not estimated. The overview re-reads its data every minute.
+
+### Subscriber list figures and filters
+- **Online now**: subscribers with a session open now (sessions are matched to subscribers at each sync). **Active but offline**: an ACTIVE subscription with network access and no open session.
+- **At risk**: an ACTIVE subscription ending within 3 days, or one that expired in the last 7 days.
+- Filters: subscription status, service (PPPoE, hotspot, static IP, other), connection, router, joined in the last 7/30/90 days, VIP, at risk. Each row shows the router, and "Online" or when the subscriber was last seen online.
+
+### Record search (Ctrl+K)
+Searches, with two or more characters: subscribers (name, account number, email, phone), invoices (number), payments (receipt number, M-Pesa or bank reference, payer name), routers (name, identity, address), support tickets (number, subject) and leads (name, phone). Each kind is searched only with its read permission and within the caller's branch scope; at most five hits each.
 
 ## Subscriber CSV import
 Preview validates every row (format, branch, package, duplicates within the file and against existing subscribers)

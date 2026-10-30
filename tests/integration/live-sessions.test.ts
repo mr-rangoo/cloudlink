@@ -67,8 +67,11 @@ describe("live sessions", () => {
     await db.backgroundOperation.create({ data: { organizationId: org.organization.id, type: "network.sync_sessions", status: "SUCCEEDED", payload: {}, finishedAt: new Date() } });
 
     const list = await listNetworkSessions(ctx, sessionListQuery.parse({}));
-    expect(list.online).toEqual({ pppoe: 1, hotspot: 0 });
+    expect(list.online).toEqual({ pppoe: 1, hotspot: 0, device: 0 });
     expect(list.rows).toEqual([expect.objectContaining({ kind: "PPPOE", subscriberId: subscriber.id, source: "mock", endedAt: null })]);
+    // The plan behind the session (matched by login) and the traffic of open sessions.
+    expect(list.rows[0]!.plan).toMatchObject({ status: "ACTIVE", currentPeriodEnd: subscription.currentPeriodEnd });
+    expect(list.traffic.bytesOut).toBe(list.rows[0]!.bytesOut ?? "0");
     expect(list.rows[0]!.address).toMatch(/^10\./);
     expect(list.lastSyncedAt).toBeInstanceOf(Date);
 
@@ -89,7 +92,7 @@ describe("live sessions", () => {
     const offline = await customerConnection(cctx);
     expect(offline).toMatchObject({ status: "OFFLINE", connections: 0, simulated: false });
     expect(offline.lastOnlineAt).toBeInstanceOf(Date);
-    expect((await listNetworkSessions(ctx, sessionListQuery.parse({}))).online).toEqual({ pppoe: 0, hotspot: 0 });
+    expect((await listNetworkSessions(ctx, sessionListQuery.parse({}))).online).toEqual({ pppoe: 0, hotspot: 0, device: 0 });
   });
 
   it("simulates hotspot sessions for active vouchers without storing the voucher code", async () => {

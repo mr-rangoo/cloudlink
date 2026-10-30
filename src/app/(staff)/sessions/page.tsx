@@ -12,6 +12,7 @@ import { Pagination, Table, TBody, Td, Th, THead, Tr, buildHref } from "@/compon
 import { FilterTabs, SearchForm } from "@/components/list-toolbar";
 import { OperationStatusBadge } from "@/components/status";
 import { AdapterNotice, formatBytes, formatDuration } from "@/components/network-notice";
+import { StatStrip } from "@/components/stat-strip";
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDateTime } from "@/lib/utils";
 import { LiveSessionsControl, RefreshSessionsButton, ResolveAlertButton } from "./client";
@@ -57,18 +58,23 @@ export default async function NetworkPage({ searchParams }: { searchParams: Prom
 async function SessionsTab({ ctx, sp, adapter }: TabProps & { adapter: string }) {
   const parsed = sessionListQuery.safeParse(sp);
   const query = parsed.success ? parsed.data : sessionListQuery.parse({});
-  const { rows, total, lastSyncedAt, online } = await listNetworkSessions(ctx, query);
+  const { rows, total, lastSyncedAt, online, traffic } = await listNetworkSessions(ctx, query);
   const tz = ctx.organization.timezone;
   const current = { q: sp.q, state: sp.state, routerId: sp.routerId };
   // Twice the scheduled sync interval: older data means the worker is not running or cannot reach the routers.
   const staleMinutes = minutesSince(lastSyncedAt);
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Stat label="Online now" value={online.pppoe + online.hotspot} />
-        <Stat label="PPPoE" value={online.pppoe} />
-        <Stat label="Hotspot" value={online.hotspot} />
-      </div>
+      <StatStrip
+        stats={[
+          { label: "Online now", value: online.pppoe + online.hotspot + online.device, tone: "success" },
+          { label: "PPPoE", value: online.pppoe },
+          { label: "Hotspot", value: online.hotspot },
+          { label: "Devices (MAC)", value: online.device, hint: "TV and device plans" },
+          { label: "Downloaded", value: formatBytes(traffic.bytesOut), hint: "By sessions open now" },
+          { label: "Uploaded", value: formatBytes(traffic.bytesIn), hint: "By sessions open now" },
+        ]}
+      />
       {adapter !== "disabled" && staleMinutes !== null && staleMinutes >= 10 ? (
         <Alert tone="warning" title="Session data may be out of date">
           The last successful sync was {staleMinutes} minutes ago. Check that the background worker is running and can reach your routers.
@@ -102,10 +108,11 @@ async function SessionsTab({ ctx, sp, adapter }: TabProps & { adapter: string })
               <THead>
                 <tr>
                   <Th>User</Th>
+                  <Th>Plan ends</Th>
                   <Th>Router</Th>
                   <Th>Address / MAC</Th>
                   <Th>Uptime</Th>
-                  <Th>Traffic in / out</Th>
+                  <Th>Down / up</Th>
                   <Th>Source</Th>
                   <Th>Last seen</Th>
                 </tr>
@@ -115,13 +122,23 @@ async function SessionsTab({ ctx, sp, adapter }: TabProps & { adapter: string })
                   <Tr key={s.id}>
                     <Td label="User">
                       <div className="min-w-0 text-right md:text-left">
-                        <span className="font-mono text-xs">{s.username}</span> <Badge tone="neutral">{s.kind === "PPPOE" ? "PPPoE" : "Hotspot"}</Badge>
+                        <span className="font-mono text-xs">{s.username}</span> <Badge tone="neutral">{s.kind === "PPPOE" ? "PPPoE" : s.kind === "BINDING" ? "Device" : "Hotspot"}</Badge>
                         {s.subscriber ? (
                           <Link href={`/subscribers/${s.subscriber.id}`} className="block text-xs text-accent hover:underline">
                             {s.subscriber.displayName} · {s.subscriber.accountNumber}
                           </Link>
                         ) : null}
                       </div>
+                    </Td>
+                    <Td label="Plan ends">
+                      {s.plan?.currentPeriodEnd ? (
+                        <div className="min-w-0 text-right md:text-left">
+                          <span className="whitespace-nowrap">{formatDateTime(s.plan.currentPeriodEnd, tz)}</span>
+                          <span className="block text-xs text-muted-foreground">{s.plan.packageName}</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{s.kind === "HOTSPOT" ? "Voucher or unmatched" : "—"}</span>
+                      )}
                     </Td>
                     <Td label="Router">
                       <Link href={`/routers/${s.routerId}`} className="hover:underline">
@@ -135,8 +152,8 @@ async function SessionsTab({ ctx, sp, adapter }: TabProps & { adapter: string })
                       </div>
                     </Td>
                     <Td label="Uptime">{formatDuration(s.uptimeSeconds)}</Td>
-                    <Td label="Traffic in / out" className="tabular">
-                      {formatBytes(s.bytesIn)} / {formatBytes(s.bytesOut)}
+                    <Td label="Down / up" className="tabular whitespace-nowrap">
+                      {formatBytes(s.bytesOut)} / {formatBytes(s.bytesIn)}
                     </Td>
                     <Td label="Source">{s.source === "radius_accounting" ? "RADIUS accounting" : s.source === "router_api" ? "Router API" : <Badge tone="warning">Simulated</Badge>}</Td>
                     <Td label="Last seen">
@@ -159,17 +176,6 @@ async function SessionsTab({ ctx, sp, adapter }: TabProps & { adapter: string })
 
 function minutesSince(at: Date | null): number | null {
   return at ? Math.floor((Date.now() - at.getTime()) / 60_000) : null;
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <Card>
-      <div className="px-4 py-3">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="tabular text-2xl font-semibold">{value.toLocaleString("en-KE")}</p>
-      </div>
-    </Card>
-  );
 }
 
 async function OperationsTab({ ctx, sp }: TabProps) {

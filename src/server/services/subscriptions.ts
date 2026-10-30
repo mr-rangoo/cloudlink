@@ -29,7 +29,7 @@ export const subscriptionListQuery = z.object({
   q: z.string().optional(),
   status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "EXPIRED", "CANCELLED", "ALL"]).default("ALL"),
   packageId: z.uuid().optional(),
-  expiring: z.enum(["7d"]).optional(),
+  expiring: z.enum(["24h", "7d"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -229,6 +229,70 @@ export async function applyActionTx(
   return updated;
 }
 
+export const compensateInput = z.object({
+  amount: z.coerce.number().int().min(1).max(2160),
+  unit: z.enum(["HOUR", "DAY"]),
+  reason: z.string().trim().min(3, "Say why (e.g. the outage)").max(300),
+});
+
+export const MAX_COMPENSATION_MS = 90 * 86_400_000;
+
+/**
+ * Free time after an outage: the paid period is extended and billing is re-anchored at the new end
+ * (periodIndex -1), so renewals and recurring invoices continue from it. No money moves. Hotspot logins get the
+ * longer period pushed to the router. Data bundles are refused (time does not compensate a data allowance).
+ */
+export async function compensateSubscription(ctx: ActorContext, id: string, raw: z.input<typeof compensateInput>) {
+  requirePermission(ctx, "subscriptions.write");
+  const input = compensateInput.parse(raw);
+  const ms = input.amount * (input.unit === "DAY" ? 86_400_000 : 3_600_000);
+  if (ms > MAX_COMPENSATION_MS) throw new AppError("VALIDATION_ERROR", "Compensation is limited to 90 days at a time.", { fields: [{ path: "amount", message: "At most 90 days" }] });
+  const label = `${input.amount} ${input.unit === "DAY" ? "day" : "hour"}${input.amount === 1 ? "" : "s"}`;
+  const result = await db.$transaction(async (tx) => {
+    const existing = await tx.subscription.findFirst({ where: { id, ...tenantWhere(ctx) }, select: { id: true } });
+    if (!existing) throw notFound("subscription");
+    await lockRow(tx, "Subscription", id);
+    const sub = await tx.subscription.findUniqueOrThrow({ where: { id } });
+    if ((sub.status !== "ACTIVE" && sub.status !== "SUSPENDED") || !sub.currentPeriodEnd || !sub.billingAnchorAt) {
+      throw new AppError("INVALID_STATE", "Only active or suspended subscriptions with a paid period can be compensated.");
+    }
+    const pkg = await tx.package.findUnique({ where: { id: sub.packageId }, select: { kind: true } });
+    if (pkg?.kind === "DATA") throw new AppError("INVALID_STATE", "Data bundles cannot be compensated with extra time.");
+    const newEnd = new Date(sub.currentPeriodEnd.getTime() + ms);
+    let after = await tx.subscription.update({ where: { id }, data: { currentPeriodEnd: newEnd, billingAnchorAt: newEnd, periodIndex: -1, nextBillingAt: sub.nextBillingAt ? newEnd : null } });
+    if (after.networkRouterId) {
+      const { queueLifecycleNetworkTx } = await import("@/server/services/network");
+      if (await queueLifecycleNetworkTx(tx, ctx, sub, after)) after = await tx.subscription.findUniqueOrThrow({ where: { id } });
+    }
+    await tx.subscriptionEvent.create({
+      data: {
+        organizationId: sub.organizationId,
+        subscriptionId: id,
+        type: "compensated",
+        fromStatus: sub.status,
+        toStatus: sub.status,
+        actorUserId: actorUserId(ctx),
+        actorType: actorType(ctx),
+        metadata: { amount: input.amount, unit: input.unit, reason: input.reason, previousEnd: sub.currentPeriodEnd.toISOString(), periodEnd: newEnd.toISOString() },
+      },
+    });
+    await tx.subscriberActivity.create({
+      data: {
+        organizationId: sub.organizationId,
+        subscriberId: sub.subscriberId,
+        actorUserId: actorUserId(ctx),
+        type: "subscription.compensated",
+        message: `${sub.packageName}: ${label} added free (${input.reason})`,
+        metadata: { subscriptionId: id },
+      },
+    });
+    return { after, previousEnd: sub.currentPeriodEnd };
+  });
+  await dispatchSubscriptionNetwork(ctx.organizationId, id);
+  await audit(ctx, { action: "subscription.compensate", entityType: "subscription", entityId: id, metadata: { amount: input.amount, unit: input.unit, reason: input.reason, previousEnd: result.previousEnd.toISOString(), periodEnd: result.after.currentPeriodEnd?.toISOString() } });
+  return result.after;
+}
+
 /** After commit: push any network operation queued by the lifecycle hook (the worker sweeper is the fallback). */
 export async function dispatchSubscriptionNetwork(organizationId: string, subscriptionId: string) {
   const { dispatchNetworkOperations } = await import("@/server/services/network");
@@ -255,7 +319,7 @@ export async function listSubscriptions(ctx: ActorContext, query: z.infer<typeof
     ...listWhere(ctx),
     ...(query.status !== "ALL" ? { status: query.status } : {}),
     ...(query.packageId ? { packageId: query.packageId } : {}),
-    ...(query.expiring === "7d" ? { status: "ACTIVE", currentPeriodEnd: { lte: new Date(Date.now() + 7 * 86_400_000) } } : {}),
+    ...(query.expiring ? { status: "ACTIVE", currentPeriodEnd: { lte: new Date(Date.now() + (query.expiring === "24h" ? 1 : 7) * 86_400_000) } } : {}),
     ...(q
       ? {
           OR: [

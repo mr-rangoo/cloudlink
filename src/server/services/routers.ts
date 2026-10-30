@@ -328,6 +328,12 @@ export async function listRouters(ctx: StaffContext, query: z.infer<typeof route
   };
 }
 
+/** Router names for list filters (no addresses). */
+export async function routerNameOptions(ctx: StaffContext) {
+  requirePermission(ctx, "routers.read");
+  return db.router.findMany({ where: { ...tenantWhere(ctx), archivedAt: null }, select: { id: true, name: true }, orderBy: { name: "asc" } });
+}
+
 /** Routers the caller may provision onto (for pickers). */
 export async function routerOptions(ctx: StaffContext, purpose: "pppoe" | "hotspot") {
   requirePermission(ctx, "routers.read");

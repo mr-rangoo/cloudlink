@@ -23,7 +23,7 @@ export default async function SubscriptionsPage({ searchParams }: { searchParams
   const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
   const current = { q: sp.q, status: sp.status, expiring: sp.expiring };
   const tz = ctx.organization.timezone;
-  const tab = query.expiring ? "EXPIRING" : query.status;
+  const tab = query.expiring === "24h" ? "EXPIRING24" : query.expiring ? "EXPIRING" : query.status;
   const href = (patch: Record<string, string | undefined>) => buildHref("/subscriptions", current, { ...patch, page: undefined });
 
   return (
@@ -37,6 +37,7 @@ export default async function SubscriptionsPage({ searchParams }: { searchParams
             items={[
               { value: "ALL", label: "All", href: href({ status: undefined, expiring: undefined }) },
               { value: "ACTIVE", label: "Active", href: href({ status: "ACTIVE", expiring: undefined }) },
+              { value: "EXPIRING24", label: "Expiring in 24 hours", href: href({ status: undefined, expiring: "24h" }) },
               { value: "EXPIRING", label: "Expiring in 7 days", href: href({ status: undefined, expiring: "7d" }) },
               { value: "PENDING", label: "Pending", href: href({ status: "PENDING", expiring: undefined }) },
               { value: "SUSPENDED", label: "Suspended", href: href({ status: "SUSPENDED", expiring: undefined }) },

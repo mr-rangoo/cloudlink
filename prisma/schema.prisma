@@ -439,6 +439,8 @@ model Subscriber {
   idNumber        String? // national ID or KRA PIN
   status          SubscriberStatus @default(ACTIVE)
   notes           String?
+  /// Priority customer: flagged in lists and filterable.
+  vip             Boolean          @default(false)
   /// How the account was created: staff | hotspot (self-service purchase on the captive portal) | import | lead.
   source          String           @default("staff")
   createdById     String?          @db.Uuid
@@ -535,6 +537,7 @@ model Subscription {
   billingCount       Int
   // Lifecycle. Period boundaries are computed from billingAnchorAt + periodIndex to avoid month-end drift.
   billingAnchorAt    DateTime?          @db.Timestamptz(6)
+  /// -1 after a compensation: the current period was extended and the next regular period starts at billingAnchorAt.
   periodIndex        Int                @default(0)
   currentPeriodStart DateTime?          @db.Timestamptz(6)
   currentPeriodEnd   DateTime?          @db.Timestamptz(6)

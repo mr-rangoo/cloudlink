@@ -986,17 +986,36 @@ export async function listNetworkSessions(ctx: StaffContext, query: z.infer<type
     db.networkSession.findMany({ where, orderBy: [{ endedAt: { sort: "desc", nulls: "first" } }, { lastSeenAt: "desc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
     db.networkSession.count({ where }),
   ]);
-  const [routers, subscribers, lastSync, online] = await Promise.all([
+  const openScope: Prisma.NetworkSessionWhereInput = { organizationId: ctx.organizationId, endedAt: null, ...(visible ? { routerId: { in: visible } } : {}) };
+  const [routers, subscribers, lastSync, online, traffic, plans] = await Promise.all([
     db.router.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.routerId))] } }, select: { id: true, name: true } }),
     db.subscriber.findMany({ where: { id: { in: rows.map((r) => r.subscriberId).filter((x): x is string => Boolean(x)) } }, select: { id: true, displayName: true, accountNumber: true } }),
     lastSessionSync(ctx.organizationId),
-    db.networkSession.groupBy({ by: ["kind"], where: { organizationId: ctx.organizationId, endedAt: null, ...(visible ? { routerId: { in: visible } } : {}) }, _count: { _all: true } }),
+    db.networkSession.groupBy({ by: ["kind"], where: openScope, _count: { _all: true } }),
+    db.networkSession.aggregate({ where: openScope, _sum: { bytesIn: true, bytesOut: true } }),
+    // The plan behind each session: matched by login username, or by device MAC for device (TV) plans.
+    db.subscription.findMany({
+      where: { organizationId: ctx.organizationId, OR: [{ networkUsername: { in: rows.map((r) => r.username) } }, { networkMac: { in: rows.flatMap((r) => (r.macAddress ? [r.macAddress.toUpperCase()] : [])) } }] },
+      select: { networkUsername: true, networkMac: true, packageName: true, status: true, currentPeriodEnd: true },
+    }),
   ]);
   const count = (kind: string) => online.find((o) => o.kind === kind)?._count._all ?? 0;
+  const planOf = (s: (typeof rows)[number]) =>
+    (s.kind === "BINDING" ? plans.find((p) => p.networkMac && p.networkMac === s.macAddress?.toUpperCase()) : plans.find((p) => p.networkUsername === s.username)) ?? null;
   return {
-    rows: rows.map((s) => ({ ...publicSession(s), routerName: routers.find((r) => r.id === s.routerId)?.name ?? null, subscriber: subscribers.find((x) => x.id === s.subscriberId) ?? null })),
+    rows: rows.map((s) => {
+      const plan = planOf(s);
+      return {
+        ...publicSession(s),
+        routerName: routers.find((r) => r.id === s.routerId)?.name ?? null,
+        subscriber: subscribers.find((x) => x.id === s.subscriberId) ?? null,
+        plan: plan ? { packageName: plan.packageName, status: plan.status, currentPeriodEnd: plan.currentPeriodEnd } : null,
+      };
+    }),
     total,
-    online: { pppoe: count("PPPOE"), hotspot: count("HOTSPOT") },
+    online: { pppoe: count("PPPOE"), hotspot: count("HOTSPOT"), device: count("BINDING") },
+    /** Bytes counted on sessions open now (router's view: in = from customers, out = to customers). */
+    traffic: { bytesIn: (traffic._sum.bytesIn ?? BigInt(0)).toString(), bytesOut: (traffic._sum.bytesOut ?? BigInt(0)).toString() },
     lastSyncedAt: lastSync,
     adapter: networkAdapterName(),
   };

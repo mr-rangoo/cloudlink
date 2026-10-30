@@ -3,7 +3,7 @@ import { z, type ZodType } from "zod";
 import { loginSchema } from "@/server/auth/service";
 import { catalogueQuery, packageInput, packageListQuery, packageUpdate } from "@/server/services/packages";
 import { noteInput, subscriberInput, subscriberListQuery, subscriberUpdate } from "@/server/services/subscribers";
-import { subscriptionActionInput, subscriptionCreateInput, subscriptionListQuery } from "@/server/services/subscriptions";
+import { compensateInput, subscriptionActionInput, subscriptionCreateInput, subscriptionListQuery } from "@/server/services/subscriptions";
 import { leadActivityInput, leadConvertInput, leadInput, leadListQuery, leadUpdate } from "@/server/services/leads";
 import { importPreviewInput } from "@/server/services/imports";
 import { creditNoteInput, invoiceCreateInput, invoiceListQuery, voidInput } from "@/server/services/invoices";
@@ -19,6 +19,7 @@ import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/in
 import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput } from "@/server/services/vouchers";
 import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from "@/server/services/routers";
 import { telemetryQuery } from "@/server/services/router-insights";
+import { searchQuery } from "@/server/services/search";
 import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
 import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } from "@/server/services/mobile-money";
 import { mpesaConfigInput } from "@/server/services/mpesa-config";
@@ -111,6 +112,7 @@ export const operations: Operation[] = [
     body: subscriptionActionInput,
     idempotent: a === "renew",
   })),
+  { method: "post", path: "/subscriptions/:id/compensate", summary: "Add free time to the paid period (outage compensation; re-anchors billing)", tag: "Subscriptions", auth: "session", permission: "subscriptions.write", body: compensateInput, idempotent: true },
   { method: "get", path: "/leads", summary: "List leads with stage counts", tag: "CRM", auth: "session", permission: "leads.read", query: leadListQuery },
   { method: "post", path: "/leads", summary: "Create lead", tag: "CRM", auth: "session", permission: "leads.write", body: leadInput },
   { method: "get", path: "/leads/:id", summary: "Get lead with timeline", tag: "CRM", auth: "session", permission: "leads.read" },
@@ -161,6 +163,8 @@ export const operations: Operation[] = [
   { method: "post", path: "/notifications/:id/retry", summary: "Retry a failed/skipped notification", tag: "Notifications", auth: "session", permission: "notifications.write" },
   { method: "get", path: "/notifications/status", summary: "Messaging adapter status", tag: "Notifications", auth: "session", permission: "notifications.read" },
   { method: "get", path: "/alerts", summary: "Items needing attention (permission-filtered)", tag: "Notifications", auth: "session" },
+  { method: "get", path: "/search", summary: "Record search for the command menu (subscribers, invoices, payments, routers, tickets, leads; each by its read permission)", tag: "Dashboard", auth: "session", query: searchQuery },
+  { method: "get", path: "/navigation/counts", summary: "Sidebar counts: open sessions, offline routers, open tickets, payments to match (null without permission)", tag: "Dashboard", auth: "session" },
   { method: "get", path: "/subscribers/:id/portal", summary: "Portal access status", tag: "Subscribers", auth: "session", permission: "subscribers.read" },
   { method: "post", path: "/subscribers/:id/portal", summary: "Portal access: invite | link | enable | disable", tag: "Subscribers", auth: "session", permission: "subscribers.write" },
   { method: "get", path: "/subscribers/:id/preferences", summary: "Notification preferences", tag: "Subscribers", auth: "session", permission: "subscribers.read" },

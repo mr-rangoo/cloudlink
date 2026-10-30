@@ -91,6 +91,68 @@ function ActionDialog({ action, subscriptionId, packageName, canInvoice }: { act
   );
 }
 
+/** Free time after an outage. One idempotency key per confirmation, so a retried submit never adds the time twice. */
+export function CompensateDialog({ subscriptionId, packageName, periodEnd }: { subscriptionId: string; packageName: string; periodEnd: string }) {
+  const [open, setOpen] = React.useState(false);
+  const [key, setKey] = React.useState(() => newIdempotencyKey("compensate"));
+  const { mutate, pending, errors, formError } = useMutation();
+  const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const v = formValues(e.currentTarget);
+    const ok = await mutate(
+      `/subscriptions/${subscriptionId}/compensate`,
+      { method: "POST", body: { amount: v.amount, unit: v.unit, reason: v.reason }, idempotencyKey: key },
+      { success: "Compensation added", onError: (err) => rotateOnServerError(err, () => setKey(newIdempotencyKey("compensate"))) },
+    );
+    if (ok) setOpen(false);
+  };
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (v) setKey(newIdempotencyKey("compensate"));
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="sm" variant="secondary">
+          Compensate
+        </Button>
+      </DialogTrigger>
+      <DialogContent title="Add free time" description={packageName}>
+        <form onSubmit={onSubmit} className="space-y-4" noValidate>
+          <p className="text-sm text-muted-foreground">
+            Extends the paid period (now ending {periodEnd}) at no charge, for example after an outage. Later periods start from the new end date. Hotspot logins are updated on the router.
+          </p>
+          {formError ? <Alert tone="danger">{formError}</Alert> : null}
+          <div className="grid grid-cols-2 gap-3">
+            <Field id={`comp-amount-${subscriptionId}`} label="Amount" error={errors.amount} required>
+              <Input name="amount" inputMode="numeric" defaultValue="1" />
+            </Field>
+            <Field id={`comp-unit-${subscriptionId}`} label="Unit" error={errors.unit}>
+              <Select name="unit" defaultValue="DAY">
+                <option value="DAY">Days</option>
+                <option value="HOUR">Hours</option>
+              </Select>
+            </Field>
+          </div>
+          <Field id={`comp-reason-${subscriptionId}`} label="Reason" error={errors.reason} required hint="Shown in the account history, e.g. “Fibre cut in Ruaka, 2 days”.">
+            <Textarea name="reason" rows={2} maxLength={300} />
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+              Back
+            </Button>
+            <Button type="submit" loading={pending}>
+              Add free time
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function AddSubscriptionDialog({ subscriberId, packages }: { subscriberId: string; packages: Array<{ id: string; label: string }> }) {
   const [open, setOpen] = React.useState(false);
   const { mutate, pending, errors, formError } = useMutation();
@@ -156,6 +218,7 @@ export interface EditableSubscriber {
   notes: string;
   status: string;
   branchId: string | null;
+  vip: boolean;
 }
 
 export function EditSubscriberDialog({ subscriber, branches }: { subscriber: EditableSubscriber; branches: Array<{ id: string; name: string; code: string }> }) {
@@ -178,6 +241,7 @@ export function EditSubscriberDialog({ subscriber, branches }: { subscriber: Edi
           idNumber: v.idNumber ?? null,
           notes: v.notes ?? null,
           status: v.status,
+          vip: v.vip === "on",
           ...(branches.length ? { branchId: v.branchId ?? null } : {}),
         },
       },
@@ -238,6 +302,9 @@ export function EditSubscriberDialog({ subscriber, branches }: { subscriber: Edi
                 <option value="ARCHIVED">Archived</option>
               </Select>
             </Field>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" name="vip" defaultChecked={subscriber.vip} /> VIP (priority customer, flagged in lists)
+            </label>
             <Field id="e-notes" label="Internal notes" error={errors.notes} className="sm:col-span-2">
               <Textarea name="notes" rows={3} defaultValue={subscriber.notes} />
             </Field>

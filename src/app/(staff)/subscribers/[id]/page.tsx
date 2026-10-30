@@ -15,7 +15,7 @@ import { Alert, EmptyState, PageHeader } from "@/components/ui/feedback";
 import { RecordStatusBadge, SERVICE_LABEL, SubscriptionStatusBadge, formatInterval, humanize } from "@/components/status";
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
-import { AddSubscriptionDialog, EditSubscriberDialog, NoteForm, SubscriptionActions } from "./client";
+import { AddSubscriptionDialog, CompensateDialog, EditSubscriberDialog, NoteForm, SubscriptionActions } from "./client";
 import { BillingCard } from "./billing-card";
 import { PortalAccessCard } from "./portal-card";
 import { NetworkAccessCard } from "./network-card";
@@ -53,6 +53,7 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
       {sp.created ? <Alert tone="success" title={`Subscriber ${subscriber.accountNumber} created`} /> : null}
       <PageHeader
         title={subscriber.displayName}
+        eyebrow={subscriber.vip ? "VIP subscriber" : undefined}
         description={`Account ${subscriber.accountNumber} · ${humanize(subscriber.type)}${subscriber.branch ? ` · ${subscriber.branch.name}` : ""}`}
         actions={
           <>
@@ -71,6 +72,7 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
                   notes: subscriber.notes ?? "",
                   status: subscriber.status,
                   branchId: subscriber.branchId,
+                  vip: subscriber.vip,
                 }}
                 branches={branches}
               />
@@ -159,7 +161,12 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
                     {s.cancelledAt ? ` · cancelled ${formatDate(s.cancelledAt, tz)}` : ""}
                   </p>
                 </div>
-                {canSubscribe ? <SubscriptionActions subscriptionId={s.id} packageName={s.packageName} actions={allowedActions(s.status)} canInvoice={ctx.permissions.has("invoices.issue")} /> : null}
+                {canSubscribe ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <SubscriptionActions subscriptionId={s.id} packageName={s.packageName} actions={allowedActions(s.status)} canInvoice={ctx.permissions.has("invoices.issue")} />
+                    {(s.status === "ACTIVE" || s.status === "SUSPENDED") && s.currentPeriodEnd ? <CompensateDialog subscriptionId={s.id} packageName={s.packageName} periodEnd={formatDateTime(s.currentPeriodEnd, tz)} /> : null}
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

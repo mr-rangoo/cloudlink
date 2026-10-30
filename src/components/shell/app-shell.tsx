@@ -65,10 +65,51 @@ function useSidebarCollapsed(): boolean {
   );
 }
 
+interface NavCounts {
+  sessions: number | null;
+  routersOffline: number | null;
+  support: number | null;
+  reconciliation: number | null;
+}
+
+/** Sidebar counts, re-read on navigation and every minute while the tab is visible (failures leave the last value). */
+function useNavCounts(pathname: string): NavCounts | null {
+  const [counts, setCounts] = React.useState<NavCounts | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      if (document.visibilityState !== "visible") return;
+      api<{ data: NavCounts }>("/navigation/counts")
+        .then((res) => {
+          if (!cancelled) setCounts(res.data);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const id = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [pathname]);
+  return counts;
+}
+
+/** What a sidebar item's count means; colour is never the only signal (the label is read out and shown on hover). */
+function navBadge(slug: string, counts: NavCounts | null): { value: number; label: string; tone: "neutral" | "danger" | "warning" } | null {
+  if (!counts) return null;
+  if (slug === "sessions" && counts.sessions) return { value: counts.sessions, label: `${counts.sessions} online now`, tone: "neutral" };
+  if (slug === "routers" && counts.routersOffline) return { value: counts.routersOffline, label: `${counts.routersOffline} offline`, tone: "danger" };
+  if (slug === "support" && counts.support) return { value: counts.support, label: `${counts.support} open tickets`, tone: "neutral" };
+  if (slug === "reconciliation" && counts.reconciliation) return { value: counts.reconciliation, label: `${counts.reconciliation} payments to match`, tone: "warning" };
+  return null;
+}
+
 export function AppShell(props: ShellProps) {
   const { permissions, children } = props;
   const pathname = usePathname();
   const collapsed = useSidebarCollapsed();
+  const counts = useNavCounts(pathname);
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [commandOpen, setCommandOpen] = React.useState(false);
 
@@ -99,7 +140,7 @@ export function AppShell(props: ShellProps) {
         className={cn("sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 lg:flex", collapsed ? "w-[68px]" : "w-64")}
         aria-label="Primary"
       >
-        <SidebarContent items={items} collapsed={collapsed} pathname={pathname} brand={props.brand} />
+        <SidebarContent items={items} collapsed={collapsed} pathname={pathname} brand={props.brand} counts={counts} />
         <button
           type="button"
           onClick={toggleCollapsed}
@@ -119,7 +160,7 @@ export function AppShell(props: ShellProps) {
             <Dialog.Close className="absolute right-3 top-4 rounded-md p-1.5 text-sidebar-muted hover:text-white" aria-label="Close navigation">
               <X className="size-5" />
             </Dialog.Close>
-            <SidebarContent items={items} collapsed={false} pathname={pathname} brand={props.brand} onNavigate={() => setMobileOpen(false)} />
+            <SidebarContent items={items} collapsed={false} pathname={pathname} brand={props.brand} counts={counts} onNavigate={() => setMobileOpen(false)} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
@@ -151,7 +192,7 @@ function PageTransition({ pathname, children }: { pathname: string; children: Re
   );
 }
 
-function SidebarContent({ items, collapsed, pathname, onNavigate, brand }: { items: NavItem[]; collapsed: boolean; pathname: string; onNavigate?: () => void; brand?: ShellProps["brand"] }) {
+function SidebarContent({ items, collapsed, pathname, onNavigate, brand, counts }: { items: NavItem[]; collapsed: boolean; pathname: string; onNavigate?: () => void; brand?: ShellProps["brand"]; counts: NavCounts | null }) {
   const groups = React.useMemo(() => {
     const map = new Map<string, NavItem[]>();
     for (const i of items) map.set(i.group, [...(map.get(i.group) ?? []), i]);
@@ -181,12 +222,13 @@ function SidebarContent({ items, collapsed, pathname, onNavigate, brand }: { ite
               {groupItems.map((item) => {
                 const Icon = NAV_ICONS[item.icon] ?? NAV_ICONS.LayoutDashboard!;
                 const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const badge = navBadge(item.slug, counts);
                 return (
                   <li key={item.slug}>
                     <Link
                       href={item.href}
                       onClick={onNavigate}
-                      title={collapsed ? `${item.label}${item.available ? "" : " (not yet available)"}` : undefined}
+                      title={collapsed ? `${item.label}${item.available ? "" : " (not yet available)"}${badge ? `: ${badge.label}` : ""}` : badge?.label}
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "group flex h-9 items-center gap-3 rounded-md px-2.5 text-[13px] font-medium transition-colors",
@@ -198,6 +240,17 @@ function SidebarContent({ items, collapsed, pathname, onNavigate, brand }: { ite
                       {!collapsed ? (
                         <>
                           <span className="truncate">{item.label}</span>
+                          {badge ? (
+                            <span
+                              className={cn(
+                                "tabular ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                                badge.tone === "danger" ? "bg-danger-soft text-danger" : badge.tone === "warning" ? "bg-warning-soft text-warning" : "bg-sidebar-elevated text-sidebar-foreground",
+                              )}
+                            >
+                              {badge.value > 999 ? "999+" : badge.value}
+                              <span className="sr-only"> ({badge.label})</span>
+                            </span>
+                          ) : null}
                           {!item.available ? (
                             <span className="ml-auto rounded bg-sidebar-elevated px-1.5 py-0.5 text-[10px] font-medium text-sidebar-muted">Soon</span>
                           ) : null}
@@ -408,14 +461,60 @@ function Topbar(props: ShellProps & { onOpenMobile: () => void; onOpenCommand: (
   );
 }
 
+interface SearchHit {
+  type: "subscriber" | "invoice" | "payment" | "router" | "ticket" | "lead";
+  id: string;
+  title: string;
+  subtitle: string;
+  href: string;
+}
+
+const HIT_ICON: Record<SearchHit["type"], string> = { subscriber: "Users", invoice: "FileText", payment: "Wallet", router: "Router", ticket: "LifeBuoy", lead: "UserPlus" };
+const HIT_LABEL: Record<SearchHit["type"], string> = { subscriber: "Subscriber", invoice: "Invoice", payment: "Payment", router: "Router", ticket: "Ticket", lead: "Lead" };
+
+type CommandEntry = { key: string; href: string; icon: string; title: string; subtitle: string; tag?: string; group: "Records" | "Modules" };
+
+/** Server record search (debounced); stale responses are ignored. */
+function useRecordSearch(query: string) {
+  const [hits, setHits] = React.useState<SearchHit[]>([]);
+  const [state, setState] = React.useState<"idle" | "loading" | "done" | "error">("idle");
+  React.useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) return;
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      setState("loading");
+      api<{ data: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`)
+        .then((res) => {
+          if (cancelled) return;
+          setHits(res.data);
+          setState("done");
+        })
+        .catch(() => {
+          if (!cancelled) setState("error");
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [query]);
+  return query.trim().length < 2 ? { hits: [], state: "idle" as const } : { hits, state };
+}
+
 function CommandMenu({ open, onOpenChange, items }: { open: boolean; onOpenChange: (v: boolean) => void; items: NavItem[] }) {
   const router = useRouter();
   const [query, setQuery] = React.useState("");
   const [index, setIndex] = React.useState(0);
-  const results = React.useMemo(() => {
+  const { hits, state } = useRecordSearch(query);
+  const results = React.useMemo((): CommandEntry[] => {
     const q = query.trim().toLowerCase();
-    return q ? items.filter((i) => `${i.label} ${i.description}`.toLowerCase().includes(q)) : items;
-  }, [items, query]);
+    const modules = (q ? items.filter((i) => `${i.label} ${i.description}`.toLowerCase().includes(q)) : items).map(
+      (i): CommandEntry => ({ key: `m-${i.slug}`, href: i.href, icon: i.icon, title: i.label, subtitle: i.description, tag: i.available ? undefined : `Phase ${i.phase}`, group: "Modules" }),
+    );
+    const records = hits.map((h): CommandEntry => ({ key: `r-${h.type}-${h.id}`, href: h.href, icon: HIT_ICON[h.type], title: h.title, subtitle: h.subtitle, tag: HIT_LABEL[h.type], group: "Records" }));
+    return [...records, ...modules];
+  }, [items, query, hits]);
 
   const handleOpenChange = (next: boolean) => {
     if (!next) {
@@ -425,10 +524,10 @@ function CommandMenu({ open, onOpenChange, items }: { open: boolean; onOpenChang
     onOpenChange(next);
   };
 
-  const go = (item: NavItem | undefined) => {
-    if (!item) return;
+  const go = (entry: CommandEntry | undefined) => {
+    if (!entry) return;
     handleOpenChange(false);
-    router.push(item.href);
+    router.push(entry.href);
   };
 
   return (
@@ -462,37 +561,48 @@ function CommandMenu({ open, onOpenChange, items }: { open: boolean; onOpenChang
                       go(results[index]);
                     }
                   }}
-                  placeholder="Jump to a module…"
+                  placeholder="Search records or jump to a module…"
                   className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                   role="combobox"
                   aria-expanded
                   aria-controls="command-results"
-                  aria-activedescendant={results[index] ? `cmd-${results[index]!.slug}` : undefined}
+                  aria-activedescendant={results[index] ? `cmd-${results[index]!.key}` : undefined}
                 />
+                {state === "loading" ? <span className="text-[11px] text-muted-foreground">Searching…</span> : null}
               </div>
-              <ul id="command-results" role="listbox" className="max-h-80 overflow-y-auto p-1.5">
-                {results.length === 0 ? <li className="px-3 py-6 text-center text-sm text-muted-foreground">No matching modules.</li> : null}
-                {results.map((item, i) => {
-                  const Icon = NAV_ICONS[item.icon] ?? NAV_ICONS.LayoutDashboard!;
+              <ul id="command-results" role="listbox" className="max-h-96 overflow-y-auto p-1.5">
+                {results.length === 0 ? <li className="px-3 py-6 text-center text-sm text-muted-foreground">{state === "loading" ? "Searching…" : "No matching records or modules."}</li> : null}
+                {state === "error" ? <li className="px-3 py-2 text-xs text-danger">Record search failed. Modules are still listed.</li> : null}
+                {results.map((entry, i) => {
+                  const Icon = NAV_ICONS[entry.icon] ?? NAV_ICONS.LayoutDashboard!;
+                  const heading = i === 0 || results[i - 1]!.group !== entry.group;
                   return (
-                    <li
-                      key={item.slug}
-                      id={`cmd-${item.slug}`}
-                      role="option"
-                      aria-selected={i === index}
-                      onMouseEnter={() => setIndex(i)}
-                      onClick={() => go(item)}
-                      className={cn("flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm", i === index && "bg-surface-muted")}
-                    >
-                      <Icon className="size-4 text-muted-foreground" aria-hidden />
-                      <span className="font-medium">{item.label}</span>
-                      <span className="truncate text-xs text-muted-foreground">{item.description}</span>
-                      {!item.available ? <span className="ml-auto text-[10px] text-muted-foreground">Phase {item.phase}</span> : null}
-                    </li>
+                    <React.Fragment key={entry.key}>
+                      {heading ? (
+                        <li role="presentation" className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          {entry.group}
+                        </li>
+                      ) : null}
+                      <li
+                        id={`cmd-${entry.key}`}
+                        role="option"
+                        aria-selected={i === index}
+                        onMouseEnter={() => setIndex(i)}
+                        onClick={() => go(entry)}
+                        className={cn("flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm", i === index && "bg-surface-muted")}
+                      >
+                        <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{entry.title}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{entry.subtitle}</span>
+                        </span>
+                        {entry.tag ? <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{entry.tag}</span> : null}
+                      </li>
+                    </React.Fragment>
                   );
                 })}
               </ul>
-              <p className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">Record search across subscribers and invoices arrives with those modules.</p>
+              <p className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">Type 2+ characters: names, account numbers, phones, invoice and receipt numbers, M-Pesa codes, routers, tickets.</p>
             </Dialog.Content>
           </Dialog.Portal>
         ) : null}
