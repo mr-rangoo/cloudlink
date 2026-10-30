@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { api, ApiError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import { durationLabel, formatRate, quotaLabel, type DurationUnit } from "@/lib/plans";
+import { durationLabel, durationShort, formatRate, quotaLabel, type DurationUnit } from "@/lib/plans";
+import type { PlanLayout } from "@/lib/portal-templates";
 import { HotspotForm } from "./form";
 
 export interface PortalPlan {
@@ -39,6 +40,12 @@ export interface PortalProps {
   dst: string | null;
   mpesa: boolean;
   testMode: boolean;
+  layout?: PlanLayout;
+  voucherFirst?: boolean;
+  showVouchers?: boolean;
+  showReconnect?: boolean;
+  /** Settings gallery: render only, never resume or start a purchase. */
+  preview?: boolean;
 }
 
 interface Grant {
@@ -100,12 +107,23 @@ export function planFacts(p: PortalPlan): string {
 /** Captive-portal purchase flow. Nothing is shown as paid or connected until the server says so. */
 export function HotspotPortal(props: PortalProps) {
   const { org, currency, plans } = props;
-  const [tab, setTab] = React.useState<"buy" | "voucher" | "paid">(props.mpesa && plans.length ? "buy" : "voucher");
+  const layout = props.layout ?? "list";
+  const showVouchers = props.showVouchers !== false;
+  const canBuy = props.mpesa && plans.length > 0;
+  const [tab, setTab] = React.useState<"buy" | "voucher" | "paid">((props.voucherFirst && showVouchers) || !canBuy ? (showVouchers ? "voucher" : "buy") : "buy");
+  const tabs = (
+    [
+      ["buy", "Buy a plan", canBuy],
+      ["voucher", "Voucher", showVouchers],
+      ["paid", "Already paid?", props.mpesa && props.showReconnect !== false],
+    ] as const
+  ).filter(([, , shown]) => shown);
   const [step, setStep] = React.useState<Step>({ name: "browse" });
   const loginForm = React.useRef<HTMLFormElement>(null);
 
   // Resume a purchase after a reload (the token lives only in this tab).
   React.useEffect(() => {
+    if (props.preview) return;
     const raw = readStorage("session", pendingKey(org));
     if (!raw) return;
     try {
@@ -114,7 +132,7 @@ export function HotspotPortal(props: PortalProps) {
     } catch {
       writeStorage("session", pendingKey(org), null);
     }
-  }, [org]);
+  }, [org, props.preview]);
 
   // Follow the payment until it is confirmed (or fails).
   React.useEffect(() => {
@@ -202,16 +220,8 @@ export function HotspotPortal(props: PortalProps) {
 
   return (
     <div className="space-y-5">
-      <nav aria-label="Ways to connect" className="grid grid-cols-3 gap-1 rounded-lg bg-surface-muted p-1 text-sm font-medium">
-        {(
-          [
-            ["buy", "Buy a plan", props.mpesa && plans.length > 0],
-            ["voucher", "Voucher", true],
-            ["paid", "Already paid?", props.mpesa],
-          ] as const
-        )
-          .filter(([, , shown]) => shown)
-          .map(([value, label]) => (
+      <nav aria-label="Ways to connect" className={cn("grid gap-1 rounded-lg bg-surface-muted p-1 text-sm font-medium", tabs.length === 3 ? "grid-cols-3" : tabs.length === 2 ? "grid-cols-2" : "hidden")}>
+        {tabs.map(([value, label]) => (
             <button
               key={value}
               type="button"
@@ -247,9 +257,10 @@ export function HotspotPortal(props: PortalProps) {
         <Pay {...props} plan={step.plan} onBack={() => setStep({ name: "browse" })} onWaiting={(w) => setStep(w)} onGrant={(grant) => setStep({ name: "connecting", grant, receipt: null })} />
       ) : (
         <div className="space-y-5">
-          {groups.time.length ? <PlanList title={groups.data.length || groups.device.length ? "Time plans" : null} plans={groups.time} currency={currency} onPick={(plan) => setStep({ name: "pay", plan })} /> : null}
-          {groups.data.length ? <PlanList title="Data bundles" plans={groups.data} currency={currency} onPick={(plan) => setStep({ name: "pay", plan })} /> : null}
-          {groups.device.length ? <PlanList title="TV & streaming devices" plans={groups.device} currency={currency} onPick={(plan) => setStep({ name: "pay", plan })} /> : null}
+          {!canBuy ? <p className="text-center text-sm text-muted-foreground">{props.mpesa ? "No plans are on sale right now." : "Online payment is not available here. Use a voucher."}</p> : null}
+          {groups.time.length ? <PlanList layout={layout} title={groups.data.length || groups.device.length ? "Time plans" : null} plans={groups.time} currency={currency} onPick={(plan) => setStep({ name: "pay", plan })} /> : null}
+          {groups.data.length ? <PlanList layout={layout} title="Data bundles" plans={groups.data} currency={currency} onPick={(plan) => setStep({ name: "pay", plan })} /> : null}
+          {groups.device.length ? <PlanList layout={layout} title="TV & streaming devices" plans={groups.device} currency={currency} onPick={(plan) => setStep({ name: "pay", plan })} /> : null}
         </div>
       )}
 
@@ -265,10 +276,85 @@ export function HotspotPortal(props: PortalProps) {
   );
 }
 
-function PlanList({ title, plans, currency, onPick }: { title: string | null; plans: PortalPlan[]; currency: string; onPick: (p: PortalPlan) => void }) {
+function PlanIcon({ kind }: { kind: PortalPlan["kind"] }) {
+  const Icon = kind === "DEVICE" ? Tv : kind === "TRIAL" ? Gift : kind === "DATA" ? Zap : Wifi;
+  return <Icon className="size-4" aria-hidden />;
+}
+
+function HighlightTag({ highlight, className }: { highlight: string | null; className?: string }) {
+  if (!highlight) return null;
+  return <span className={cn("rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground", className)}>{highlight === "POPULAR" ? "Most popular" : "On offer"}</span>;
+}
+
+function PlanList({ layout, title, plans, currency, onPick }: { layout: PlanLayout; title: string | null; plans: PortalPlan[]; currency: string; onPick: (p: PortalPlan) => void }) {
+  const heading = title ? <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2> : null;
+  const unavailable = (p: PortalPlan) => !p.availableNow || !p.payable;
+  const price = (p: PortalPlan) => (p.free ? "Free" : priceLabel(currency, p.price));
+  const late = (p: PortalPlan) => (!p.availableNow && p.schedule ? <span className="block text-xs text-warning">Available {p.schedule}</span> : null);
+
+  if (layout === "tiles") {
+    return (
+      <section className="space-y-2" aria-label={title ?? "Plans"}>
+        {heading}
+        <ul className="grid grid-cols-2 gap-2">
+          {plans.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                disabled={unavailable(p)}
+                onClick={() => onPick(p)}
+                className={cn(
+                  "relative flex h-full w-full flex-col items-start gap-1 rounded-xl border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                  p.highlight === "POPULAR" ? "border-accent bg-accent-soft/40" : "border-border bg-surface hover:border-border-strong",
+                  unavailable(p) && "cursor-not-allowed opacity-60",
+                )}
+              >
+                <HighlightTag highlight={p.highlight} className="mb-1" />
+                <span className="text-xl font-bold tabular">{price(p)}</span>
+                <span className="text-sm font-medium leading-tight">{p.name}</span>
+                <span className="text-xs text-muted-foreground">{durationShort(p.billingUnit, p.billingCount)}{p.dataQuotaMb ? ` · ${quotaLabel(p.dataQuotaMb)}` : ""}</span>
+                {late(p)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  }
+
+  if (layout === "rows" || layout === "large") {
+    return (
+      <section className="space-y-1" aria-label={title ?? "Plans"}>
+        {heading}
+        <ul className="divide-y divide-border">
+          {plans.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                disabled={unavailable(p)}
+                onClick={() => onPick(p)}
+                className={cn("flex w-full items-center gap-3 py-3 text-left focus-visible:outline-2 focus-visible:outline-ring", unavailable(p) && "cursor-not-allowed opacity-60")}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className={cn("font-medium", layout === "large" && "text-base")}>{p.name}</span>
+                    <HighlightTag highlight={p.highlight} />
+                  </span>
+                  <span className="block text-xs text-muted-foreground">{planFacts(p)}</span>
+                  {late(p)}
+                </span>
+                <span className={cn("shrink-0 text-right font-semibold tabular", layout === "large" ? "text-2xl font-bold text-accent" : "")}>{price(p)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-2" aria-label={title ?? "Plans"}>
-      {title ? <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2> : null}
+      {heading}
       <ul className="space-y-2">
         {plans.map((p) => {
           const disabled = !p.availableNow || !p.payable;
@@ -285,12 +371,12 @@ function PlanList({ title, plans, currency, onPick }: { title: string | null; pl
                 )}
               >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
-                  {p.kind === "DEVICE" ? <Tv className="size-4" aria-hidden /> : p.kind === "TRIAL" ? <Gift className="size-4" aria-hidden /> : p.kind === "DATA" ? <Zap className="size-4" aria-hidden /> : <Wifi className="size-4" aria-hidden />}
+                  <PlanIcon kind={p.kind} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-1.5">
                     <span className="font-medium">{p.name}</span>
-                    {p.highlight ? <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">{p.highlight === "POPULAR" ? "Most popular" : "On offer"}</span> : null}
+                    <HighlightTag highlight={p.highlight} />
                   </span>
                   <span className="block text-xs text-muted-foreground">{planFacts(p)}</span>
                   {!p.availableNow && p.schedule ? <span className="block text-xs text-warning">Available {p.schedule}</span> : null}

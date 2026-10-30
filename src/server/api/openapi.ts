@@ -26,6 +26,7 @@ import { paymentMethodInput, paymentMethodUpdate } from "@/server/services/payme
 import { assistantMessageInput, assistantSettingsInput, conversationListQuery } from "@/server/assistant/service";
 import { c2bConfirmationSchema, stkCallbackSchema } from "@/server/domain/mpesa";
 import { accessStatusInput, purchaseInput, purchaseSimulateInput, purchaseStatusInput, reconnectInput } from "@/server/services/hotspot-sales";
+import { hotspotSettingsInput } from "@/server/services/hotspot-settings";
 
 /**
  * OpenAPI 3.1 document generated from the same Zod schemas the handlers validate with.
@@ -263,6 +264,8 @@ export const operations: Operation[] = [
   { method: "put", path: "/settings/payment-methods/:id", summary: "Replace a payment method", tag: "Settings", auth: "session", permission: "settings.write", body: paymentMethodInput },
   { method: "patch", path: "/settings/payment-methods/:id", summary: "Show/hide or reorder", tag: "Settings", auth: "session", permission: "settings.write", body: paymentMethodUpdate },
   { method: "delete", path: "/settings/payment-methods/:id", summary: "Remove a payment method", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "get", path: "/settings/hotspot", summary: "Captive portal settings", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "put", path: "/settings/hotspot", summary: "Save the captive portal template, headline, how-to-buy steps, support contacts and tabs", tag: "Settings", auth: "session", permission: "settings.write", body: hotspotSettingsInput },
   // Phase 10: customer-portal AI assistant
   { method: "get", path: "/settings/assistant", summary: "Assistant settings and deployment status (adapter, model; no secrets)", tag: "Settings", auth: "session", permission: "settings.write" },
   { method: "put", path: "/settings/assistant", summary: "Turn the portal assistant on/off, name it, add organization guidance", tag: "Settings", auth: "session", permission: "settings.write", body: assistantSettingsInput },

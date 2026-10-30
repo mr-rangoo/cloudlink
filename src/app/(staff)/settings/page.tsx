@@ -1,61 +1,85 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { getStaffContextWith } from "@/server/auth/page";
 import { getSettings } from "@/server/services/admin";
 import { brandingFor } from "@/server/services/branding";
 import { instructionsFor, listPaymentMethods } from "@/server/services/payment-methods";
 import { paymentAdapterMode } from "@/server/services/mpesa-config";
-import { Card, CardContent } from "@/components/ui/card";
+import { getHotspotSettings } from "@/server/services/hotspot-settings";
+import { portalPlans } from "@/server/services/hotspot-sales";
+import { assistantSettings, assistantStatus } from "@/server/assistant/service";
 import { PageHeader } from "@/components/ui/feedback";
-import { FilterTabs } from "@/components/list-toolbar";
 import { Forbidden } from "@/components/shell/forbidden";
 import { SettingsForm } from "./form";
 import { BrandingForm } from "./branding-form";
 import { PaymentMethodsPanel } from "./payment-methods-panel";
 import { AssistantForm } from "./assistant-form";
-import { assistantSettings, assistantStatus } from "@/server/assistant/service";
+import { HotspotSettingsForm } from "./hotspot-form";
+import { SettingsNav, type SettingsNavGroup } from "./nav";
 
 export const metadata: Metadata = { title: "Settings" };
 
-const TABS = [
-  ["general", "General"],
-  ["branding", "Branding & theme"],
-  ["payments", "Payment methods"],
-  ["assistant", "AI assistant"],
-] as const;
-type Tab = (typeof TABS)[number][0];
+const NAV: SettingsNavGroup[] = [
+  {
+    group: "General",
+    items: [
+      { tab: "general", label: "Organization", hint: "Name, timezone, invoice numbers, tax" },
+      { tab: "branding", label: "Branding", hint: "Logo, colours, light or dark" },
+    ],
+  },
+  {
+    group: "Network",
+    items: [
+      { tab: "hotspot", label: "Hotspot", hint: "Captive portal, support contacts" },
+      { href: "/routers", label: "Routers", hint: "MikroTik routers and setup command" },
+      { href: "/packages", label: "Plans", hint: "Prices, speeds, schedules" },
+    ],
+  },
+  {
+    group: "Billing & messaging",
+    items: [
+      { tab: "payments", label: "Payment methods", hint: "Paybill, till and bank shown to customers" },
+      { href: "/integrations", label: "M-Pesa gateway", hint: "Daraja credentials and callbacks" },
+      { href: "/notifications", label: "Message templates", hint: "Receipts, reminders, invites" },
+    ],
+  },
+  {
+    group: "Integrations",
+    items: [
+      { tab: "assistant", label: "AI assistant", hint: "Customer portal chat" },
+      { href: "/integrations", label: "Integration status", hint: "Providers and test modes" },
+    ],
+  },
+  {
+    group: "Administration",
+    items: [
+      { href: "/staff", label: "Staff & permissions", hint: "Invite staff, roles" },
+      { href: "/branches", label: "Branches", hint: "Offices and their staff" },
+      { href: "/audit-logs", label: "Audit log", hint: "Who changed what" },
+    ],
+  },
+];
+
+const TABS = ["general", "branding", "hotspot", "payments", "assistant"] as const;
+type Tab = (typeof TABS)[number];
+const TITLES: Record<Tab, string> = { general: "Organization", branding: "Branding", hotspot: "Captive portal", payments: "Payment methods", assistant: "AI assistant" };
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const { ctx, allowed } = await getStaffContextWith("settings.write");
   if (!allowed) return <Forbidden what="organization settings" />;
   const { tab: rawTab } = await searchParams;
-  const tab: Tab = TABS.some(([t]) => t === rawTab) ? (rawTab as Tab) : "general";
+  const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "general";
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <PageHeader title="Settings" description="Organization details, billing defaults, look and feel, how customers pay, and the portal assistant. Changes are recorded in the audit log." />
-      <FilterTabs label="Settings sections" active={tab} items={TABS.map(([t, label]) => ({ value: t, label, href: t === "general" ? "/settings" : `/settings?tab=${t}` }))} />
-      {tab === "general" ? <GeneralTab ctx={ctx} /> : tab === "branding" ? <BrandingTab ctx={ctx} /> : tab === "payments" ? <PaymentsTab ctx={ctx} /> : <AssistantTab ctx={ctx} />}
-      <Card>
-        <CardContent className="flex flex-wrap gap-x-5 gap-y-2 py-4 text-sm">
-          <span className="text-muted-foreground">More settings:</span>
-          <Link href="/integrations" className="text-accent hover:underline">
-            Integrations (M-Pesa, SMS, email)
-          </Link>
-          <Link href="/notifications" className="text-accent hover:underline">
-            Message templates
-          </Link>
-          <Link href="/staff" className="text-accent hover:underline">
-            Staff & permissions
-          </Link>
-          <Link href="/branches" className="text-accent hover:underline">
-            Branches
-          </Link>
-          <Link href="/routers" className="text-accent hover:underline">
-            Routers
-          </Link>
-        </CardContent>
-      </Card>
+    <div className="space-y-6">
+      <PageHeader eyebrow={`Settings · ${TITLES[tab]}`} title="Settings" description="Changes are recorded in the audit log." />
+      <div className="grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        <aside className="lg:sticky lg:top-20 lg:self-start">
+          <SettingsNav groups={NAV} active={tab} />
+        </aside>
+        <div className="min-w-0 space-y-6">
+          {tab === "general" ? <GeneralTab ctx={ctx} /> : tab === "branding" ? <BrandingTab ctx={ctx} /> : tab === "hotspot" ? <HotspotTab ctx={ctx} /> : tab === "payments" ? <PaymentsTab ctx={ctx} /> : <AssistantTab ctx={ctx} />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -98,6 +122,26 @@ async function BrandingTab({ ctx }: { ctx: Ctx }) {
     <BrandingForm
       organizationName={ctx.organization.name}
       initial={{ themePreset: b.themePreset, customAccent: b.customAccent, defaultMode: b.defaultMode, logoUrl: b.logoUrl, portalWelcome: b.portalWelcome, supportHours: b.supportHours }}
+    />
+  );
+}
+
+async function HotspotTab({ ctx }: { ctx: Ctx }) {
+  const [settings, branding, portal, general] = await Promise.all([getHotspotSettings(ctx), brandingFor(ctx.organizationId), portalPlans(ctx.organization.slug, null), getSettings(ctx)]);
+  return (
+    <HotspotSettingsForm
+      initial={settings}
+      data={{
+        slug: ctx.organization.slug,
+        orgName: ctx.organization.name,
+        logoUrl: branding.logoUrl,
+        currency: ctx.organization.currency,
+        plans: portal.plans,
+        fallbackHeadline: branding.portalWelcome,
+        fallbackPhone: general.billing.phone ?? null,
+        hours: branding.supportHours,
+        mpesa: portal.payments.mpesa,
+      }}
     />
   );
 }

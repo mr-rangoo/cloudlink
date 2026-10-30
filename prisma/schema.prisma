@@ -1731,6 +1731,23 @@ model OrganizationBranding {
   updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
 }
 
+/// Captive portal look and content (one row per organization; defaults apply when absent).
+model HotspotSettings {
+  organizationId String   @id @db.Uuid
+  /// Portal template id (see src/lib/portal-templates.ts).
+  template       String   @default("harbor")
+  /// Line under the organization name; empty = the portal welcome text from Branding, or a default.
+  headline       String?
+  /// "How to buy" steps shown by templates that have room for them, one per line.
+  instructions   String?
+  /// E.164 digits; empty = the billing phone from General settings.
+  supportPhone   String?
+  whatsappPhone  String?
+  showVouchers   Boolean  @default(true)
+  showReconnect  Boolean  @default(true)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+}
+
 // How customers can pay, shown in the portal, on invoices and on the hotspot page.
 model CustomerPaymentMethod {
   id             String   @id @default(uuid(7)) @db.Uuid

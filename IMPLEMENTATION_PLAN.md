@@ -165,6 +165,33 @@ Fixes made during the phase: required-field asterisks are hidden from assistive 
 - [x] Router login page (`/api/v1/hotspot-files/:routerId/login.html`), setup script installs it, adds the HTTPS walled garden and PAP login; router "Hotspot login address" limits where the portal posts logins (`safeRouterLoginUrl`).
 - [x] Captive portal UI: buy / voucher / already-paid tabs, plan groups, M-Pesa wait with test-mode simulation, automatic router login; invoice lines for sub-day plans show times.
 - Docs: `docs/HOTSPOT_SALES.md`.
+- [ ] Real-world check — **blocked**: needs Daraja sandbox credentials and a MikroTik hotspot over VPN (procedure: `docs/HOTSPOT_SALES.md`, `docs/PAYMENTS.md`, `docs/NETWORK.md`).
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261030120000_hotspot_sales` applied; `migrate diff` against the dev database is empty |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 16 files, 136 tests passed (route guards cover the seven new public routes; setup script installs the login page) |
+| `npm run test:integration` | 23 files, 188 tests passed (adds `tests/integration/hotspot-sales.test.ts`, 13 tests: portal plans and restrictions, login-URL safety, router login page, verified purchase end to end on the fake RouterOS server, stacking / plan switch / older invoice untouched, expiry logout + cookie removal, reconnect and move between hotspots, price change kept as credit, idempotency and refusals, free trial cool-down by phone and MAC, TV MAC binding, schedule enforcement, same-origin) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 24 passed (adds `hotspot.spec.ts`: guest buys with simulated M-Pesa, plan active in test mode, reconnect with the M-Pesa code on another device, wrong code refused) |
+
+Defects found and fixed during the phase: a move between hotspots would have cancelled the clean-up on the old router (staleness guard now lets disables run on the router a customer left); a purchase could have paid an older unpaid invoice through automatic credit allocation (purchase invoices are now paid with exactly the purchase payment). Visual check: portal plans, pay, wait, active and reconnect screens at 390 px.
+
+### Phase 13 — Captive portal templates and hotspot settings ✅
+- [x] Ten original templates (`src/lib/portal-templates.ts`): page/card styling, header style (row, centred, hero, colour band), plan layout (list, tiles, rows, large prices), voucher-first, how-to-buy steps, serif.
+- [x] `HotspotSettings` (migration `20261030150000_hotspot_settings`, CHECK constraints) with template, headline, steps, support phone, WhatsApp, voucher / already-paid tabs; `GET/PUT /api/v1/settings/hotspot`; used by the portal (`PortalFrame`).
+- [x] Settings reorganised: grouped side menu with “Find a setting…” (General, Network, Billing & messaging, Integrations, Administration), new Hotspot section with a phone-size gallery of every template using the organization's live plans (inert previews; no iframes because of `frame-ancestors 'none'`) and a full-size preview.
+- Fix found in the visual check: dark templates inherited the page's light text colour; the frame now sets its own text colour.
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261030150000_hotspot_settings` applied; no drift |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 16 files, 136 tests passed |
+| `npm run test:integration` | see phase 13 commit (adds settings → portal test: template, steps, contacts, tabs, validation, permission) |
+| `npm run build` | exit 0 |
+| `npm run test:e2e` | 25 passed (adds: owner picks the Guided template with a custom step; the portal shows it) |
 
 ## Work log
 

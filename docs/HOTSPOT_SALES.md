@@ -42,6 +42,12 @@ The one-time setup command (router page → **Setup command**) now also, on hots
 
 Set the router's **Hotspot login address** (e.g. `wifi.login`, the hotspot server's DNS name) on the router form: the portal posts login details only to that host or to a private IPv4 address, never to an address taken from a crafted link.
 
+## Portal templates and settings
+Settings → Network → **Hotspot** (`/settings?tab=hotspot`, `settings.write`):
+- **Template**: ten original designs (Harbor — default, Tiles, Guided, Headline, Night, Prism, Ember, Paper, Ticket, Plain), defined in `src/lib/portal-templates.ts`. Each sets the page and card styling, header style, plan layout (list, tiles, rows, large prices), whether the voucher tab opens first, and whether the how-to-buy steps are shown. Colours follow the organization's Branding theme unless a template sets its own page colour. The gallery renders each template at phone size with the organization's live plans (inert previews; the security policy forbids iframes).
+- **Headline** (falls back to the Branding portal welcome, then a default), **how-to-buy steps** (one per line; templates with steps only), **support phone** (falls back to the billing phone) and **WhatsApp number**, and whether the **Voucher** and **Already paid?** tabs are shown.
+- Stored in `HotspotSettings` (one row per organization; defaults apply without one). `GET/PUT /api/v1/settings/hotspot`.
+
 ## Test mode
 With `PAYMENT_ADAPTER=mock` the portal shows **Simulate payment / Simulate cancel**. The simulation goes through the real callback validation and verification, is labelled everywhere, and is refused in production. With `NETWORK_ADAPTER=mock` and no hotspot router registered, access is marked "simulated" and no router is contacted.
 

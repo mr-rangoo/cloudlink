@@ -19,6 +19,7 @@ import { assertPlanAllowedOnRouter, assertPlanOpen, planOpenAt } from "@/server/
 import { paymentAdapterMode } from "@/server/services/mpesa-config";
 import { playSimulatedResponse, simulateInput, submitPaymentAttempt } from "@/server/services/mobile-money";
 import { describeSchedule } from "@/lib/plans";
+import { hotspotSettingsFor } from "@/server/services/hotspot-settings";
 import type { Package, Payment, PaymentAttempt, Subscription } from "@/generated/prisma/client";
 
 /**
@@ -125,15 +126,27 @@ export async function portalPlans(slug: string, routerId?: string | null) {
   const now = new Date();
   const mode = paymentAdapterMode();
   const visible = plans.filter((p) => !p.routers.length || (router && p.routers.some((r) => r.routerId === router.id)));
-  const [billing, branding] = await Promise.all([
+  const [billing, branding, settings] = await Promise.all([
     db.billingSettings.findUnique({ where: { organizationId: org.id }, select: { phone: true } }),
     db.organizationBranding.findUnique({ where: { organizationId: org.id }, select: { supportHours: true, portalWelcome: true } }),
+    hotspotSettingsFor(org.id),
   ]);
+  const steps = (settings.instructions ?? "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 8);
   return {
     organization: { name: org.name, currency: org.currency },
     routerId: router?.id ?? null,
     routerLoginHost: router?.hotspotDnsName ?? null,
-    support: { phone: billing?.phone ?? null, hours: branding?.supportHours ?? null, welcome: branding?.portalWelcome ?? null },
+    support: {
+      phone: settings.supportPhone ? formatLocalPhone(settings.supportPhone) : (billing?.phone ?? null),
+      whatsapp: settings.whatsappPhone,
+      hours: branding?.supportHours ?? null,
+      welcome: settings.headline ?? branding?.portalWelcome ?? null,
+    },
+    display: { template: settings.template, steps: steps.length ? steps : null, showVouchers: settings.showVouchers, showReconnect: settings.showReconnect },
     payments: { mpesa: mode !== "disabled", testMode: mode === "mock" },
     plans: visible.map((p) => {
       const gross = grossPrice(p);
@@ -157,6 +170,12 @@ export async function portalPlans(slug: string, routerId?: string | null) {
       };
     }),
   };
+}
+
+/** 254712345678 → 0712 345 678 (other countries keep the + form). */
+function formatLocalPhone(digits: string): string {
+  if (/^254\d{9}$/.test(digits)) return `0${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9)}`;
+  return `+${digits}`;
 }
 
 // ───────── Subscriber and subscription for a purchase ─────────

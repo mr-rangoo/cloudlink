@@ -2,6 +2,27 @@ import { expect, test } from "@playwright/test";
 import { createPlan, login, uniq } from "./helpers";
 import { E2E_USERS } from "./users";
 
+test("owner picks a captive portal template with how-to-buy steps and the portal uses it", async ({ page, browser }) => {
+  const step = `Ask for help at the counter ${uniq()}`;
+  await login(page, E2E_USERS.owner);
+  await page.goto("/settings?tab=hotspot");
+  await page.getByRole("radio", { name: /^Guided:/ }).click();
+  await page.getByRole("textbox", { name: /How to buy/ }).fill(`Choose a plan\n${step}`);
+  await page.getByRole("button", { name: "Save captive portal" }).click();
+  await expect(page.getByText("Captive portal saved")).toBeVisible();
+
+  const guest = await (await browser.newContext()).newPage();
+  await guest.goto("/hotspot/alpha-e2e");
+  const howTo = guest.getByRole("region", { name: "How to buy" });
+  await expect(howTo).toBeVisible();
+  await expect(howTo.getByText(step)).toBeVisible();
+
+  // Back to the default template so other specs see the usual layout.
+  await page.getByRole("radio", { name: /^Harbor:/ }).click();
+  await page.getByRole("button", { name: "Save captive portal" }).click();
+  await expect(page.getByText("Captive portal saved").first()).toBeVisible();
+});
+
 /**
  * PAYMENT_ADAPTER=mock and NETWORK_ADAPTER=mock: no prompt is sent, no money moves and no router changes. The guest plays
  * the M-Pesa response with the test-mode button, which goes through the real callback validation and verification.

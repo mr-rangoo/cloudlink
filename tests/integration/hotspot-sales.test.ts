@@ -20,8 +20,9 @@ import {
 import { runOperation } from "@/server/jobs/operations";
 import { operationHandlers } from "@/server/jobs/handlers";
 import { POST as purchaseRoute } from "@/app/api/v1/hotspot/[org]/purchase/route";
+import { saveHotspotSettings } from "@/server/services/hotspot-settings";
 import { FakeRouterOs } from "../support/fake-routeros";
-import { contextFor, createOrg, request } from "./fixtures";
+import { contextFor, createOrg, createStaff, request } from "./fixtures";
 
 const fake = new FakeRouterOs();
 let seq = 0;
@@ -108,6 +109,19 @@ describe("captive portal plans", () => {
     expect(safeRouterLoginUrl("http://10.5.50.1/other", null)).toBeNull();
     expect(safeRouterLoginUrl("javascript:alert(1)", null)).toBeNull();
     expect(safeRouterLoginUrl("http://user:pw@10.5.50.1/login", null)).toBeNull();
+  });
+
+  it("uses the organization's portal settings (template, headline, steps, contacts, tabs)", async () => {
+    const { ctx, slug } = await setup();
+    expect((await portalPlans(slug)).display).toMatchObject({ template: "harbor", steps: null, showVouchers: true, showReconnect: true });
+    await expect(saveHotspotSettings(ctx, { template: "no-such-template" })).rejects.toThrow();
+    await expect(saveHotspotSettings(ctx, { template: "guided", supportPhone: "12" })).rejects.toThrow();
+    await saveHotspotSettings(ctx, { template: "guided", headline: "Karibu!", instructions: "Pick a plan\n\n  Pay with M-Pesa  \nDone", supportPhone: "0712 345 678", whatsappPhone: "+254 712 000 111", showVouchers: false, showReconnect: true });
+    const p = await portalPlans(slug);
+    expect(p.display).toEqual({ template: "guided", steps: ["Pick a plan", "Pay with M-Pesa", "Done"], showVouchers: false, showReconnect: true });
+    expect(p.support).toMatchObject({ phone: "0712 345 678", whatsapp: "254712000111", welcome: "Karibu!" });
+    const { user } = await createStaff(ctx.organizationId, "cashier");
+    await expect(saveHotspotSettings(await contextFor(user.id, ctx.organizationId), { template: "plain" })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("serves a router login page that forwards MikroTik variables to the portal", async () => {
