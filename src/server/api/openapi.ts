@@ -1,6 +1,8 @@
 import "server-only";
 import { z, type ZodType } from "zod";
 import { loginSchema } from "@/server/auth/service";
+import { signupInput, signupTokenInput } from "@/server/services/signup";
+import { serviceRequestInput, setupLinkInput } from "@/server/portal/signup";
 import { catalogueQuery, packageInput, packageListQuery, packageUpdate } from "@/server/services/packages";
 import { noteInput, subscriberInput, subscriberListQuery, subscriberUpdate } from "@/server/services/subscribers";
 import { compensateInput, subscriptionActionInput, subscriptionCreateInput, subscriptionListQuery } from "@/server/services/subscriptions";
@@ -71,6 +73,8 @@ export const operations: Operation[] = [
   { method: "get", path: "/health/live", summary: "Liveness probe", tag: "Health", auth: "none" },
   { method: "get", path: "/health/ready", summary: "Readiness probe (database required, Redis reported)", tag: "Health", auth: "none", responses: { "503": "Not ready" } },
   { method: "post", path: "/auth/login", summary: "Staff sign-in (sets HTTP-only session cookie)", tag: "Auth", auth: "none", body: loginSchema, responses: { "401": "Invalid credentials", "429": "Rate limited" } },
+  { method: "post", path: "/auth/signup", summary: "Start a new ISP workspace: emails a confirmation link (same reply whether or not the email has an account)", tag: "Auth", auth: "none", body: signupInput, responses: { "202": "Confirmation email sent", "403": "Sign-up closed", "429": "Rate limited", "503": "No mailer configured" } },
+  { method: "post", path: "/auth/signup/complete", summary: "Confirm the emailed link: creates the workspace and owner, sets the session cookie", tag: "Auth", auth: "none", body: signupTokenInput, responses: { "201": "Workspace created", "409": "Link used/expired or email already registered" } },
   { method: "post", path: "/auth/logout", summary: "Revoke the current session", tag: "Auth", auth: "session" },
   { method: "get", path: "/auth/session", summary: "Current user, organization, roles, permissions and branches", tag: "Auth", auth: "session" },
   {
@@ -185,6 +189,8 @@ export const operations: Operation[] = [
   { method: "put", path: "/subscribers/:id/preferences", summary: "Update notification preferences", tag: "Subscribers", auth: "session", permission: "subscribers.write", body: preferencesInput },
   { method: "post", path: "/customer/auth/login", summary: "Customer sign-in (phone or account number)", tag: "Customer portal", auth: "none", body: portalLoginInput, responses: { "401": "Invalid credentials", "429": "Rate limited" } },
   { method: "post", path: "/customer/auth/activate", summary: "Set password from a single-use invite token", tag: "Customer portal", auth: "none", body: portalActivateInput },
+  { method: "post", path: "/customer/auth/setup-link", summary: "Send a portal setup/password link to the contacts on file (generic reply)", tag: "Customer portal", auth: "none", body: setupLinkInput, responses: { "202": "Requested", "429": "Rate limited" } },
+  { method: "post", path: "/customer/signup", summary: "Prospective customer requests a connection (becomes a lead)", tag: "Customer portal", auth: "none", body: serviceRequestInput, responses: { "202": "Received", "429": "Rate limited" } },
   { method: "post", path: "/customer/auth/logout", summary: "Customer sign-out", tag: "Customer portal", auth: "session" },
   { method: "get", path: "/customer/me", summary: "Own profile, service, balance, open invoices, recent payments", tag: "Customer portal", auth: "session" },
   { method: "get", path: "/customer/connection", summary: "Own internet connection status from the latest session sync (online/offline, uptime, current-session data, freshness)", tag: "Customer portal", auth: "session" },

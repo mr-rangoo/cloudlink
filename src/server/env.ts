@@ -82,6 +82,8 @@ export const envSchema = z
     STORAGE_ADAPTER: z.enum(["local", "s3"]).default("local"),
     STORAGE_LOCAL_DIR: z.string().default("storage"),
     ENABLE_DEMO_SEED: bool,
+    /** Self-service sign-up for new ISP workspaces (email confirmation required): open | closed. */
+    SIGNUP_MODE: z.enum(["open", "closed"]).default("open"),
   })
   .superRefine((env, ctx) => {
     const fail = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });

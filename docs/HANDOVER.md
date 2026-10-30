@@ -40,6 +40,7 @@ npm run db:seed         # demo data (development only)
 npm run dev             # http://localhost:3100
 npm run worker          # in a second terminal
 ```
+Sign-in details for the demo accounts, plus how ISP and customer sign-up work: `docs/SIGN_IN.md`.
 
 ## Quality gates (last run: see IMPLEMENTATION_PLAN.md, phase 9)
 ```

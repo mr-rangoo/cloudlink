@@ -5,6 +5,8 @@ import { resolveSession, SESSION_COOKIE } from "@/server/auth/session";
 import { CloudlinkMark } from "@/components/shell/logo";
 import { LoginForm } from "./login-form";
 import { safeRedirectPath } from "@/lib/safe-redirect";
+import { signupOpen } from "@/server/services/signup";
+import Link from "next/link";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -55,6 +57,20 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             </p>
           ) : null}
           <LoginForm next={next} />
+          {signupOpen() ? (
+            <p className="text-center text-sm text-muted-foreground">
+              New to Cloudlink?{" "}
+              <Link href="/signup" className="font-medium text-accent hover:underline">
+                Create an account
+              </Link>
+            </p>
+          ) : null}
+          <p className="text-center text-xs text-muted-foreground">
+            Internet customer?{" "}
+            <Link href="/portal" className="text-accent hover:underline">
+              Sign in to your provider&apos;s portal
+            </Link>
+          </p>
         </div>
       </section>
     </div>

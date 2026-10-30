@@ -36,8 +36,16 @@ export default async function PortalLogin({ params, searchParams }: { params: Pr
           </p>
         ) : null}
         <PortalLoginForm organization={org} />
+        <div className="space-y-1 text-center text-sm text-muted-foreground">
+          <p>
+            No account yet, or forgot your password?{" "}
+            <Link href={`/portal/${org}/signup`} className="font-medium text-accent hover:underline">
+              Sign up
+            </Link>
+          </p>
+        </div>
         <p className="text-center text-xs text-muted-foreground">
-          First time? Use the setup link sent by {organization.name}. Not your provider?{" "}
+          Not your provider?{" "}
           <Link href="/portal?provider=" className="text-accent hover:underline">
             Change provider
           </Link>

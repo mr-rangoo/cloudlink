@@ -37,6 +37,8 @@ SEED_PASSWORD='choose-a-dev-password' npm run db:seed   # fictional demo organiz
 ```
 The seed refuses to run when `APP_ENV=production` or `ENABLE_DEMO_SEED` is not `true`.
 
+To sign in, see `docs/SIGN_IN.md`: demo accounts, the password, and `npm run db:demo-password` to reset it.
+
 ## Run
 ```bash
 npm run dev                   # web on http://localhost:3100

@@ -5,6 +5,7 @@ import { ALL_PERMISSIONS, DEFAULT_ROLES, PERMISSIONS } from "@/server/auth/permi
 import { hashPassword, PASSWORD_MIN_LENGTH } from "@/server/security/crypto";
 import { normalizeEmail } from "@/server/auth/service";
 import { AppError } from "@/server/errors";
+import type { Prisma } from "@/generated/prisma/client";
 
 /** Path segments used by the customer portal, which therefore cannot be organization slugs. */
 export const RESERVED_SLUGS = new Set(["home", "invoices", "payments", "tickets", "profile", "logout", "login", "activate", "api", "admin"]);
@@ -58,28 +59,40 @@ export async function ensureDefaultRoles(tx: Tx, organizationId: string) {
  */
 export async function createOrganizationWithOwner(input: z.input<typeof createOrganizationSchema>) {
   const data = createOrganizationSchema.parse(input);
-  const email = normalizeEmail(data.owner.email);
   const passwordHash = await hashPassword(data.owner.password);
   await syncPermissionCatalogue();
+  return db.$transaction((tx) => bootstrapOrganizationTx(tx, data, { name: data.owner.name, email: data.owner.email, passwordHash }));
+}
 
-  return db.$transaction(async (tx) => {
-    if (await tx.organization.findUnique({ where: { slug: data.slug } })) {
-      throw new AppError("CONFLICT", "An organization with this slug already exists.");
-    }
-    const org = await tx.organization.create({
-      data: { name: data.name, slug: data.slug, currency: data.currency, timezone: data.timezone },
-    });
-    const branch = await tx.branch.create({ data: { organizationId: org.id, name: data.branch.name, code: data.branch.code } });
-    const roles = await ensureDefaultRoles(tx, org.id);
-
-    let user = await tx.user.findUnique({ where: { email } });
-    user ??= await tx.user.create({ data: { name: data.owner.name, email, passwordHash, kind: "STAFF" } });
-    const membership = await tx.membership.create({ data: { organizationId: org.id, userId: user.id, allBranches: true } });
-    await tx.membershipRole.create({ data: { membershipId: membership.id, roleId: roles.owner! } });
-
-    await tx.auditLog.create({
-      data: { organizationId: org.id, actorType: "system", action: "organization.create", entityType: "organization", entityId: org.id },
-    });
-    return { organization: org, branch, owner: user, roles };
+/**
+ * The organization, first branch, default roles and owner membership, inside the caller's transaction.
+ * With `newUserOnly` (self-service sign-up) an existing account with the email is refused, never reused.
+ * Call `syncPermissionCatalogue()` first.
+ */
+export async function bootstrapOrganizationTx(
+  tx: Tx,
+  data: { name: string; slug: string; currency: string; timezone: string; branch: { name: string; code: string } },
+  owner: { name: string; email: string; passwordHash: string; newUserOnly?: boolean },
+  audit: { action: string; metadata?: Record<string, unknown> } = { action: "organization.create" },
+) {
+  const email = normalizeEmail(owner.email);
+  if (await tx.organization.findUnique({ where: { slug: data.slug } })) {
+    throw new AppError("CONFLICT", "An organization with this slug already exists.");
+  }
+  let user = await tx.user.findUnique({ where: { email } });
+  if (user && owner.newUserOnly) throw new AppError("CONFLICT", "An account with this email already exists. Sign in instead.");
+  const org = await tx.organization.create({
+    data: { name: data.name, slug: data.slug, currency: data.currency, timezone: data.timezone },
   });
+  const branch = await tx.branch.create({ data: { organizationId: org.id, name: data.branch.name, code: data.branch.code } });
+  const roles = await ensureDefaultRoles(tx, org.id);
+
+  user ??= await tx.user.create({ data: { name: owner.name, email, passwordHash: owner.passwordHash, kind: "STAFF" } });
+  const membership = await tx.membership.create({ data: { organizationId: org.id, userId: user.id, allBranches: true } });
+  await tx.membershipRole.create({ data: { membershipId: membership.id, roleId: roles.owner! } });
+
+  await tx.auditLog.create({
+    data: { organizationId: org.id, actorType: "system", action: audit.action, entityType: "organization", entityId: org.id, ...(audit.metadata ? { metadata: audit.metadata as Prisma.InputJsonValue } : {}) },
+  });
+  return { organization: org, branch, owner: user, roles };
 }

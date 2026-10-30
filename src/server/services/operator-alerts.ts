@@ -15,12 +15,13 @@ import type { Prisma } from "@/generated/prisma/client";
  * offline, a network change fails, a payment arrives that matches no subscriber — plus an optional daily digest.
  * Messages are ordinary notifications (outbox, retries, simulated in mock mode) without a subscriber.
  */
-export const OPERATOR_EVENTS = ["router_offline", "operation_failed", "payment_unmatched", "daily_digest"] as const;
+export const OPERATOR_EVENTS = ["router_offline", "operation_failed", "payment_unmatched", "service_request", "daily_digest"] as const;
 export type OperatorEvent = (typeof OPERATOR_EVENTS)[number];
 export const OPERATOR_EVENT_LABEL: Record<OperatorEvent, string> = {
   router_offline: "A router stops answering health checks",
   operation_failed: "A network change fails after its retries",
   payment_unmatched: "A payment arrives that matches no subscriber",
+  service_request: "Someone asks for a connection on the customer portal",
   daily_digest: "Daily summary",
 };
 

@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Activity, AlertTriangle, Bell, CalendarClock, Database, FileText, LifeBuoy, ListChecks, Router as RouterIcon, Server, TrendingUp, UserPlus, Wallet } from "lucide-react";
+import { CheckCircle2, Circle, Activity, AlertTriangle, Bell, CalendarClock, Database, FileText, LifeBuoy, ListChecks, Router as RouterIcon, Server, TrendingUp, UserPlus, Wallet } from "lucide-react";
 import { networkAdapterName } from "@/server/integrations/network";
 import { getStaffContextWith } from "@/server/auth/page";
 import { checkDatabase, workerStatus } from "@/server/observability/health";
 import { pingRedis } from "@/server/jobs/redis";
 import { toWallTime } from "@/server/domain/time";
-import { dashboardActivity, dashboardPulse, dashboardSummary } from "@/server/services/dashboard";
+import { dashboardActivity, dashboardPulse, dashboardSummary, gettingStarted } from "@/server/services/dashboard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, PageHeader, type Tone } from "@/components/ui/feedback";
 import { StatStrip, type StripStat } from "@/components/stat-strip";
@@ -49,7 +49,7 @@ export default async function DashboardPage() {
   const { ctx, allowed } = await getStaffContextWith("dashboard.view");
   if (!allowed) return <Forbidden what="the dashboard" />;
 
-  const [summary, pulse, activity, database, redis, workers] = await Promise.all([dashboardSummary(ctx), dashboardPulse(ctx), dashboardActivity(ctx, 10), checkDatabase(), pingRedis(), workerStatus()]);
+  const [summary, pulse, activity, database, redis, workers, steps] = await Promise.all([dashboardSummary(ctx), dashboardPulse(ctx), dashboardActivity(ctx, 10), checkDatabase(), pingRedis(), workerStatus(), gettingStarted(ctx)]);
   const healthyWorkers = workers.filter((w) => w.healthy).length;
   const tz = ctx.organization.timezone;
   const currency = ctx.organization.currency;
@@ -125,6 +125,30 @@ export default async function DashboardPage() {
           </span>
         }
       />
+
+      {steps ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Get started with Cloudlink</CardTitle>
+            <CardDescription>
+              {steps.filter((s) => s.done).length} of {steps.length} done. This list disappears once everything is set up.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ol className="grid gap-2 sm:grid-cols-2">
+              {steps.map((s) => (
+                <li key={s.key}>
+                  <Link href={s.href} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-surface-muted">
+                    {s.done ? <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden /> : <Circle className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+                    <span className={s.done ? "text-muted-foreground line-through" : "font-medium"}>{s.label}</span>
+                    <span className="sr-only">{s.done ? "(done)" : "(to do)"}</span>
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {stats.length ? <StatStrip stats={stats} /> : null}
 

@@ -54,7 +54,7 @@ export function proxy(req: NextRequest) {
     return res;
   };
 
-  const isPublic = pathname.startsWith("/api/") || pathname === "/login" || pathname.startsWith("/invite/") || pathname.startsWith("/portal") || pathname.startsWith("/hotspot");
+  const isPublic = pathname.startsWith("/api/") || pathname === "/login" || pathname === "/signup" || pathname.startsWith("/signup/") || pathname.startsWith("/invite/") || pathname.startsWith("/portal") || pathname.startsWith("/hotspot");
   const hasSession = req.cookies.has("cloudlink_session") || req.cookies.has("__Host-cloudlink_session");
 
   if (!isPublic && !hasSession) {

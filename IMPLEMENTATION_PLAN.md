@@ -295,6 +295,26 @@ Visual check: Integrations page with the messaging card (mock mode notice, saved
 
 Browser check: `tests/e2e/messaging.spec.ts` writes a service notice, previews its audience, sends it, and saves operator alerts on the production build (part of the 30 passing e2e tests).
 
+### Phase 17c — Sign-up pages and sign-in guide ✅ (user request 2026-10-30: "give credentials on how to login… signup page if someone doesn't have an account")
+- [x] ISP self-service sign-up: `/signup` (linked from `/login`) → pending `SignupRequest` (hashed password, hashed single-use 24 h link) → email → `/signup/verify` confirm button → organization, main branch, default roles, owner, billing contact, session in one transaction. Existing emails get a "you already have an account" email instead (same reply; no account discovery or takeover). Rate limits: 5/h per IP, 3/h per email. `SIGNUP_MODE=open|closed`. Test mode (mock mailer, never production) shows the message and link on screen. Migration `20261101090000_self_signup`.
+- [x] New workspaces see a "Get started" checklist on the overview (plan, payment methods, router, subscribers, branding, team) that disappears when done.
+- [x] Customer portal sign-up: `/portal/<org>/signup` (linked from portal sign-in): "Request a connection" → lead (source Website, honeypot, rate limits, no duplicates for an open lead, optional operator alert `service_request`); "Send me a link" → portal setup/password link to the contacts on file, generic reply.
+- [x] Sign-in guide `docs/SIGN_IN.md` and `npm run db:demo-password` (demo accounts only; refuses production). Ran it on the dev database: 7 demo staff and 1 demo customer set to `Cloudlink-Demo-2026`, each verified against its stored hash.
+- [ ] Not done: self-service staff password reset (still via an administrator's reset link); email verification for staff invited by an administrator is unchanged.
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261101090000_self_signup` applied |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 18 files, 147 passed |
+| `npm run test:integration` | 30 files, 228 passed (new `signup.test.ts`: 7) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 32 passed (new `signup.spec.ts`: 2; the first run failed on two test-only locator mistakes, fixed) |
+
+Visual check (production build on :3102, e2e database): sign-in with the new links, sign-up form, "check your email" with the test-mode message, confirmation page, new workspace with the checklist, portal sign-in and sign-up at 390 px.
+
+**Exact next task**: Phase 18 — payment gateway catalogue (one active gateway per organization) and additional adapters.
+
 ## Work log
 
 ### 2026-10-25 — Phase 1 (Foundation)

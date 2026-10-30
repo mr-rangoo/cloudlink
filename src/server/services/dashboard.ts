@@ -295,3 +295,29 @@ export async function dashboardActivity(ctx: ActorContext, take = 15) {
   });
   return rows;
 }
+
+/**
+ * First-steps checklist for a new workspace (administrators only). Returns null once every step is done, so
+ * established organizations never see it.
+ */
+export async function gettingStarted(ctx: StaffContext) {
+  if (!ctx.permissions.has("settings.write")) return null;
+  const org = ctx.organizationId;
+  const [plans, routers, subscribers, methods, members, branding] = await Promise.all([
+    db.package.count({ where: { organizationId: org } }),
+    db.router.count({ where: { organizationId: org, archivedAt: null } }),
+    db.subscriber.count({ where: { organizationId: org } }),
+    db.customerPaymentMethod.count({ where: { organizationId: org } }),
+    db.membership.count({ where: { organizationId: org } }),
+    db.organizationBranding.count({ where: { organizationId: org } }),
+  ]);
+  const steps = [
+    { key: "plan", label: "Create your first internet plan", href: "/packages", done: plans > 0 },
+    { key: "payments", label: "Add how customers pay you (M-Pesa paybill, till or bank)", href: "/settings?tab=payments", done: methods > 0 },
+    { key: "router", label: "Connect a MikroTik router", href: "/routers", done: routers > 0 },
+    { key: "subscriber", label: "Add or import your subscribers", href: "/subscribers", done: subscribers > 0 },
+    { key: "branding", label: "Add your logo and colours", href: "/settings?tab=branding", done: branding > 0 },
+    { key: "team", label: "Invite your team", href: "/staff", done: members > 1 },
+  ];
+  return steps.every((s) => s.done) ? null : steps;
+}
