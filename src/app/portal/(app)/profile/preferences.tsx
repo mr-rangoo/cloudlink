@@ -4,9 +4,14 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { useMutation } from "@/components/use-mutation";
 
-type Pref = { category: "billing" | "service" | "support"; channel: "SMS" | "EMAIL"; enabled: boolean };
+type Pref = { category: "billing" | "service" | "support" | "marketing"; channel: "SMS" | "EMAIL"; enabled: boolean };
 
-const LABEL: Record<Pref["category"], string> = { billing: "Invoices and payment confirmations", service: "Service reminders (e.g. expiry)", support: "Support ticket updates" };
+const LABEL: Record<Pref["category"], string> = {
+  billing: "Invoices and payment confirmations",
+  service: "Service reminders and notices (e.g. expiry, maintenance)",
+  support: "Support ticket updates",
+  marketing: "Offers and promotions (only if you tick this)",
+};
 
 export function PreferencesForm({ initial, hasEmail }: { initial: Pref[]; hasEmail: boolean }) {
   const [prefs, setPrefs] = React.useState(initial);
@@ -33,7 +38,7 @@ export function PreferencesForm({ initial, hasEmail }: { initial: Pref[]; hasEma
           </tr>
         </thead>
         <tbody>
-          {(["billing", "service", "support"] as const).map((cat) => (
+          {(["billing", "service", "support", "marketing"] as const).map((cat) => (
             <tr key={cat} className="border-t border-border">
               <td className="py-2">{LABEL[cat]}</td>
               {channels.map((ch) => {

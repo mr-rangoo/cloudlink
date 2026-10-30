@@ -28,6 +28,7 @@ import { dispatchOperation, enqueueOperation, PermanentError, RetryableError } f
 import { logger } from "@/server/observability/logger";
 import { allocateTx, autoAllocateForSubscriberTx, type AllocationResult } from "@/server/services/settlement";
 import { createConfirmedPaymentTx, findLivePaymentByReference, notifyPaymentReceivedTx } from "@/server/services/payments";
+import { notifyOperators } from "@/server/services/operator-alerts";
 import { dispatchNetworkOperations } from "@/server/services/network";
 import { c2bConfigForToken, callbackBaseUrl, recordVerifiedPayment, resolveGateway } from "@/server/services/mpesa-config";
 import type { PaymentAttempt, PaymentAttemptStatus, Prisma, WebhookEvent } from "@/generated/prisma/client";
@@ -679,6 +680,10 @@ export async function handleC2bConfirmationRequest(token: string, rawBody: strin
     if (result.allocations.some((a) => a.subscription === "renewed")) await dispatchNetworkOperations(cfg.organizationId);
     if (result.created) {
       await audit(systemContext(cfg.organizationId, "webhook:mpesa-c2b", event.id), { action: "payment.mpesa.c2b", entityType: "payment", entityId: result.paymentId, metadata: { receipt, amount: amount.toFixed(2), matchedBy: result.matchedBy } });
+      if (!result.matchedBy) {
+        const reference = c.BillRefNumber.slice(0, 40) || "none";
+        await notifyOperators(cfg.organizationId, "payment_unmatched", `M-Pesa ${receipt} of KES ${amount.toFixed(2)} (account "${reference}") matches no subscriber. Match it under Reconciliation.`, `payment:${result.paymentId}`).catch(() => 0);
+      }
     }
   } catch (err) {
     if ((err as { code?: string }).code === "P2002") {

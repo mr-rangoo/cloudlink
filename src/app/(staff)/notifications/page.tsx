@@ -13,6 +13,10 @@ import { humanize } from "@/components/status";
 import { Forbidden } from "@/components/shell/forbidden";
 import { formatDateTime } from "@/lib/utils";
 import { RetryButton, TemplateDialog } from "./client";
+import { CampaignDialog, CancelCampaignButton, SendCampaignDialog, type CampaignDraft } from "./campaign-client";
+import { listCampaigns } from "@/server/services/campaigns";
+import { routerNameOptions } from "@/server/services/routers";
+import { listPackages } from "@/server/services/packages";
 
 export const metadata: Metadata = { title: "Notifications" };
 
@@ -24,7 +28,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   const { ctx, allowed } = await getStaffContextWith("notifications.read");
   if (!allowed) return <Forbidden what="notifications" />;
   const sp = await searchParams;
-  const tab = sp.tab === "templates" ? "templates" : "messages";
+  const tab = sp.tab === "templates" ? "templates" : sp.tab === "campaigns" ? "campaigns" : "messages";
   const canWrite = ctx.permissions.has("notifications.write");
   const tz = ctx.organization.timezone;
   const status = await messagingInUse(ctx.organizationId);
@@ -50,9 +54,10 @@ export default async function NotificationsPage({ searchParams }: { searchParams
         items={[
           { value: "messages", label: "Messages", href: "/notifications" },
           { value: "templates", label: "Templates", href: "/notifications?tab=templates" },
+          { value: "campaigns", label: "Campaigns", href: "/notifications?tab=campaigns" },
         ]}
       />
-      {tab === "messages" ? <Messages sp={sp} canWrite={canWrite} tz={tz} ctx={ctx} /> : <Templates ctx={ctx} canWrite={canWrite} />}
+      {tab === "messages" ? <Messages sp={sp} canWrite={canWrite} tz={tz} ctx={ctx} /> : tab === "campaigns" ? <Campaigns ctx={ctx} canWrite={canWrite} tz={tz} /> : <Templates ctx={ctx} canWrite={canWrite} />}
     </div>
   );
 }
@@ -156,5 +161,100 @@ async function Templates({ ctx, canWrite }: { ctx: Parameters<typeof listTemplat
         </Card>
       ))}
     </div>
+  );
+}
+
+const CAMPAIGN_TONE: Record<string, Tone> = { DRAFT: "neutral", SCHEDULED: "info", SENDING: "warning", SENT: "success", CANCELLED: "neutral" };
+const AUDIENCE_LABEL: Record<string, (v: string) => string> = {
+  subscription: (v) => (v === "NONE" ? "no live plan" : `${v.toLowerCase()} subscription`),
+  service: (v) => (v === "PPPOE" ? "PPPoE" : v === "HOTSPOT" ? "hotspot" : "static IP"),
+  created: (v) => `joined in the last ${v.replace("d", " days")}`,
+  vip: () => "VIP",
+  risk: () => "at risk",
+  routerId: () => "one router",
+  packageId: () => "one plan",
+};
+
+async function Campaigns({ ctx, canWrite, tz }: { ctx: Parameters<typeof listCampaigns>[0]; canWrite: boolean; tz: string }) {
+  const [rows, routers, packages] = await Promise.all([
+    listCampaigns(ctx),
+    canWrite && ctx.permissions.has("routers.read") ? routerNameOptions(ctx) : Promise.resolve([]),
+    canWrite && ctx.permissions.has("packages.read") ? listPackages(ctx, { status: "ACTIVE" }) : Promise.resolve([]),
+  ]);
+  const pkgs = packages.map((p) => ({ id: p.id, name: p.name }));
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle>Campaigns</CardTitle>
+          <CardDescription>Service notices to a chosen group of subscribers, or offers to those who agreed to receive them.</CardDescription>
+        </div>
+        {canWrite ? <CampaignDialog routers={routers} packages={pkgs} /> : null}
+      </CardHeader>
+      {rows.length === 0 ? (
+        <EmptyState icon={Bell} title="No campaigns yet" description="Write a notice (for example about an outage), check who it reaches, then send it now or schedule it." />
+      ) : (
+        <Table>
+          <THead>
+            <tr>
+              <Th>Campaign</Th>
+              <Th>Audience</Th>
+              <Th>Status</Th>
+              <Th className="text-right">Recipients</Th>
+              <Th className="text-right">Sent / failed / skipped</Th>
+              {canWrite ? <Th className="text-right">Actions</Th> : null}
+            </tr>
+          </THead>
+          <TBody>
+            {rows.map((c) => {
+              const filters = ((c.audience as { filters?: Record<string, string> } | null)?.filters ?? {}) as Record<string, string>;
+              const audience = Object.entries(filters).filter(([, v]) => v).map(([k, v]) => AUDIENCE_LABEL[k]?.(String(v)) ?? k);
+              const draft: CampaignDraft = { id: c.id, name: c.name, channel: c.channel as CampaignDraft["channel"], kind: c.kind as CampaignDraft["kind"], subject: c.subject ?? "", body: c.body, audience: Object.fromEntries(Object.entries(filters).map(([k, v]) => [k, String(v)])) };
+              return (
+                <Tr key={c.id}>
+                  <Td label="Campaign">
+                    <div className="min-w-0 text-right md:text-left">
+                      <span className="font-medium">{c.name}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {c.channel === "SMS" ? "SMS" : "Email"} · {c.kind === "marketing" ? "Offer" : "Service notice"}
+                      </span>
+                      <span className="block max-w-md truncate text-xs text-muted-foreground" title={c.body}>
+                        {c.body}
+                      </span>
+                    </div>
+                  </Td>
+                  <Td label="Audience" className="text-sm">
+                    {audience.length ? audience.join(", ") : "All subscribers"}
+                  </Td>
+                  <Td label="Status">
+                    <div className="min-w-0 text-right md:text-left">
+                      <Badge tone={CAMPAIGN_TONE[c.status] ?? "neutral"}>{humanize(c.status)}</Badge>
+                      {c.status === "SCHEDULED" && c.scheduledAt ? <span className="block text-xs text-muted-foreground">{formatDateTime(c.scheduledAt, tz)}</span> : null}
+                      {c.completedAt && c.status !== "SCHEDULED" ? <span className="block text-xs text-muted-foreground">{formatDateTime(c.completedAt, tz)}</span> : null}
+                    </div>
+                  </Td>
+                  <Td label="Recipients" className="tabular md:text-right">
+                    {c.status === "DRAFT" || c.status === "SCHEDULED" ? "—" : c.recipients}
+                  </Td>
+                  <Td label="Sent / failed / skipped" className="tabular md:text-right">
+                    {c.delivery.sent} / {c.delivery.failed} / {c.delivery.skipped}
+                    {c.delivery.queued ? <span className="block text-xs text-muted-foreground">{c.delivery.queued} still queued</span> : null}
+                  </Td>
+                  {canWrite ? (
+                    <Td label="Actions" className="md:text-right">
+                      <span className="flex flex-wrap justify-end gap-1">
+                        {c.status === "DRAFT" ? <CampaignDialog draft={draft} routers={routers} packages={pkgs} /> : null}
+                        {c.status === "DRAFT" ? <SendCampaignDialog id={c.id} name={c.name} /> : null}
+                        {["DRAFT", "SCHEDULED", "SENDING"].includes(c.status) ? <CancelCampaignButton id={c.id} name={c.name} /> : null}
+                      </span>
+                    </Td>
+                  ) : null}
+                </Tr>
+              );
+            })}
+          </TBody>
+        </Table>
+      )}
+    </Card>
   );
 }

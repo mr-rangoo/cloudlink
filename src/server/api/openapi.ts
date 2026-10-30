@@ -20,6 +20,8 @@ import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput,
 import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from "@/server/services/routers";
 import { telemetryQuery } from "@/server/services/router-insights";
 import { searchQuery } from "@/server/services/search";
+import { campaignInput, sendCampaignInput } from "@/server/services/campaigns";
+import { operatorAlertInput } from "@/server/services/operator-alerts";
 import { emailSettingsInput, smsSettingsInput, testMessageInput } from "@/server/services/messaging-config";
 import { cancelOperationInput, deprovisionInput, operationListQuery, provisionInput, routerOperationInput, sessionListQuery } from "@/server/services/network";
 import { attemptListQuery, customerPaymentInput, simulateInput, stkPushInput } from "@/server/services/mobile-money";
@@ -163,6 +165,15 @@ export const operations: Operation[] = [
   { method: "get", path: "/notifications", summary: "Notification log", tag: "Notifications", auth: "session", permission: "notifications.read", query: notificationListQuery },
   { method: "get", path: "/notifications/templates", summary: "Templates (defaults + customised)", tag: "Notifications", auth: "session", permission: "notifications.read" },
   { method: "put", path: "/notifications/templates", summary: "Save a template", tag: "Notifications", auth: "session", permission: "notifications.write", body: templateInput },
+  { method: "get", path: "/campaigns", summary: "Bulk message campaigns with delivery counts", tag: "Notifications", auth: "session", permission: "notifications.read" },
+  { method: "post", path: "/campaigns", summary: "Save a draft campaign (service notice or offer) with an audience", tag: "Notifications", auth: "session", permission: "notifications.write", body: campaignInput },
+  { method: "post", path: "/campaigns/preview", summary: "Audience size, recipients after preferences/consent, and a sample", tag: "Notifications", auth: "session", permission: "notifications.write", body: campaignInput },
+  { method: "get", path: "/campaigns/:id", summary: "Campaign detail", tag: "Notifications", auth: "session", permission: "notifications.read" },
+  { method: "patch", path: "/campaigns/:id", summary: "Edit a draft campaign", tag: "Notifications", auth: "session", permission: "notifications.write", body: campaignInput },
+  { method: "post", path: "/campaigns/:id/send", summary: "Send now or at a scheduled time (once)", tag: "Notifications", auth: "session", permission: "notifications.write", body: sendCampaignInput, responses: { "202": "Queued" } },
+  { method: "post", path: "/campaigns/:id/cancel", summary: "Cancel a draft/scheduled campaign or stop one being sent", tag: "Notifications", auth: "session", permission: "notifications.write" },
+  { method: "get", path: "/settings/operator-alerts", summary: "Operator alert recipients, events and digest hour", tag: "Settings", auth: "session", permission: "settings.write" },
+  { method: "put", path: "/settings/operator-alerts", summary: "Save operator alert recipients, events and digest hour", tag: "Settings", auth: "session", permission: "settings.write", body: operatorAlertInput },
   { method: "post", path: "/notifications/:id/retry", summary: "Retry a failed/skipped notification", tag: "Notifications", auth: "session", permission: "notifications.write" },
   { method: "get", path: "/notifications/status", summary: "Messaging adapter status", tag: "Notifications", auth: "session", permission: "notifications.read" },
   { method: "get", path: "/alerts", summary: "Items needing attention (permission-filtered)", tag: "Notifications", auth: "session" },

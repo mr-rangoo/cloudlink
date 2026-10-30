@@ -4,6 +4,7 @@ import { createPackage, packageInput } from "@/server/services/packages";
 import { createSubscriber, subscriberInput } from "@/server/services/subscribers";
 import { expireDueSubscriptions } from "@/server/services/subscriptions";
 import { systemContext } from "@/server/auth/context";
+import { saveOperatorAlertSettings } from "@/server/services/operator-alerts";
 import { getMpesaSettings, registerC2bUrls, saveMpesaSettings, testMpesaCredentials } from "@/server/services/mpesa-config";
 import { getAttempt, getCustomerAttempt, initiateCustomerPayment, initiateStkPush, listAttempts, runStatusQuery, simulateMockResponse } from "@/server/services/mobile-money";
 import { listPayments, manualPaymentInput, recordManualPayment } from "@/server/services/payments";
@@ -316,9 +317,13 @@ describe("M-Pesa C2B (direct paybill payments)", () => {
     await c2b(token, confirmation({ TransID: "RKA1234567", TransAmount: "1500.00", BillRefNumber: subscriber.accountNumber }));
     expect(await db.payment.count({ where: { providerTransactionId: "RKA1234567" } })).toBe(1);
 
+    await saveOperatorAlertSettings(ctx, { recipients: [{ channel: "SMS", to: "0712000999" }], events: ["payment_unmatched"] });
     await c2b(token, confirmation({ TransID: "RKA7654321", TransAmount: "250", BillRefNumber: "WRONGREF" }));
     const unmatched = await listPayments(ctx, { status: "ALL", unmatched: "1", page: 1, pageSize: 25 });
     expect(unmatched.rows.map((p) => p.providerTransactionId)).toEqual(["RKA7654321"]);
+    // The operators on duty are told, once.
+    const told = await db.notification.findMany({ where: { organizationId: org.organization.id, templateKey: "operator.alert" } });
+    expect(told).toEqual([expect.objectContaining({ recipient: "254712000999", body: expect.stringContaining("RKA7654321") })]);
 
     await c2b(token, confirmation({ TransID: "RKA0000009", TransAmount: "100", BillRefNumber: subscriber.accountNumber, BusinessShortCode: "999999" }));
     expect(await db.payment.count({ where: { providerTransactionId: "RKA0000009" } })).toBe(0);

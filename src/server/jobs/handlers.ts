@@ -10,6 +10,8 @@ import { inviteLink, mintInviteToken } from "@/server/portal/auth";
 import { db } from "@/server/db/client";
 import { generateExport } from "@/server/services/exports";
 import { voucherCodeForDelivery } from "@/server/services/vouchers";
+import { campaignIdOf, dispatchCampaign } from "@/server/services/campaigns";
+import { sendDailyDigest } from "@/server/services/operator-alerts";
 import { enforcePlanSchedules, ensureHotspotOperation, executeNetworkOperation, monitorNetworkOperations, syncNetworkSessions } from "@/server/services/network";
 import { runRouterHealthChecks } from "@/server/services/routers";
 import { pruneRouterTelemetry } from "@/server/services/router-insights";
@@ -41,6 +43,15 @@ export const operationHandlers: OperationHandlers = {
   "subscriptions.remind_expiring": async (op) => {
     if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
     return remindExpiringSubscriptions(op.organizationId);
+  },
+
+  /** Write a campaign's messages in batches (resumable; recipients already written are skipped). */
+  "campaigns.dispatch": async (op) => dispatchCampaign(campaignIdOf(op.payload)),
+
+  /** Yesterday's summary to the operators, at the organization's chosen hour (once per day). */
+  "operators.daily_digest": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    return sendDailyDigest(op.organizationId);
   },
 
   /** Invoice upcoming subscription periods (idempotent: one invoice per subscription period). */

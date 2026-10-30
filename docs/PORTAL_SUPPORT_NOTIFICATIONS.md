@@ -52,6 +52,30 @@
   send time and are never stored in the message log (it keeps a placeholder). A voucher redeemed or voided before its
   message goes out makes the message FAILED (`VOUCHER_UNAVAILABLE`).
 
+### Marketing consent
+Offers need the customer's agreement (Kenya Data Protection Act). The `marketing` preference is **off unless
+recorded**: the customer ticks "Offers and promotions" in the portal, or staff tick "Agreed to receive offers" on the
+subscriber (recorded in the account history and audit log). Service notices use the `service` preference instead.
+
+### Campaigns (`/notifications?tab=campaigns`)
+- A campaign is a draft (name, SMS or email, service notice or offer, message with `{{name}}`, `{{accountNumber}}`,
+  `{{packageName}}`, `{{endDate}}`, `{{organization}}`, and an audience built from the subscriber-list filters:
+  subscription status, service, plan, router, joined, VIP, at risk). **Preview audience** shows how many match, how
+  many would actually receive it after preferences or consent, and a sample.
+- **Send** now or at a chosen time; a campaign is sent once. The worker (`campaigns.dispatch`) resolves the audience
+  when sending starts and writes one notification per recipient in batches of 500, each with a dedupe key, so a
+  retried job never sends twice. Recipients who opted out (service) or did not agree (offers) are recorded as
+  SKIPPED. Cancelling stops a scheduled campaign, or one being sent after the current batch.
+- A campaign saved by branch-restricted staff reaches only their branches' subscribers.
+- Needs `notifications.write`; viewing needs `notifications.read`.
+
+### Operator alerts (Settings → Operator alerts, `settings.write`)
+Up to ten phone numbers or email addresses are told when: a router stops answering health checks, a network change
+fails after its retries (or gets stuck), or a paybill payment matches no subscriber — once per alert. Optional daily
+summary at a chosen local hour (yesterday's collections, new subscribers, plans ending tomorrow, routers offline, open
+tickets; `operators.daily_digest`, once per day). Messages use the organization's providers like any other
+notification; a messaging problem never interrupts the health check or payment that raised the alert.
+
 ### Providers
 Each organization connects its own accounts on **Integrations → Messaging providers** (`integrations.write`):
 - **SMS**: Africa's Talking (username, optional sender ID, API key) or Twilio (account SID, sender: number, messaging

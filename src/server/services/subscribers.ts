@@ -7,7 +7,7 @@ import { AppError, notFound } from "@/server/errors";
 import { normalizeEmail, normalizePhone } from "@/server/domain/contact";
 import { actorUserId, formatAccountNumber, nextCounter, searchTerm } from "@/server/services/common";
 import { createSubscriptionTx, subscriptionSelect } from "@/server/services/subscriptions";
-import { queueSubscriberNotificationTx } from "@/server/services/notifications";
+import { queueSubscriberNotificationTx, setMarketingConsentTx } from "@/server/services/notifications";
 import type { Prisma } from "@/generated/prisma/client";
 
 const phoneField = z
@@ -97,6 +97,8 @@ export const subscriberUpdate = z.object({
   branchId: z.uuid().optional().nullable(),
   status: z.enum(["ACTIVE", "INACTIVE", "ARCHIVED"]).optional(),
   vip: z.boolean().optional(),
+  /** The customer agreed (or no longer agrees) to receive offers; recorded for both SMS and email. */
+  marketingConsent: z.boolean().optional(),
 });
 
 export const subscriberListQuery = z.object({
@@ -230,26 +232,38 @@ const riskWhere = (now: Date): Prisma.SubscriberWhereInput => ({
   },
 });
 
+/** Filters shared by the subscriber list and campaign audiences. */
+export type SubscriberFilters = Pick<z.infer<typeof subscriberListQuery>, "subscription" | "service" | "connection" | "routerId" | "created" | "vip" | "risk"> & {
+  status?: z.infer<typeof subscriberListQuery>["status"];
+  packageId?: string;
+};
+
+export async function subscriberFilterWhere(ctx: ActorContext, f: SubscriberFilters, now = new Date()): Promise<Prisma.SubscriberWhereInput> {
+  const online = f.connection ? await onlineSubscriberIds(ctx.organizationId) : [];
+  const and: Prisma.SubscriberWhereInput[] = [];
+  if (f.subscription === "NONE") and.push({ subscriptions: { none: { status: { in: LIVE } } } });
+  else if (f.subscription) and.push({ subscriptions: { some: { status: f.subscription } } });
+  if (f.service) and.push({ subscriptions: { some: { status: { in: LIVE }, serviceType: f.service } } });
+  if (f.packageId) and.push({ subscriptions: { some: { status: { in: LIVE }, packageId: f.packageId } } });
+  if (f.routerId) and.push({ subscriptions: { some: { networkRouterId: f.routerId } } });
+  if (f.connection === "online") and.push({ id: { in: online } });
+  if (f.connection === "offline") and.push(offlineWhere(online));
+  if (f.risk) and.push(riskWhere(now));
+  return {
+    ...listWhere(ctx),
+    ...(f.status && f.status !== "ALL" ? { status: f.status } : { status: { not: "ARCHIVED" } }),
+    ...(f.vip ? { vip: true } : {}),
+    ...(f.created ? { createdAt: { gte: new Date(now.getTime() - Number(f.created.replace("d", "")) * 86_400_000) } } : {}),
+    ...(and.length ? { AND: and } : {}),
+  };
+}
+
 export async function listSubscribers(ctx: ActorContext, query: z.infer<typeof subscriberListQuery>) {
   requirePermission(ctx, "subscribers.read");
   const q = searchTerm(query.q);
   const phoneQ = q ? normalizePhone(q) : null;
-  const now = new Date();
-  const online = query.connection ? await onlineSubscriberIds(ctx.organizationId) : [];
-  const and: Prisma.SubscriberWhereInput[] = [];
-  if (query.subscription === "NONE") and.push({ subscriptions: { none: { status: { in: LIVE } } } });
-  else if (query.subscription) and.push({ subscriptions: { some: { status: query.subscription } } });
-  if (query.service) and.push({ subscriptions: { some: { status: { in: LIVE }, serviceType: query.service } } });
-  if (query.routerId) and.push({ subscriptions: { some: { networkRouterId: query.routerId } } });
-  if (query.connection === "online") and.push({ id: { in: online } });
-  if (query.connection === "offline") and.push(offlineWhere(online));
-  if (query.risk) and.push(riskWhere(now));
   const where: Prisma.SubscriberWhereInput = {
-    ...listWhere(ctx),
-    ...(query.status !== "ALL" ? { status: query.status } : { status: { not: "ARCHIVED" } }),
-    ...(query.vip ? { vip: true } : {}),
-    ...(query.created ? { createdAt: { gte: new Date(now.getTime() - Number(query.created.replace("d", "")) * 86_400_000) } } : {}),
-    ...(and.length ? { AND: and } : {}),
+    ...(await subscriberFilterWhere(ctx, query)),
     ...(q
       ? {
           OR: [
@@ -345,7 +359,12 @@ export async function getSubscriber(ctx: ActorContext, id: string) {
   });
   if (!subscriber) throw notFound("subscriber");
   const branch = subscriber.branchId ? await db.branch.findUnique({ where: { id: subscriber.branchId }, select: { id: true, name: true, code: true } }) : null;
-  return { ...subscriber, branch };
+  return { ...subscriber, branch, marketingConsent: await marketingConsentOf(id) };
+}
+
+/** True when the subscriber agreed to offers on at least one channel (no record = not agreed). */
+async function marketingConsentOf(subscriberId: string): Promise<boolean> {
+  return (await db.notificationPreference.count({ where: { subscriberId, category: "marketing", enabled: true } })) > 0;
 }
 
 export async function updateSubscriber(ctx: ActorContext, id: string, input: z.infer<typeof subscriberUpdate>) {
@@ -358,9 +377,11 @@ export async function updateSubscriber(ctx: ActorContext, id: string, input: z.i
     if (live) throw new AppError("INVALID_STATE", "Cancel or expire live subscriptions before archiving this subscriber.");
   }
 
-  const merged = { ...before, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) };
+  const { marketingConsent, ...fields } = input;
+  const merged = { ...before, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)) };
+  const consentBefore = marketingConsent === undefined ? null : await marketingConsentOf(id);
   const data: Prisma.SubscriberUpdateInput = {
-    ...input,
+    ...fields,
     branchId: undefined,
     ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
     displayName: displayNameOf(merged as { type: string }),
@@ -368,11 +389,18 @@ export async function updateSubscriber(ctx: ActorContext, id: string, input: z.i
   };
   const updated = await db.$transaction(async (tx) => {
     const s = await tx.subscriber.update({ where: { id }, data, select: subscriberListSelect });
-    const changed = Object.keys(input).filter((k) => String((before as Record<string, unknown>)[k] ?? "") !== String((input as Record<string, unknown>)[k] ?? ""));
+    const changed = Object.keys(fields).filter((k) => String((before as Record<string, unknown>)[k] ?? "") !== String((fields as Record<string, unknown>)[k] ?? ""));
     if (changed.length) {
       await tx.subscriberActivity.create({
         data: { organizationId: ctx.organizationId, subscriberId: id, actorUserId: actorUserId(ctx), type: "updated", message: `Updated ${changed.join(", ")}`, metadata: { changed } },
       });
+    }
+    if (marketingConsent !== undefined && marketingConsent !== consentBefore) {
+      await setMarketingConsentTx(tx, ctx.organizationId, id, marketingConsent);
+      await tx.subscriberActivity.create({
+        data: { organizationId: ctx.organizationId, subscriberId: id, actorUserId: actorUserId(ctx), type: "consent", message: marketingConsent ? "Agreed to receive offers (recorded by staff)" : "No longer agrees to receive offers (recorded by staff)" },
+      });
+      changed.push("marketingConsent");
     }
     return { s, changed };
   });

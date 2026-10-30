@@ -229,7 +229,7 @@ export async function sendVoucherBySms(ctx: StaffContext, voucherId: string, raw
   if (voucher.status !== "UNUSED" || voucher.batch.status !== "ACTIVE") throw new AppError("INVALID_STATE", "Only unused vouchers from an active batch can be sent.");
   if (voucher.batch.expiresAt && voucher.batch.expiresAt < new Date()) throw new AppError("INVALID_STATE", "This batch can no longer be redeemed.");
   const validUntil = voucher.batch.expiresAt ? new Intl.DateTimeFormat("en-KE", { dateStyle: "medium", timeZone: ctx.organization.timezone }).format(voucher.batch.expiresAt) : "any time";
-  const n = await db.$transaction((tx) =>
+  const { notification: n } = await db.$transaction((tx) =>
     queueNotificationTx(tx, ctx.organizationId, {
       channel: "SMS",
       recipient: phone,

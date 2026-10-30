@@ -19,6 +19,8 @@ export const RECURRING_JOBS: RecurringJob[] = [
   // Every minute: hotspot plans last minutes or hours and must end on time.
   { type: "subscriptions.expire_due", everyMinutes: 1 },
   { type: "subscriptions.remind_expiring", everyMinutes: 60 },
+  // Hourly; sends only at each organization's chosen local hour.
+  { type: "operators.daily_digest", everyMinutes: 60 },
   // Every five minutes: each check also stores a telemetry sample (charts, health score, reachability).
   { type: "routers.healthcheck", everyMinutes: 5, scope: "routers" },
   { type: "network.sync_sessions", everyMinutes: 5, scope: "routers" },
@@ -28,7 +30,7 @@ export const RECURRING_JOBS: RecurringJob[] = [
 ];
 
 /** Routine operations that leave nothing worth keeping once they succeed. Failures are always kept. */
-const ROUTINE_TYPES = ["network.sync_sessions", "routers.healthcheck", "network.monitor", "maintenance.prune", "subscriptions.expire_due", "subscriptions.remind_expiring", "plans.enforce_schedules"];
+const ROUTINE_TYPES = ["network.sync_sessions", "routers.healthcheck", "network.monitor", "maintenance.prune", "subscriptions.expire_due", "subscriptions.remind_expiring", "operators.daily_digest", "plans.enforce_schedules"];
 export const ROUTINE_RETENTION_DAYS = 14;
 
 /** Delete succeeded routine operations older than the retention window (live session views create one every 30 s). */

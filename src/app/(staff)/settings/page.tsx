@@ -14,6 +14,8 @@ import { BrandingForm } from "./branding-form";
 import { PaymentMethodsPanel } from "./payment-methods-panel";
 import { AssistantForm } from "./assistant-form";
 import { HotspotSettingsForm } from "./hotspot-form";
+import { OperatorAlertsForm } from "./operator-alerts-form";
+import { getOperatorAlertSettings, OPERATOR_EVENT_LABEL, OPERATOR_EVENTS } from "@/server/services/operator-alerts";
 import { SettingsNav, type SettingsNavGroup } from "./nav";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -40,6 +42,8 @@ const NAV: SettingsNavGroup[] = [
       { tab: "payments", label: "Payment methods", hint: "Paybill, till and bank shown to customers" },
       { href: "/integrations", label: "M-Pesa gateway", hint: "Daraja credentials and callbacks" },
       { href: "/notifications", label: "Message templates", hint: "Receipts, reminders, invites" },
+      { tab: "alerts", label: "Operator alerts", hint: "Router down, failed changes, daily summary" },
+      { href: "/integrations", label: "SMS and email providers", hint: "Your own SMS and SMTP accounts" },
     ],
   },
   {
@@ -59,9 +63,9 @@ const NAV: SettingsNavGroup[] = [
   },
 ];
 
-const TABS = ["general", "branding", "hotspot", "payments", "assistant"] as const;
+const TABS = ["general", "branding", "hotspot", "payments", "alerts", "assistant"] as const;
 type Tab = (typeof TABS)[number];
-const TITLES: Record<Tab, string> = { general: "Organization", branding: "Branding", hotspot: "Captive portal", payments: "Payment methods", assistant: "AI assistant" };
+const TITLES: Record<Tab, string> = { general: "Organization", branding: "Branding", hotspot: "Captive portal", payments: "Payment methods", alerts: "Operator alerts", assistant: "AI assistant" };
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const { ctx, allowed } = await getStaffContextWith("settings.write");
@@ -77,7 +81,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           <SettingsNav groups={NAV} active={tab} />
         </aside>
         <div className="min-w-0 space-y-6">
-          {tab === "general" ? <GeneralTab ctx={ctx} /> : tab === "branding" ? <BrandingTab ctx={ctx} /> : tab === "hotspot" ? <HotspotTab ctx={ctx} /> : tab === "payments" ? <PaymentsTab ctx={ctx} /> : <AssistantTab ctx={ctx} />}
+          {tab === "general" ? <GeneralTab ctx={ctx} /> : tab === "branding" ? <BrandingTab ctx={ctx} /> : tab === "hotspot" ? <HotspotTab ctx={ctx} /> : tab === "payments" ? <PaymentsTab ctx={ctx} /> : tab === "alerts" ? <AlertsTab ctx={ctx} /> : <AssistantTab ctx={ctx} />}
         </div>
       </div>
     </div>
@@ -155,6 +159,11 @@ async function PaymentsTab({ ctx }: { ctx: Ctx }) {
       methods={rows.map((m) => ({ id: m.id, kind: m.kind, label: m.label, details: (m.details ?? {}) as Record<string, string | null>, instructions: m.instructions, active: m.active, preview: instructionsFor(m, "A000123").lines }))}
     />
   );
+}
+
+async function AlertsTab({ ctx }: { ctx: Ctx }) {
+  const settings = await getOperatorAlertSettings(ctx);
+  return <OperatorAlertsForm initial={settings} events={OPERATOR_EVENTS.map((key) => ({ key, label: OPERATOR_EVENT_LABEL[key] }))} />;
 }
 
 async function AssistantTab({ ctx }: { ctx: Ctx }) {

@@ -24,8 +24,10 @@ export type TemplateKey =
   | "subscription.expiring"
   | "subscription.expired"
   | "hotspot.purchased"
-  | "voucher.delivery";
-export type Category = "billing" | "service" | "support" | "account";
+  | "voucher.delivery"
+  | "operator.alert"
+  | "operator.digest";
+export type Category = "billing" | "service" | "support" | "account" | "marketing";
 
 export const TEMPLATE_CATEGORY: Record<TemplateKey, Category> = {
   "invoice.issued": "billing",
@@ -40,6 +42,9 @@ export const TEMPLATE_CATEGORY: Record<TemplateKey, Category> = {
   "hotspot.purchased": "service",
   // Sent only when staff deliver a voucher on purpose, so it is not subject to preferences.
   "voucher.delivery": "account",
+  // To staff contacts chosen in Settings → Operator alerts, not to subscribers.
+  "operator.alert": "account",
+  "operator.digest": "account",
 };
 
 export const TEMPLATE_VARIABLES: Record<TemplateKey, string[]> = {
@@ -54,6 +59,8 @@ export const TEMPLATE_VARIABLES: Record<TemplateKey, string[]> = {
   "subscription.expired": ["name", "organization", "packageName", "endDate", "accountNumber"],
   "hotspot.purchased": ["name", "organization", "packageName", "endDate", "receipt"],
   "voucher.delivery": ["organization", "code", "packageName", "validUntil"],
+  "operator.alert": ["organization", "message"],
+  "operator.digest": ["organization", "date", "collected", "payments", "newSubscribers", "expiringTomorrow", "routersOffline", "openTickets"],
 };
 
 const DEFAULTS: Record<TemplateKey, { subject: string; sms: string; email: string }> = {
@@ -112,6 +119,16 @@ const DEFAULTS: Record<TemplateKey, { subject: string; sms: string; email: strin
     sms: "{{organization}}: Your Wi-Fi voucher code is {{code}} ({{packageName}}). Use it by {{validUntil}}.",
     email: "Hello,\n\nYour Wi-Fi voucher code is {{code}} ({{packageName}}).\nEnter it on the Wi-Fi login page by {{validUntil}}.\n\n{{organization}}",
   },
+  "operator.alert": {
+    subject: "{{organization}} alert",
+    sms: "{{organization}} alert: {{message}}",
+    email: "{{organization}} needs attention:\n\n{{message}}\n\nOpen Cloudlink for details.",
+  },
+  "operator.digest": {
+    subject: "{{organization}} daily summary for {{date}}",
+    sms: "{{organization}} {{date}}: collected {{collected}} ({{payments}} payments), {{newSubscribers}} new subscribers, {{expiringTomorrow}} plans end tomorrow, {{routersOffline}} routers offline, {{openTickets}} open tickets.",
+    email: "Daily summary for {{date}}\n\nCollected: {{collected}} ({{payments}} payments)\nNew subscribers: {{newSubscribers}}\nPlans ending tomorrow: {{expiringTomorrow}}\nRouters offline now: {{routersOffline}}\nOpen support tickets: {{openTickets}}\n\n{{organization}}",
+  },
 };
 
 /** Plain-text rendering; unknown placeholders are left visible so template mistakes are noticed. */
@@ -129,7 +146,8 @@ async function templateFor(client: Tx | typeof db, organizationId: string, key: 
 export async function preferenceAllows(client: Tx | typeof db, subscriberId: string, channel: NotificationChannel, category: Category): Promise<boolean> {
   if (category === "account") return true; // account/security messages cannot be switched off
   const pref = await client.notificationPreference.findUnique({ where: { subscriberId_channel_category: { subscriberId, channel, category } } });
-  return pref?.enabled ?? true;
+  // Offers need the customer's agreement: without a recorded choice, marketing messages are not sent.
+  return pref?.enabled ?? category !== "marketing";
 }
 
 /**
@@ -182,7 +200,8 @@ export async function queueSubscriberNotificationTx(
 
 /**
  * Queue one message to a given recipient (not necessarily a subscriber), e.g. a voucher code for a walk-in
- * customer. Idempotent per dedupeKey; written in the caller's transaction like every other notification.
+ * customer. Idempotent per dedupeKey (`created` is false when it already existed); written in the caller's
+ * transaction like every other notification.
  */
 export async function queueNotificationTx(
   tx: Tx,
@@ -190,7 +209,7 @@ export async function queueNotificationTx(
   input: { channel: NotificationChannel; recipient: string; key: TemplateKey; vars: Record<string, string | number | null | undefined>; dedupeKey: string; subscriberId?: string | null; metadata?: Prisma.InputJsonValue },
 ) {
   const existing = await tx.notification.findUnique({ where: { dedupeKey: input.dedupeKey } });
-  if (existing) return existing;
+  if (existing) return { notification: existing, created: false };
   const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } });
   const tpl = await templateFor(tx, organizationId, input.key, input.channel);
   const vars = { organization: org.name, ...input.vars };
@@ -211,7 +230,7 @@ export async function queueNotificationTx(
     },
   });
   if (tpl) await enqueueOperation({ type: "notifications.send", organizationId, payload: { notificationId: n.id }, dedupeKey: `notify:${n.id}`, maxAttempts: 5 }, tx);
-  return n;
+  return { notification: n, created: true };
 }
 
 /**
@@ -315,13 +334,24 @@ export async function saveTemplate(ctx: ActorContext, input: z.infer<typeof temp
 
 export async function getPreferences(organizationId: string, subscriberId: string) {
   const rows = await db.notificationPreference.findMany({ where: { organizationId, subscriberId } });
-  return (["billing", "service", "support"] as const).flatMap((category) =>
-    (["SMS", "EMAIL"] as const).map((channel) => ({ category, channel, enabled: rows.find((r) => r.category === category && r.channel === channel)?.enabled ?? true })),
+  return (["billing", "service", "support", "marketing"] as const).flatMap((category) =>
+    (["SMS", "EMAIL"] as const).map((channel) => ({ category, channel, enabled: rows.find((r) => r.category === category && r.channel === channel)?.enabled ?? category !== "marketing" })),
   );
 }
 
+/** Staff record a subscriber's answer to "may we send you offers?" (both channels; audited by the caller). */
+export async function setMarketingConsentTx(tx: Tx, organizationId: string, subscriberId: string, agreed: boolean) {
+  for (const channel of ["SMS", "EMAIL"] as const) {
+    await tx.notificationPreference.upsert({
+      where: { subscriberId_channel_category: { subscriberId, channel, category: "marketing" } },
+      update: { enabled: agreed },
+      create: { organizationId, subscriberId, channel, category: "marketing", enabled: agreed },
+    });
+  }
+}
+
 export const preferencesInput = z.object({
-  preferences: z.array(z.object({ category: z.enum(["billing", "service", "support"]), channel: z.enum(["EMAIL", "SMS"]), enabled: z.boolean() })).min(1).max(6),
+  preferences: z.array(z.object({ category: z.enum(["billing", "service", "support", "marketing"]), channel: z.enum(["EMAIL", "SMS"]), enabled: z.boolean() })).min(1).max(8),
 });
 
 export async function savePreferences(organizationId: string, subscriberId: string, input: z.infer<typeof preferencesInput>) {

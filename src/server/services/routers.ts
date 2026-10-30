@@ -9,6 +9,7 @@ import { checkRouterHost } from "@/server/domain/network-address";
 import { networkAdapter, networkAdapterName, type RouterHealth, type RouterTarget } from "@/server/integrations/network";
 import { dispatchOperation, enqueueOperation, PermanentError } from "@/server/jobs/operations";
 import { searchTerm } from "@/server/services/common";
+import { notifyOperators } from "@/server/services/operator-alerts";
 import { availability, healthScore, type TelemetrySample } from "@/server/domain/router-telemetry";
 import { logger } from "@/server/observability/logger";
 import type { Prisma, Router } from "@/generated/prisma/client";
@@ -376,7 +377,11 @@ async function openAlert(organizationId: string, data: { routerId?: string | nul
     where: { organizationId, type: data.type, status: "OPEN", ...(data.operationId ? { operationId: data.operationId } : { routerId: data.routerId ?? null }) },
   });
   if (existing) return existing;
-  return db.routerAlert.create({ data: { organizationId, routerId: data.routerId ?? null, operationId: data.operationId ?? null, type: data.type, severity: data.severity, message: data.message } });
+  const alert = await db.routerAlert.create({ data: { organizationId, routerId: data.routerId ?? null, operationId: data.operationId ?? null, type: data.type, severity: data.severity, message: data.message } });
+  // Tell the operators on duty, once per alert. A messaging problem must never break the health check or operation.
+  const event = data.type === "ROUTER_OFFLINE" ? "router_offline" : data.type === "OPERATION_FAILED" || data.type === "OPERATION_STUCK" ? "operation_failed" : null;
+  if (event) await notifyOperators(organizationId, event, data.message, `alert:${alert.id}`).catch((err) => logger.warn({ err: err instanceof Error ? err.name : "unknown", organizationId }, "operator alert not queued"));
+  return alert;
 }
 export { openAlert };
 

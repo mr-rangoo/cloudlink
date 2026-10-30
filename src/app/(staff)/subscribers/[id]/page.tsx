@@ -73,6 +73,7 @@ export default async function SubscriberDetailPage({ params, searchParams }: { p
                   status: subscriber.status,
                   branchId: subscriber.branchId,
                   vip: subscriber.vip,
+                  marketingConsent: subscriber.marketingConsent,
                 }}
                 branches={branches}
               />

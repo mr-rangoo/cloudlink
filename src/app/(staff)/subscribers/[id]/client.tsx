@@ -219,6 +219,7 @@ export interface EditableSubscriber {
   status: string;
   branchId: string | null;
   vip: boolean;
+  marketingConsent: boolean;
 }
 
 export function EditSubscriberDialog({ subscriber, branches }: { subscriber: EditableSubscriber; branches: Array<{ id: string; name: string; code: string }> }) {
@@ -242,6 +243,7 @@ export function EditSubscriberDialog({ subscriber, branches }: { subscriber: Edi
           notes: v.notes ?? null,
           status: v.status,
           vip: v.vip === "on",
+          marketingConsent: v.marketingConsent === "on",
           ...(branches.length ? { branchId: v.branchId ?? null } : {}),
         },
       },
@@ -304,6 +306,13 @@ export function EditSubscriberDialog({ subscriber, branches }: { subscriber: Edi
             </Field>
             <label className="flex items-center gap-2 text-sm sm:col-span-2">
               <input type="checkbox" name="vip" defaultChecked={subscriber.vip} /> VIP (priority customer, flagged in lists)
+            </label>
+            <label className="flex items-start gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" name="marketingConsent" defaultChecked={subscriber.marketingConsent} className="mt-0.5" />
+              <span>
+                Agreed to receive offers and promotions
+                <span className="block text-xs text-muted-foreground">Only tick this if the customer said yes. Promotional campaigns go only to customers who agreed; they can change it in the portal.</span>
+              </span>
             </label>
             <Field id="e-notes" label="Internal notes" error={errors.notes} className="sm:col-span-2">
               <Textarea name="notes" rows={3} defaultValue={subscriber.notes} />

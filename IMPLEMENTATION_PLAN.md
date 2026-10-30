@@ -276,6 +276,25 @@ Visual check (production build on :3102, e2e database): payments and expenses fo
 
 Visual check: Integrations page with the messaging card (mock mode notice, saved provider, actions) on the production build.
 
+### Phase 17b — Campaigns, marketing consent, operator alerts ✅
+- [x] Migration `20261031120000_campaigns_operator_alerts`: `MessageCampaign` (kind/status/count CHECKs), `Notification.campaignId` (indexed with status), `OperatorAlertSettings` (digest hour CHECK).
+- [x] Campaigns (`src/server/services/campaigns.ts`): drafts with audience filters shared with the subscriber list (`subscriberFilterWhere`), preview (matched, will receive, sample), send now or scheduled, cancel; worker dispatch in resumable deduplicated batches; creator's branch scope kept; delivery counts per campaign. UI: Notifications → Campaigns.
+- [x] Marketing consent: `marketing` preference off unless recorded (portal checkbox; staff "Agreed to receive offers" with history entry); service notices respect the service preference.
+- [x] Operator alerts (`src/server/services/operator-alerts.ts`): recipients, events, digest hour (Settings → Operator alerts); router offline / operation failed or stuck (on new alerts only) / unmatched paybill payment; daily digest job at the chosen local hour.
+- [x] Defect found by the tests: a repeated `queueNotificationTx` returned the existing message and was counted as newly sent; it now reports `created`.
+- [ ] Not done: WhatsApp channel; SMS opt-out by reply ("STOP") needs inbound SMS, which is not implemented.
+
+| Command (2026-10-30) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | `20261031120000_campaigns_operator_alerts` applied; `migrate diff` against dev: empty |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 18 files, 147 passed |
+| `npm run test:integration` | 29 files, 221 passed |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 30 passed |
+
+Browser check: `tests/e2e/messaging.spec.ts` writes a service notice, previews its audience, sends it, and saves operator alerts on the production build (part of the 30 passing e2e tests).
+
 ## Work log
 
 ### 2026-10-25 — Phase 1 (Foundation)

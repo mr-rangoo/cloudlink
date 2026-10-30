@@ -1239,6 +1239,8 @@ model Notification {
   dedupeKey         String              @unique
   /// Non-secret references the worker needs at send time (e.g. the voucher whose code is filled in then).
   metadata          Json?
+  /// Set for messages sent by a campaign.
+  campaignId        String?             @db.Uuid
   sentAt            DateTime?           @db.Timestamptz(6)
   deliveredAt       DateTime?           @db.Timestamptz(6)
   createdAt         DateTime            @default(now()) @db.Timestamptz(6)
@@ -1246,6 +1248,46 @@ model Notification {
   @@index([organizationId, createdAt])
   @@index([organizationId, status])
   @@index([subscriberId])
+  @@index([campaignId, status])
+}
+
+/// A bulk message to a filtered audience. Each recipient's message is a Notification with campaignId set.
+model MessageCampaign {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  organizationId String              @db.Uuid
+  name           String
+  channel        NotificationChannel
+  /// service = notices about the customer's service (service preference); marketing = offers (only customers who agreed).
+  kind           String
+  subject        String?
+  body           String
+  /// Subscriber filters (see the campaigns service); stored as chosen so the audience can be shown later.
+  audience       Json
+  status         String              @default("DRAFT") // DRAFT | SCHEDULED | SENDING | SENT | CANCELLED
+  scheduledAt    DateTime?           @db.Timestamptz(6)
+  startedAt      DateTime?           @db.Timestamptz(6)
+  completedAt    DateTime?           @db.Timestamptz(6)
+  /// Subscribers matched, messages queued, and matched subscribers skipped (opted out or no phone/email).
+  recipients     Int                 @default(0)
+  queued         Int                 @default(0)
+  skipped        Int                 @default(0)
+  createdById    String?             @db.Uuid
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(6)
+
+  @@index([organizationId, createdAt])
+}
+
+/// Who is told when something needs an operator, and about what.
+model OperatorAlertSettings {
+  organizationId String   @id @db.Uuid
+  /// [{ channel: "SMS" | "EMAIL", to: string, label?: string }]
+  recipients     Json     @default("[]")
+  /// router_offline | operation_failed | payment_unmatched | daily_digest
+  events         Json     @default("[]")
+  /// Local hour (0–23) at which the daily digest is sent.
+  digestHour     Int      @default(7)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
 }
 
 model NotificationPreference {
@@ -1253,7 +1295,7 @@ model NotificationPreference {
   organizationId String              @db.Uuid
   subscriberId   String              @db.Uuid
   channel        NotificationChannel
-  category       String // billing | service | support (account messages are always sent)
+  category       String // billing | service | support | marketing (account messages are always sent; marketing is off unless agreed)
   enabled        Boolean             @default(true)
   updatedAt      DateTime            @updatedAt @db.Timestamptz(6)
 
