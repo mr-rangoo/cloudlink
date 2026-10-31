@@ -22,7 +22,7 @@ async function onboardPppoe(page: Page) {
 
 async function registerRouter(page: Page, name: string, host: string) {
   await page.goto("/routers");
-  await page.getByRole("button", { name: "Add router" }).click();
+  await page.getByRole("button", { name: "Add by IP address" }).click();
   const d = page.getByRole("dialog");
   await d.getByLabel(/^Name/).fill(name);
   await d.getByLabel("Management IP (private or VPN)").fill(host);
@@ -38,7 +38,7 @@ test("router mock failure is visible and retried according to policy", async ({ 
 
   // Public addresses are refused for router management.
   await page.goto("/routers");
-  await page.getByRole("button", { name: "Add router" }).click();
+  await page.getByRole("button", { name: "Add by IP address" }).click();
   const d = page.getByRole("dialog");
   await d.getByLabel(/^Name/).fill("Public attempt");
   await d.getByLabel("Management IP (private or VPN)").fill("41.90.10.10");

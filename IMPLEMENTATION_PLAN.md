@@ -374,7 +374,79 @@ The 29 reference screenshots from the earlier session were recovered from that s
 
 Visual check (production build on :3102, e2e database, dark): overview, live sessions, subscribers, plans, routers, payments, Settings → Payments, Settings → Hotspot, Ask AI panel, subscribers at 390 px.
 
-**Exact next task**: Phase 19 — loyalty points (earn per spend, redeem for account credit, ledger-backed), then fiber map / ticket analytics / promo banners.
+**Exact next task** (superseded by Phase 18c): Phase 19 — loyalty points.
+
+### Phase 18c — Devices: Link MikroTik wizard, Cloudlink router agent, TR-069 devices ✅ (user request 2026-10-31)
+Request: under Devices, Routers / TR-069 / Equipment as in the reference screenshots. Routers lists linked routers and has "+ Link MikroTik" with four steps:
+1. name the router;
+2. a one-line provisioning command that links it to the billing system;
+3. services: hotspot and/or PPPoE, restrict hotspot sharing, and which LAN ports to use;
+4. done.
+
+The reference product's provisioning link pasted in the request contains an access token. It was **not opened, stored or reused**; Cloudlink uses only its own setup endpoint.
+
+- [x] **Data:** migration `20261101180000_router_link_agent`:
+  - `Router.host` becomes optional;
+  - adds `agentKeyHash` (unique, SHA-256), `agentLastSeenAt`, `linkedAt`, `agentReport` and `servicesConfig`;
+  - adds the table `RouterChange` (status PENDING / DELIVERED / APPLIED / FAILED / SUPERSEDED, CHECK constraints).
+- [x] **Cloudlink router agent** (`src/server/domain/router-agent.ts`, original RouterOS scripting):
+  - the setup script now names the router and installs a script and a one-minute scheduler;
+  - each run reports identity, version, board, ports, addresses, bridge ports and DHCP clients to `POST /api/v1/routers/agent/<key>` over HTTPS, with certificate check unless `ROUTER_AGENT_VERIFY_TLS=false`;
+  - it imports Cloudlink's answer;
+  - the per-router key is rotated by every setup and stored hashed;
+  - the endpoints are rate-limited and on the raw-route allowlist.
+- [x] **Services change:** an idempotent script that removes only Cloudlink-created items, then builds:
+  - the hotspot and PPPoE bridges from the chosen ports;
+  - hotspot address, pool, DHCP, profile, server, walled garden and login page;
+  - devices per login (`shared-users`);
+  - TTL-1 sharing block;
+  - PPPoE pool, profile and servers;
+  - NAT out of the WAN port;
+  - DNS with a WAN-side guard.
+
+  Its last line confirms to `/agent/<key>/result`. "Applied" is shown only after that confirmation. Failures are reported; an unconfirmed change is redelivered after 2 min, up to 3 times, then FAILED.
+- [x] **Validation:** private networks, prefix limits, no overlap with each other or with the router's own addresses, ports must exist, and the WAN port cannot serve customers.
+- [x] **Health:**
+  - routers without an API address are judged by check-ins (online under 3 min; offline plus alert after);
+  - routers never linked are skipped;
+  - session sync skips host-less routers;
+  - a reported address inside `MIKROTIK_ALLOWED_NETWORKS` becomes the API address (audited);
+  - an archived router is told to uninstall the agent;
+  - plan PPP profiles get the wizard's PPPoE addressing.
+- [x] **UI:**
+  - Routers list restyled (stats Routers / Online / Offline / Live sessions; tabs with counts; Router, Status, Services, Sessions, Last online; "…" menu) with **+ Link MikroTik** and "Add by IP address";
+  - `/routers/link` (Identity);
+  - `/routers/<id>/setup` (Provision with copy and live waiting state, Services, Done) with a stepper;
+  - test mode offers "Simulate the router" and "Simulate the check-in", labelled simulated (mock adapter, never production).
+- [x] **TR-069** (migration `20261101200000_tr069_devices`):
+  - Devices → TR-069 page with stats (Devices, Checked in, Not answering, Never seen), tabs (All, Not answering, Never seen, Weak signal) and a table (Device, Subscriber, Model, Signal, Status, Last check-in);
+  - empty state with the ACS address and copy;
+  - Firmware (versions by model), Network login (ACS address and username; password never stored) and Enrol device;
+  - GenieACS NBI sync every 5 min (`TR069_ADAPTER=genieacs`, `TR069_NBI_URL`, optional `TR069_RX_POWER_PARAM`);
+  - a labelled mock for test mode;
+  - devices are never added from the ACS without enrolment.
+- [x] **Navigation:** Devices → Routers, TR-069, Equipment.
+- [x] **Docs:** `docs/NETWORK.md` (Link a MikroTik, TR-069, verification table) and `.env.example`.
+- [ ] **Not verified:**
+  - agent and services scripts on a real RouterOS device;
+  - GenieACS against a live ACS.
+- [ ] **Still needs the API (VPN/private address) or RADIUS:** PPPoE accounts and hotspot logins on agent-only routers. The Done step says so.
+
+| Command (2026-10-31) | Result |
+| --- | --- |
+| `prisma migrate deploy` (dev, test, e2e) | both migrations applied; `migrate diff`: empty |
+| `npm run lint` / `npm run typecheck` | exit 0 / exit 0 |
+| `npm run test` | 19 files, 159 passed (router-agent: 10 new) |
+| `npm run test:integration` | 33 files, 246 passed (router-link: 6 new, tr069: 3 new) |
+| `npm run build` / `npm run build:worker` | exit 0 / exit 0 |
+| `npm run test:e2e` | 36 passed (router-link.spec: wizard end to end, TR-069 enrol and check-in) |
+
+Visual check (production build on :3102, e2e database, dark, 1440 px and 390 px):
+- routers list;
+- wizard steps 1–4 (provision with command and waiting state, services with ports, done);
+- TR-069 empty state with ACS address.
+
+**Exact next task**: on a lab MikroTik, run Link MikroTik end to end and record the router log here (see `docs/NETWORK.md` → Link a MikroTik → Not verified on hardware); then Phase 19 — loyalty points, fiber map, ticket analytics, promo banners.
 
 ## Work log
 

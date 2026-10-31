@@ -102,7 +102,7 @@ export async function searchRecords(ctx: StaffContext, query: z.infer<typeof sea
       subtitle: `${p.currency} ${p.amount.toFixed(2)} · ${lower(p.method)}${p.providerTransactionId && p.receiptNumber ? ` · ${p.providerTransactionId}` : ""}${p.payerName ? ` · ${p.payerName}` : ""}`,
       href: `/payments/${p.id}`,
     })),
-    ...routers.map((r): SearchHit => ({ type: "router", id: r.id, title: r.name, subtitle: `${r.host} · ${lower(r.status)}`, href: `/routers/${r.id}` })),
+    ...routers.map((r): SearchHit => ({ type: "router", id: r.id, title: r.name, subtitle: `${r.host ?? "Cloudlink agent"} · ${lower(r.status)}`, href: `/routers/${r.id}` })),
     ...tickets.map((t): SearchHit => ({ type: "ticket", id: t.id, title: `${t.ticketNumber} ${t.subject}`, subtitle: lower(t.status), href: `/support/${t.id}` })),
     ...leads.map((l): SearchHit => ({ type: "lead", id: l.id, title: l.name, subtitle: `Lead · ${lower(l.stage)}`, href: `/leads/${l.id}` })),
   ];

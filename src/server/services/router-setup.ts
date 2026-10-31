@@ -9,6 +9,7 @@ import { randomToken, sha256 } from "@/server/security/crypto";
 import { consumeRateLimit } from "@/server/security/rate-limit";
 import { parseCidrList } from "@/server/domain/network-address";
 import { buildSetupScript, setupCommand, SETUP_USERNAME } from "@/server/domain/routeros-setup";
+import { agentInstallLines } from "@/server/domain/router-agent";
 import { dispatchOperation, enqueueOperation } from "@/server/jobs/operations";
 import { networkAdapterName } from "@/server/integrations/network";
 import { storeRouterCredentials } from "@/server/services/routers";
@@ -23,6 +24,8 @@ import { logger } from "@/server/observability/logger";
  * router's API credentials: a new password is generated, stored encrypted in Cloudlink and written into the script.
  * The script restricts the API to Cloudlink's management addresses (ROUTER_MANAGEMENT_SOURCES), so it never exposes
  * the API to the internet. Cloudlink still reaches the router only over its private/VPN address.
+ * The script also names the router and installs the Cloudlink agent with a fresh per-router key (stored hashed): the
+ * router then checks in every minute over HTTPS and picks up changes (domain/router-agent.ts).
  */
 export const SETUP_TTL_MS = 30 * 60_000;
 const PRIVATE_DEFAULTS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"];
@@ -41,8 +44,19 @@ function generatePassword(length = 24): string {
   return out;
 }
 
-function baseUrl(): string {
+export function appBaseUrl(): string {
   return (process.env.APP_URL ?? "").replace(/\/$/, "");
+}
+const baseUrl = appBaseUrl;
+
+/** The agent's check-in address for a router key. */
+export function agentUrl(key: string): string {
+  return `${baseUrl()}/api/v1/routers/agent/${key}`;
+}
+
+/** Routers verify Cloudlink's certificate unless ROUTER_AGENT_VERIFY_TLS=false (only for a CA the router cannot trust). */
+export function agentVerifyTls(): boolean {
+  return process.env.ROUTER_AGENT_VERIFY_TLS !== "false";
 }
 
 export async function createSetupCommand(ctx: StaffContext, routerId: string) {
@@ -59,7 +73,8 @@ export async function createSetupCommand(ctx: StaffContext, routerId: string) {
   if (!url.startsWith("https://")) warnings.push("This link is not HTTPS. Use it only in development; production requires HTTPS.");
   if (!mgmt.configured) warnings.push("ROUTER_MANAGEMENT_SOURCES is not set, so API access is limited to private networks in general. Set it to Cloudlink's VPN address for a tighter restriction.");
   if (router.pppoeAuth === "RADIUS" && !(process.env.RADIUS_SERVER_ADDRESS && process.env.RADIUS_SHARED_SECRET)) warnings.push("RADIUS_SERVER_ADDRESS and RADIUS_SHARED_SECRET are not set, so the script will not configure RADIUS.");
-  if (networkAdapterName() !== "routeros") warnings.push("The network adapter is not RouterOS, so Cloudlink will not contact this router after setup.");
+  if (router.host && networkAdapterName() !== "routeros") warnings.push("The network adapter is not RouterOS, so Cloudlink will not contact this router over its API after setup.");
+  if (url.startsWith("https://") && agentVerifyTls()) warnings.push("The router checks Cloudlink's certificate on every check-in. If the router log shows certificate errors, import the issuing CA certificate on the router.");
   await audit(ctx, { action: "router.setup_command.create", entityType: "router", entityId: router.id, metadata: { expiresAt: expiresAt.toISOString() } });
   return { command: setupCommand(url), expiresAt, warnings, managementSources: mgmt.sources };
 }
@@ -75,7 +90,11 @@ export async function serveSetupScript(token: string, meta: { ipAddress: string 
   const now = new Date();
   if (!router || !router.setupExpiresAt || router.setupExpiresAt <= now || router.archivedAt) return { status: 404, body: INVALID };
   // Claim atomically: a second download of the same link gets nothing.
-  const claimed = await db.router.updateMany({ where: { id: router.id, setupTokenHash: hash }, data: { setupTokenHash: null, setupExpiresAt: null, onboardedAt: now, onboardedFromIp: meta.ipAddress } });
+  const agentKey = randomToken(32);
+  const claimed = await db.router.updateMany({
+    where: { id: router.id, setupTokenHash: hash },
+    data: { setupTokenHash: null, setupExpiresAt: null, onboardedAt: now, onboardedFromIp: meta.ipAddress, agentKeyHash: sha256(agentKey) },
+  });
   if (!claimed.count) return { status: 404, body: INVALID };
 
   const password = generatePassword();
@@ -99,6 +118,7 @@ export async function serveSetupScript(token: string, meta: { ipAddress: string 
     radius,
     hotspotHost,
     hotspotLoginUrl: hotspotHost ? `${baseUrl()}/api/v1/hotspot-files/${router.id}/login.html` : null,
+    agentLines: agentInstallLines(router.name.slice(0, 60), { checkInUrl: agentUrl(agentKey), verifyTls: agentVerifyTls() }),
     generatedAt: now,
   });
 

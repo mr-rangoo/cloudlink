@@ -12,12 +12,14 @@ import { searchTerm } from "@/server/services/common";
 import { notifyOperators } from "@/server/services/operator-alerts";
 import { availability, healthScore, type TelemetrySample } from "@/server/domain/router-telemetry";
 import { logger } from "@/server/observability/logger";
+import { AGENT_STALE_MS } from "@/server/domain/router-agent";
 import type { Prisma, Router } from "@/generated/prisma/client";
 
 /**
  * Router inventory. Credentials are encrypted with AES-256-GCM bound to the router id (AAD `router:<id>`),
  * are write-only through the API, and are decrypted only inside the worker when an operation runs.
- * Management addresses must be private/VPN IPs (see domain/network-address.ts).
+ * Management addresses must be private/VPN IPs (see domain/network-address.ts). Routers linked with the wizard may have
+ * no address: they are reached through the Cloudlink agent (services/router-link.ts) until one is set.
  */
 
 const noControl = (v: string) => !/[\u0000-\u001f\u007f]/.test(v);
@@ -71,7 +73,8 @@ export const routerInput = z.object({
 export const routerUpdateInput = z
   .object({
     name: routerFields.name.optional(),
-    host: routerFields.host.optional(),
+    /** Empty clears the address (the router is then reached through the Cloudlink agent only). */
+    host: z.union([routerFields.host, z.literal("").transform(() => null), z.null()]).optional(),
     apiPort: routerFields.apiPort.optional(),
     useTls: routerFields.useTls.optional(),
     pppoeAuth: routerFields.pppoeAuth.optional(),
@@ -129,6 +132,8 @@ export const routerPublicSelect = {
   setupExpiresAt: true,
   onboardedAt: true,
   onboardedFromIp: true,
+  linkedAt: true,
+  agentLastSeenAt: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.RouterSelect;
@@ -139,9 +144,11 @@ export function routerHostPolicy(host: string) {
   return checkRouterHost(host, { allowedNetworks: process.env.MIKROTIK_ALLOWED_NETWORKS ?? "", allowLoopback: (process.env.APP_ENV ?? "development") !== "production" });
 }
 
-function assertConnectionPolicy(host: string, useTls: boolean) {
-  const check = routerHostPolicy(host);
-  if (!check.ok) throw new AppError("VALIDATION_ERROR", check.reason, { fields: [{ path: "host", message: check.reason }] });
+function assertConnectionPolicy(host: string | null, useTls: boolean) {
+  if (host !== null) {
+    const check = routerHostPolicy(host);
+    if (!check.ok) throw new AppError("VALIDATION_ERROR", check.reason, { fields: [{ path: "host", message: check.reason }] });
+  }
   if (process.env.MIKROTIK_CONNECTION_MODE === "api-ssl" && !useTls) {
     const message = "This deployment requires the TLS API (api-ssl, usually port 8729).";
     throw new AppError("VALIDATION_ERROR", message, { fields: [{ path: "useTls", message }] });
@@ -162,6 +169,7 @@ export async function storeRouterCredentials(routerId: string, username: string,
 
 /** Worker-side only: build the connection target with decrypted credentials. Never return this to clients. */
 export async function routerTarget(router: Pick<Router, "id" | "name" | "host" | "apiPort" | "useTls">): Promise<RouterTarget> {
+  if (!router.host) throw new PermanentError(NO_ADDRESS, "ROUTER_NO_ADDRESS");
   const cred = await db.routerCredential.findUnique({ where: { routerId: router.id } });
   if (!cred) throw new PermanentError("Router has no stored API credentials", "ROUTER_NO_CREDENTIALS");
   let parsed: { username: string; password: string };
@@ -173,9 +181,12 @@ export async function routerTarget(router: Pick<Router, "id" | "name" | "host" |
   return { id: router.id, name: router.name, host: router.host, apiPort: router.apiPort, useTls: router.useTls, username: parsed.username, password: parsed.password };
 }
 
+const NO_ADDRESS = "This router has no management address yet, so Cloudlink cannot use its API. Add its VPN or private address on the router page.";
+
 /** Policy checks repeated at execution time (defence in depth: env or router may have changed since creation). */
 export function assertExecutable(router: Pick<Router, "host" | "useTls" | "archivedAt">) {
   if (router.archivedAt) throw new PermanentError("Router is archived", "ROUTER_ARCHIVED");
+  if (!router.host) throw new PermanentError(NO_ADDRESS, "ROUTER_NO_ADDRESS");
   const check = routerHostPolicy(router.host);
   if (!check.ok) throw new PermanentError(check.reason, "ROUTER_ADDRESS_REFUSED");
   if (process.env.MIKROTIK_CONNECTION_MODE === "api-ssl" && !router.useTls) throw new PermanentError("TLS API required by MIKROTIK_CONNECTION_MODE=api-ssl", "ROUTER_TLS_REQUIRED");
@@ -183,7 +194,7 @@ export function assertExecutable(router: Pick<Router, "host" | "useTls" | "archi
 
 // ───────── CRUD ─────────
 
-function uniqueNameError(err: unknown): never {
+export function uniqueNameError(err: unknown): never {
   if ((err as { code?: string }).code === "P2002") throw new AppError("CONFLICT", "A router with this name already exists.", { fields: [{ path: "name", message: "Already in use" }] });
   throw err;
 }
@@ -230,7 +241,7 @@ export async function updateRouter(ctx: StaffContext, id: string, raw: z.input<t
   const input = routerUpdateInput.parse(raw);
   const current = await findRouter(ctx, id);
   if (current.archivedAt) throw new AppError("INVALID_STATE", "Archived routers cannot be edited.");
-  const host = input.host ?? current.host;
+  const host = input.host !== undefined ? input.host : current.host;
   const useTls = input.useTls ?? current.useTls;
   if (input.host !== undefined || input.useTls !== undefined) assertConnectionPolicy(host, useTls);
   if (input.branchId !== undefined) await assertBranchAccess(ctx, input.branchId);
@@ -296,6 +307,8 @@ export async function listRouters(ctx: StaffContext, query: z.infer<typeof route
     db.router.groupBy({ by: ["status"], where: { ...listWhere(ctx), archivedAt: null }, _count: { _all: true } }),
     db.router.count({ where: { ...listWhere(ctx), archivedAt: null, maintenanceMode: true } }),
   ]);
+  const visible = await db.router.findMany({ where: { ...listWhere(ctx), archivedAt: null }, select: { id: true } });
+  const liveSessions = await db.networkSession.count({ where: { organizationId: ctx.organizationId, endedAt: null, routerId: { in: visible.map((v) => v.id) } } });
   const telemetry = (id: string) => {
     const mine: TelemetrySample[] = samples
       .filter((x) => x.routerId === id)
@@ -315,6 +328,7 @@ export async function listRouters(ctx: StaffContext, query: z.infer<typeof route
       provisionedSubscriptions: count(subs, (s) => s.networkRouterId, r.id),
       activeSessions: count(sessions, (s) => s.routerId, r.id),
       openAlerts: count(alerts, (a) => a.routerId, r.id),
+      connection: r.host ? ("api" as const) : r.linkedAt ? ("agent" as const) : ("pending" as const),
       ...telemetry(r.id),
     })),
     total,
@@ -324,6 +338,7 @@ export async function listRouters(ctx: StaffContext, query: z.infer<typeof route
       offline: statusCount("OFFLINE") + statusCount("ERROR"),
       unknown: statusCount("UNKNOWN"),
       maintenance,
+      liveSessions,
     },
     adapter: networkAdapterName(),
   };
@@ -389,7 +404,7 @@ const pct = (v: number | undefined) => (v === undefined || !Number.isFinite(v) ?
 const nonNegative = (v: bigint | undefined) => (v === undefined || v < BigInt(0) ? null : v);
 
 /** One telemetry row per check (charts, health score, reachability heatmap). */
-function sampleOf(router: Router, health: RouterHealth, responseMs: number, sessions: number, takenAt: Date): Prisma.RouterMetricSampleCreateManyInput {
+function sampleOf(router: Router, health: RouterHealth, responseMs: number | null, sessions: number, takenAt: Date): Prisma.RouterMetricSampleCreateManyInput {
   const m = health.online ? (health.metrics ?? {}) : {};
   return {
     organizationId: router.organizationId,
@@ -397,7 +412,7 @@ function sampleOf(router: Router, health: RouterHealth, responseMs: number, sess
     takenAt,
     reachable: health.online,
     simulated: Boolean(health.simulated),
-    responseMs: health.online ? Math.max(0, Math.round(responseMs)) : null,
+    responseMs: health.online && responseMs !== null ? Math.max(0, Math.round(responseMs)) : null,
     cpuLoad: pct(m.cpuLoad),
     memoryUsedPct: pct(m.memoryUsedPct),
     diskUsedPct: pct(m.diskUsedPct),
@@ -407,6 +422,15 @@ function sampleOf(router: Router, health: RouterHealth, responseMs: number, sess
     txBps: nonNegative(m.txBps),
     sessions: health.online ? sessions : null,
   };
+}
+
+/** Health of a router without an API address, from its agent check-ins (no metrics: the agent sends none). */
+function agentHealth(router: Router, now: Date): RouterHealth {
+  const report = router.agentReport as { simulated?: boolean } | null;
+  const seen = router.agentLastSeenAt;
+  if (seen && now.getTime() - seen.getTime() < AGENT_STALE_MS) return { online: true, detail: "Checked in through the Cloudlink agent", simulated: Boolean(report?.simulated) };
+  const minutes = seen ? Math.round((now.getTime() - seen.getTime()) / 60_000) : null;
+  return { online: false, detail: minutes === null ? "The router has not checked in" : `No check-in from the router for ${minutes} minutes` };
 }
 
 /**
@@ -421,15 +445,21 @@ export async function runRouterHealthChecks(organizationId: string, routerId?: s
     const now = new Date();
     let health: RouterHealth;
     const started = Date.now();
-    try {
-      assertExecutable(router);
-      health = await adapter.health(await routerTarget(router), { uplinkInterface: router.uplinkInterface });
-    } catch (err) {
-      health = { online: false, detail: err instanceof Error ? err.message : "Health check failed" };
+    const viaAgent = !router.host;
+    if (viaAgent) {
+      if (!router.linkedAt) continue; // set up but never checked in: nothing to judge yet
+      health = agentHealth(router, now);
+    } else {
+      try {
+        assertExecutable(router);
+        health = await adapter.health(await routerTarget(router), { uplinkInterface: router.uplinkInterface });
+      } catch (err) {
+        health = { online: false, detail: err instanceof Error ? err.message : "Health check failed" };
+      }
     }
-    const responseMs = Date.now() - started;
+    const responseMs = viaAgent ? null : Date.now() - started;
     if (health.online) online++;
-    if (adapter.name !== "disabled") {
+    if (adapter.name !== "disabled" || viaAgent) {
       const sessions = await db.networkSession.count({ where: { organizationId, routerId: router.id, endedAt: null } });
       await db.routerMetricSample.createMany({ data: [sampleOf(router, health, responseMs, sessions, now)] });
     }
@@ -440,7 +470,9 @@ export async function runRouterHealthChecks(organizationId: string, routerId?: s
         status,
         lastCheckedAt: now,
         lastError: health.online ? null : health.detail.slice(0, 300),
-        ...(health.online && !health.simulated ? { lastSeenAt: now, identity: health.identity ?? router.identity, routerOsVersion: health.version ?? router.routerOsVersion, boardName: health.board ?? router.boardName } : {}),
+        ...(health.online && !health.simulated
+          ? { lastSeenAt: viaAgent ? router.agentLastSeenAt : now, identity: health.identity ?? router.identity, routerOsVersion: health.version ?? router.routerOsVersion, boardName: health.board ?? router.boardName }
+          : {}),
       },
     });
     if (!health.online) {

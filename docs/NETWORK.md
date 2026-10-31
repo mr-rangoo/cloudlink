@@ -9,6 +9,8 @@ Billing status (`Subscription.status`) and network status (`Subscription.network
 | RouterOS API wire protocol and client | Tested against an in-process, protocol-faithful fake RouterOS API server (`tests/support/fake-routeros.ts`): login, `!re`/`!done`/`!trap`/`!fatal`, split TCP frames, timeouts, dropped connections. |
 | RouterOS adapter (PPPoE secrets, hotspot users, disconnects, health, sessions) | Tested against the fake server, including read-back verification. |
 | RADIUS SQL provisioning and accounting | Tested against real PostgreSQL tables compatible with the FreeRADIUS `rlm_sql` PostgreSQL dialect. |
+| Link MikroTik agent and services scripts | Script content, escaping and one-line blocks unit-tested; the check-in, delivery, confirmation and redelivery flow integration-tested through the HTTP endpoints; the wizard browser-tested with a simulated router. **Not run on RouterOS.** |
+| TR-069 (GenieACS northbound API) | Tested against a local stand-in of the NBI. **Not verified against a live ACS.** |
 | Real MikroTik hardware | **Not verified.** No device or private network was available. |
 | Real FreeRADIUS server reading these tables | **Not verified.** |
 | Supported RouterOS versions | Designed for 6.43+ and 7.x (the post-6.43 `/login` with name and password). Older challenge-response login is not supported. |
@@ -149,7 +151,58 @@ The sessions page counts open PPPoE, hotspot and device (MAC) sessions, totals t
 
 ## Setting up a MikroTik router
 
-### Option A: the one-time setup command (recommended)
+### Link a MikroTik (recommended)
+**Devices → Routers → Link MikroTik** opens a four-step wizard. Code: `src/app/(staff)/routers/link-wizard.tsx`, `src/server/services/router-link.ts`, `src/server/domain/router-agent.ts`.
+
+1. **Identity.** Name the router (and optionally its branch). Cloudlink creates the router record with no address and no credentials yet.
+2. **Provision.** The page generates the one-time setup command (Option A below) and waits.
+   - The script also sets the router's identity to that name and installs the **Cloudlink agent**: a RouterOS script plus a scheduler (`cloudlink-agent`, every minute, also at start-up).
+   - Each run, the agent reports the router's identity, RouterOS version, board, ports, addresses, bridge ports and DHCP clients. It POSTs them over HTTPS to `/api/v1/routers/agent/<key>` and imports Cloudlink's answer.
+   - The page turns to **Router linked** on the first check-in, with the model and version the router reported.
+   - The key belongs to one router. Only its SHA-256 hash is stored, and every new setup command rotates it.
+   - The router always connects out, so no port has to be opened on it.
+3. **Services.** Choose:
+   - **Hotspot** and/or **PPPoE**;
+   - the **internet (WAN) port**;
+   - for every other reported port: *Not used*, *Hotspot*, *PPPoE* or *Hotspot and PPPoE*;
+   - the hotspot network (default `10.5.50.0/24`), login page address, devices per login, and **Block connection sharing**;
+   - the PPPoE address pool (default `10.10.0.0/16`).
+
+   Cloudlink checks the ports exist and the networks are private and do not overlap each other or addresses already on the router. It then queues the change.
+   - On the next check-in the router receives a script. It removes only items Cloudlink created before (matched by name or by the comment `cloudlink`), then builds:
+     - bridges `cloudlink-hotspot` and `cloudlink-pppoe` holding the chosen ports (each port leaves any other bridge);
+     - the hotspot address, pool, DHCP server, profile, server, walled garden and login page;
+     - the PPPoE pool, the `cloudlink` PPP profile and the PPPoE servers;
+     - masquerade rules out of the WAN port;
+     - DNS for customers, with DNS queries from the WAN port dropped.
+   - **Block connection sharing** adds a postrouting rule setting TTL 1 on packets to hotspot clients, so a phone or second router re-sharing the connection cannot forward them.
+   - Devices per login sets `shared-users` on the default hotspot user profile; plans with a device limit set their own.
+   - The script's last line confirms the change to `/api/v1/routers/agent/<key>/result`. The page shows **Applied on the router** only after that confirmation.
+   - A failed import is reported as failed. A change that is never confirmed is sent again after two minutes, up to three times, then marked failed with a pointer to the router log.
+   - Saving again replaces any change still pending.
+4. **Done.** A summary of what the router confirmed, with links to plans, vouchers and the router page.
+
+**Status and health.**
+- A router without a management address is judged by its check-ins: online while the last one is under three minutes old, offline (with the usual alert) after that.
+- The scheduled health check does this. A router that was set up but never checked in stays "Not linked" and raises no alert.
+- When `MIKROTIK_ALLOWED_NETWORKS` is set and the router reports an address inside it (for example its WireGuard address), Cloudlink uses that address for the API automatically and records it in the audit log.
+- An archived router is told to remove its agent on its next check-in.
+
+**What still needs the API (or RADIUS).**
+- Creating PPPoE accounts and hotspot logins, reading sessions and disconnecting users all go through the router API, over a VPN or private address, or through RADIUS. The agent does not do these.
+- Give the router its VPN address on its page (Edit), or let it be picked up as above. Until then the Done step says so.
+- Plan profiles synced to a router running Cloudlink's PPPoE server get the same router address and pool.
+
+**Certificates.** The agent asks RouterOS to verify Cloudlink's certificate (`check-certificate=yes-without-crl`). The router must trust the issuing CA. If the router log shows certificate errors, import that CA on the router; only if that is impossible, set `ROUTER_AGENT_VERIFY_TLS=false`. The one-time setup download itself is protected by its single use and 30-minute life.
+
+**Test mode.** With the mock network adapter, outside production, the wizard offers **Simulate the router** and **Simulate the check-in**. The simulated router looks like a MikroTik with its default configuration. Everything it reports is marked as simulated, and its status shows "Simulated".
+
+**Not verified on hardware.**
+- The agent and services scripts are unit-tested for content, escaping and one-line blocks.
+- The whole flow is integration-tested through the HTTP endpoints, and browser-tested with the simulation.
+- They have not been run on a real RouterOS device. Before relying on them, run the setup command and a services change on a lab router, and watch System → Logs for "Cloudlink" lines.
+
+### Option A: the one-time setup command
 On the router's page, click **Setup command**, then **Generate command**. You get one line to paste into the router terminal (WinBox → New Terminal, or SSH):
 
 ```
@@ -171,7 +224,7 @@ The script itself (original Cloudlink content, idempotent):
 - for hotspot routers, adds Cloudlink's host to the walled garden;
 - deletes the downloaded file, which contains the password.
 
-It never opens the API to the internet and does not change routing, PPPoE servers, pools or profiles.
+It never opens the API to the internet and does not change routing, PPPoE servers, pools or profiles (the Link MikroTik services step does that, separately and only when you save it).
 
 Things to know:
 - Set `ROUTER_MANAGEMENT_SOURCES` to the address the Cloudlink worker uses on your VPN (for example `10.8.0.1/32`). If it is empty, the API is restricted to private ranges in general, which is looser.
@@ -243,6 +296,36 @@ Run WireGuard, OpenVPN or IPsec from the worker host to your routers, and put th
 | `ROUTER_MANAGEMENT_SOURCES` | Addresses the worker connects from (its VPN address). Written into setup scripts as the only allowed API sources. |
 | `RADIUS_SERVER_ADDRESS`, `RADIUS_SHARED_SECRET` | Written into the setup script of RADIUS routers. Cloudlink does not speak RADIUS UDP itself. |
 | `OPERATION_BACKOFF_BASE_MS` | Shortens retry backoff outside production. Used by end-to-end tests. |
+
+## TR-069 devices
+**Devices → TR-069** lists customer ONUs and routers that are managed over TR-069 (CWMP). Code: `src/server/services/tr069.ts`, `src/server/integrations/tr069.ts`.
+
+**What it shows.**
+- **Stats:** devices, checked in, not answering, never seen.
+- **Tabs:** All, Not answering, Never seen, Weak signal.
+- **Table:** device, subscriber, model and firmware, optical signal, status and last check-in.
+
+A device is:
+- **checked in** when its last inform is under an hour old;
+- **not answering** when it informed before but not within the hour;
+- **never seen** when the ACS has no inform for it.
+
+Its signal is weak below -27 dBm.
+
+**Enrolment.**
+- **Enrol device** takes the serial number, with manufacturer, model, label and subscriber optional.
+- Devices are scoped to the organization, and to the subscriber's branch.
+- Cloudlink never adds devices from the ACS by itself, because the ACS cannot say which ISP a device belongs to.
+
+**ACS.**
+- Cloudlink reads an ACS; it is not one.
+- With `TR069_ADAPTER=genieacs`, the worker queries the GenieACS northbound API (`TR069_NBI_URL`) every five minutes, and right after an enrolment or **Check now**. It reads each enrolled serial's last inform, model, firmware, WAN address and, if `TR069_RX_POWER_PARAM` names the vendor's parameter, optical receive power.
+- **Network login** shows the ACS address (`TR069_ACS_URL`) and username (`TR069_ACS_USERNAME`) to configure on devices. The ACS password is never stored in Cloudlink.
+- **Firmware** lists versions by model. Upgrades are pushed from the ACS.
+
+**Test mode.** `TR069_ADAPTER=mock` (refused in production) derives stable readings from each serial number and marks them "Simulated".
+
+**Not verified against a live ACS.** The GenieACS client is tested against a local stand-in of its northbound API only.
 
 ## Testing against a real router
 Do this when hardware and private connectivity are available.

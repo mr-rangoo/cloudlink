@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/server/db/client";
 import { dispatchOperation, enqueueOperation } from "@/server/jobs/operations";
+import { tr069AdapterName } from "@/server/integrations/tr069";
 
 /**
  * Recurring jobs. Each run is a durable BackgroundOperation whose dedupeKey contains the time bucket,
@@ -10,8 +11,8 @@ export interface RecurringJob {
   type: string;
   /** Bucket granularity in minutes. */
   everyMinutes: number;
-  /** "routers": only organizations that have at least one active router. */
-  scope?: "all" | "routers";
+  /** "routers": only organizations that have at least one active router. "tr069": organizations with enrolled TR-069 devices, when an ACS is connected. */
+  scope?: "all" | "routers" | "tr069";
 }
 
 export const RECURRING_JOBS: RecurringJob[] = [
@@ -26,11 +27,12 @@ export const RECURRING_JOBS: RecurringJob[] = [
   { type: "network.sync_sessions", everyMinutes: 5, scope: "routers" },
   { type: "network.monitor", everyMinutes: 15, scope: "routers" },
   { type: "plans.enforce_schedules", everyMinutes: 1, scope: "routers" },
+  { type: "tr069.sync", everyMinutes: 5, scope: "tr069" },
   { type: "maintenance.prune", everyMinutes: 24 * 60 },
 ];
 
 /** Routine operations that leave nothing worth keeping once they succeed. Failures are always kept. */
-const ROUTINE_TYPES = ["network.sync_sessions", "routers.healthcheck", "network.monitor", "maintenance.prune", "subscriptions.expire_due", "subscriptions.remind_expiring", "operators.daily_digest", "plans.enforce_schedules"];
+const ROUTINE_TYPES = ["network.sync_sessions", "tr069.sync", "routers.healthcheck", "network.monitor", "maintenance.prune", "subscriptions.expire_due", "subscriptions.remind_expiring", "operators.daily_digest", "plans.enforce_schedules"];
 export const ROUTINE_RETENTION_DAYS = 14;
 
 /** Delete succeeded routine operations older than the retention window (live session views create one every 30 s). */
@@ -50,11 +52,16 @@ export async function scheduleRecurringJobs(now = new Date()): Promise<number> {
   const withRouters = new Set(
     (await db.router.groupBy({ by: ["organizationId"], where: { archivedAt: null, organizationId: { in: orgs.map((o) => o.id) } } })).map((r) => r.organizationId),
   );
+  const acs = tr069AdapterName() !== "disabled";
+  const withDevices = new Set(
+    acs ? (await db.tr069Device.groupBy({ by: ["organizationId"], where: { organizationId: { in: orgs.map((o) => o.id) } } })).map((d) => d.organizationId) : [],
+  );
   let created = 0;
   for (const job of RECURRING_JOBS) {
     const bucket = bucketKey(now, job.everyMinutes);
     for (const org of orgs) {
       if (job.scope === "routers" && !withRouters.has(org.id)) continue;
+      if (job.scope === "tr069" && !withDevices.has(org.id)) continue;
       const dedupeKey = `${job.type}:${org.id}:${bucket}`;
       const op = await enqueueOperation({ type: job.type, organizationId: org.id, payload: { bucket }, dedupeKey, maxAttempts: 3 });
       if (op.status === "PENDING") {

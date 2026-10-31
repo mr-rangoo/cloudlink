@@ -78,6 +78,8 @@ export interface ServiceProfile {
   /** Hotspot only: simultaneous logins per account (shared-users). */
   sharedUsers: number | null;
   comment?: string;
+  /** PPPoE only, on routers running Cloudlink's PPPoE server: addressing from the link wizard (router address and pool). */
+  addressing?: { localAddress: string; remotePool: string } | null;
 }
 
 /** RouterOS prints burst times with a unit ("30s/30s"); compare limits without it. */
@@ -542,6 +544,9 @@ class RouterOsAdapter implements NetworkAdapter {
           ...(p.rateLimit ? [attr("rate-limit", p.rateLimit)] : []),
           ...(p.kind === "HOTSPOT" && p.sharedUsers ? [attr("shared-users", String(p.sharedUsers))] : []),
           ...(p.comment && p.kind === "PPPOE" ? [attr("comment", p.comment)] : []),
+          ...(p.kind === "PPPOE" && p.addressing
+            ? [attr("local-address", p.addressing.localAddress), attr("remote-address", p.addressing.remotePool), attr("dns-server", p.addressing.localAddress)]
+            : []),
         ];
         if (existing) {
           if (fields.length) await c.command([`${path}/set`, attr(".id", existing[".id"]!), ...fields]);

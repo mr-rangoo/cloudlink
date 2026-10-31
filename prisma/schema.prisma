@@ -1533,39 +1533,50 @@ enum PppoeAuthMode {
 }
 
 model Router {
-  id              String        @id @default(uuid(7)) @db.Uuid
-  organizationId  String        @db.Uuid
-  branchId        String?       @db.Uuid
+  id              String         @id @default(uuid(7)) @db.Uuid
+  organizationId  String         @db.Uuid
+  branchId        String?        @db.Uuid
   name            String
-  host            String // private address / VPN address only (allowlisted)
-  apiPort         Int           @default(8728)
-  useTls          Boolean       @default(false)
-  pppoeAuth       PppoeAuthMode @default(LOCAL)
-  hotspotEnabled  Boolean       @default(false)
-  pppoeEnabled    Boolean       @default(true)
+  /// Private / VPN address for the API (allowlisted). Empty until known: routers linked with the wizard are reached through the agent.
+  host            String?
+  apiPort         Int            @default(8728)
+  useTls          Boolean        @default(false)
+  pppoeAuth       PppoeAuthMode  @default(LOCAL)
+  hotspotEnabled  Boolean        @default(false)
+  pppoeEnabled    Boolean        @default(true)
   /// Host name of the hotspot login page (e.g. "wifi.login"); the captive portal only posts logins to this host or a private address.
   hotspotDnsName  String?
   /// Interface whose traffic is charted (e.g. "ether1"); empty = the first running Ethernet port.
   uplinkInterface String?
   /// Planned work: offline alerts are not raised and the router page says so.
-  maintenanceMode Boolean       @default(false)
+  maintenanceMode Boolean        @default(false)
   maintenanceNote String?
-  status          RouterStatus  @default(UNKNOWN)
+  status          RouterStatus   @default(UNKNOWN)
   identity        String?
   routerOsVersion String?
   boardName       String?
-  lastSeenAt      DateTime?     @db.Timestamptz(6)
-  lastCheckedAt   DateTime?     @db.Timestamptz(6)
+  lastSeenAt      DateTime?      @db.Timestamptz(6)
+  lastCheckedAt   DateTime?      @db.Timestamptz(6)
   lastError       String?
   notes           String?
-  archivedAt      DateTime?     @db.Timestamptz(6)
+  archivedAt      DateTime?      @db.Timestamptz(6)
   // One-time setup command (see services/router-setup.ts): only the token hash is stored.
-  setupTokenHash  String?       @unique
-  setupExpiresAt  DateTime?     @db.Timestamptz(6)
-  onboardedAt     DateTime?     @db.Timestamptz(6)
+  setupTokenHash  String?        @unique
+  setupExpiresAt  DateTime?      @db.Timestamptz(6)
+  onboardedAt     DateTime?      @db.Timestamptz(6)
   onboardedFromIp String?
-  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
+  // Cloudlink agent (installed by the setup script): the router checks in every minute and pulls pending changes.
+  agentKeyHash    String?        @unique
+  agentLastSeenAt DateTime?      @db.Timestamptz(6)
+  /// When the router first reported back after the setup script (identity, version, ports).
+  linkedAt        DateTime?      @db.Timestamptz(6)
+  /// Last check-in report: identity, version, board, ports, addresses, bridge membership (see domain/router-agent.ts).
+  agentReport     Json?
+  /// Services chosen in the link wizard (hotspot / PPPoE, ports, limits).
+  servicesConfig  Json?
+  changes         RouterChange[]
+  createdAt       DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(6)
 
   credential RouterCredential?
   packages   PackageRouter[]
@@ -1942,4 +1953,55 @@ model PaymentGatewaySettings {
   organizationId String   @id @db.Uuid
   activeProvider String // mpesa_daraja | kopokopo
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+}
+
+// A change waiting for a router to pull through the Cloudlink agent (e.g. the services chosen in the link wizard).
+model RouterChange {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  routerId       String    @db.Uuid
+  kind           String // services
+  config         Json
+  status         String    @default("PENDING") // PENDING | DELIVERED | APPLIED | FAILED | SUPERSEDED
+  deliveries     Int       @default(0)
+  requestedById  String?   @db.Uuid
+  error          String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  deliveredAt    DateTime? @db.Timestamptz(6)
+  appliedAt      DateTime? @db.Timestamptz(6)
+  router         Router    @relation(fields: [routerId], references: [id], onDelete: Cascade)
+
+  @@index([routerId, status])
+}
+
+/// A customer device (ONU, CPE, Wi-Fi router) managed over TR-069 (CWMP). Staff enrol it by serial number; the ACS
+/// (e.g. GenieACS) reports check-ins, model, firmware and optical signal. Cloudlink is not an ACS itself.
+model Tr069Device {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  organizationId  String    @db.Uuid
+  serialNumber    String
+  manufacturer    String?
+  oui             String?
+  productClass    String?
+  softwareVersion String?
+  label           String?
+  /// Branch of the subscriber it is assigned to (staff limited to branches see only their devices).
+  branchId        String?   @db.Uuid
+  subscriberId    String?   @db.Uuid
+  /// The device's id in the ACS (GenieACS _id), once it has been seen there.
+  acsDeviceId     String?
+  lastInformAt    DateTime? @db.Timestamptz(6)
+  /// Optical receive power in dBm (ONUs), when the ACS reports it.
+  rxPowerDbm      Decimal?  @db.Decimal(5, 2)
+  ipAddress       String?
+  /// Set by the test-mode simulation only; never by a real ACS.
+  simulated       Boolean   @default(false)
+  lastSyncedAt    DateTime? @db.Timestamptz(6)
+  createdById     String?   @db.Uuid
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@unique([organizationId, serialNumber])
+  @@index([organizationId, lastInformAt])
+  @@index([subscriberId])
 }

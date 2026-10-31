@@ -96,7 +96,7 @@ export async function NetworkAccessCard({ ctx, subscriptions }: { ctx: StaffCont
                   provisioned={n.provisioned}
                   username={n.username}
                   currentRouterId={n.router?.id ?? null}
-                  routers={routers.map((r) => ({ id: r.id, label: `${r.name} (${r.host}${r.pppoeAuth === "RADIUS" ? ", RADIUS" : ""})` }))}
+                  routers={routers.map((r) => ({ id: r.id, label: `${r.name} (${r.host ?? "agent only"}${r.pppoeAuth === "RADIUS" ? ", RADIUS" : ""})` }))}
                 />
               ) : null}
             </section>

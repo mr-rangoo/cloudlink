@@ -9,12 +9,13 @@ import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components
 import { Field, Input, Select } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 import { ActionDialog } from "@/components/action-dialog";
+import { RowMenu, type MenuItem } from "@/components/ui/menu";
 import { formValues, useMutation } from "@/components/use-mutation";
 
 export interface RouterFormValues {
   id: string;
   name: string;
-  host: string;
+  host: string | null;
   apiPort: number;
   useTls: boolean;
   pppoeAuth: string;
@@ -27,7 +28,7 @@ export interface RouterFormValues {
 }
 
 /** Register or edit a router. Credentials are only collected on creation (rotation has its own dialog). */
-export function RouterFormDialog({ router, branches }: { router?: RouterFormValues; branches: Array<{ id: string; name: string }> }) {
+export function RouterFormDialog({ router, branches, triggerLabel }: { router?: RouterFormValues; branches: Array<{ id: string; name: string }>; triggerLabel?: string }) {
   const [open, setOpen] = React.useState(false);
   const { mutate, pending, errors, formError } = useMutation();
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -58,8 +59,8 @@ export function RouterFormDialog({ router, branches }: { router?: RouterFormValu
             <Pencil /> Edit
           </Button>
         ) : (
-          <Button>
-            <Plus /> Add router
+          <Button variant={triggerLabel ? "secondary" : "primary"}>
+            <Plus /> {triggerLabel ?? "Add router"}
           </Button>
         )}
       </DialogTrigger>
@@ -80,8 +81,14 @@ export function RouterFormDialog({ router, branches }: { router?: RouterFormValu
                 ))}
               </Select>
             </Field>
-            <Field id={`r-host-${p}`} label="Management IP (private or VPN)" error={errors.host} required>
-              <Input name="host" defaultValue={router?.host} placeholder="10.8.0.2" inputMode="decimal" autoComplete="off" spellCheck={false} />
+            <Field
+              id={`r-host-${p}`}
+              label="Management IP (private or VPN)"
+              error={errors.host}
+              required={!router}
+              hint={router ? "Leave empty if Cloudlink reaches this router only through its agent." : undefined}
+            >
+              <Input name="host" defaultValue={router?.host ?? ""} placeholder="10.8.0.2" inputMode="decimal" autoComplete="off" spellCheck={false} />
             </Field>
             <Field id={`r-port-${p}`} label="API port" hint="8728 (API) or 8729 (API-SSL)" error={errors.apiPort}>
               <Input name="apiPort" defaultValue={router?.apiPort ?? 8728} inputMode="numeric" />
@@ -192,6 +199,16 @@ export function RotateCredentialsDialog({ routerId }: { routerId: string }) {
       </DialogContent>
     </Dialog>
   );
+}
+
+/** "…" menu on the routers list. */
+export function RouterRowMenu({ id, name, linked, agent, canWrite }: { id: string; name: string; linked: boolean; agent: boolean; canWrite: boolean }) {
+  const items: MenuItem[] = [
+    { label: "Open", href: linked ? `/routers/${id}` : `/routers/${id}/setup` },
+    ...(canWrite && linked && agent ? [{ label: "Services and ports", href: `/routers/${id}/setup?step=services` }] : []),
+    ...(canWrite ? [{ label: linked ? "Run setup again" : "Continue setup", href: `/routers/${id}/setup?step=provision` }] : []),
+  ];
+  return <RowMenu items={items} label={`Actions for ${name}`} />;
 }
 
 /** Queue a health check; the worker records the result, so re-read the page a few seconds later. */
@@ -311,9 +328,10 @@ export function SetupCommandDialog({ routerId, name }: { routerId: string; name:
                 <li>creates a limited API user with a new password (Cloudlink stores it encrypted),</li>
                 <li>allows the API only from Cloudlink&apos;s management addresses and blocks it from everywhere else,</li>
                 <li>configures RADIUS for routers that use it, and the captive-portal walled garden for hotspot routers,</li>
+                <li>names the router and installs the Cloudlink agent, which checks in every minute over HTTPS,</li>
                 <li>deletes itself afterwards.</li>
               </ul>
-              <p className="text-muted-foreground">Cloudlink must still reach the router over its private or VPN address. Generating a new command replaces any earlier one.</p>
+              <p className="text-muted-foreground">The API is still reached only over the router&apos;s private or VPN address. Generating a new command replaces any earlier one.</p>
             </>
           )}
           <DialogFooter>

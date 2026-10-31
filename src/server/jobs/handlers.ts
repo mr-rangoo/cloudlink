@@ -1,4 +1,5 @@
 import "server-only";
+import { syncTr069Devices } from "@/server/services/tr069";
 import type { OperationHandlers } from "@/server/jobs/operations";
 import { PermanentError } from "@/server/jobs/operations";
 import { logger } from "@/server/observability/logger";
@@ -89,6 +90,12 @@ export const operationHandlers: OperationHandlers = {
     if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
     const { routerId } = op.payload as { routerId?: string };
     return runRouterHealthChecks(op.organizationId, routerId);
+  },
+
+  /** Read the organization's enrolled TR-069 devices from the ACS (check-ins, model, firmware, signal). */
+  "tr069.sync": async (op) => {
+    if (!op.organizationId) throw new PermanentError("organizationId missing", "BAD_PAYLOAD");
+    return syncTr069Devices(op.organizationId);
   },
 
   /** Pull active PPPoE/Hotspot sessions from routers or RADIUS accounting. */

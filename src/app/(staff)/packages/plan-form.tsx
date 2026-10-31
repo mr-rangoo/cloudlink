@@ -67,7 +67,8 @@ export interface PlanValues {
 export interface RouterChoice {
   id: string;
   name: string;
-  host: string;
+  /** Null for routers reached only through the Cloudlink agent. */
+  host: string | null;
   pppoeEnabled: boolean;
   hotspotEnabled: boolean;
 }
@@ -494,7 +495,7 @@ export function PlanForm({ initial, routers, currency, readOnly, canSync }: { in
                         />
                         <span className="font-medium">{r.name}</span>
                       </span>
-                      <span className="font-mono text-xs text-muted-foreground">{r.host}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{r.host ?? "Cloudlink agent"}</span>
                     </label>
                   ))}
                   {err("routers") ? <p className="text-xs font-medium text-danger sm:col-span-2">{err("routers")}</p> : null}

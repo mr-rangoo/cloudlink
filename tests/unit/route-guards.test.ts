@@ -32,6 +32,8 @@ const RAW_ROUTES: Record<string, string> = {
   "v1/health/ready/route.ts": "readiness, coarse statuses only",
   "v1/openapi.json/route.ts": "API contract, no tenant data",
   "v1/routers/setup/[token]/route.ts": "router setup script (single-use token, rate-limited)",
+  "v1/routers/agent/[key]/route.ts": "router agent check-in (per-router key, hashed, rate-limited)",
+  "v1/routers/agent/[key]/result/route.ts": "router confirms a change it imported (per-router key, rate-limited)",
   "v1/branding/[slug]/logo/route.ts": "organization logo image for portal/hotspot pages (public by design)",
   "v1/hotspot-files/[routerId]/login.html/route.ts": "router hotspot login page that redirects to the captive portal (no secrets, rate-limited)",
 };

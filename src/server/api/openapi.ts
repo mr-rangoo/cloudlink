@@ -21,6 +21,9 @@ import { inventoryQuery, itemActionInput, itemInput } from "@/server/services/in
 import { agentInput, agentUpdateInput, batchInput, redeemInput, remittanceInput, sendVoucherInput } from "@/server/services/vouchers";
 import { alertListQuery, routerInput, routerListQuery, routerUpdateInput } from "@/server/services/routers";
 import { telemetryQuery } from "@/server/services/router-insights";
+import { linkRouterInput } from "@/server/services/router-link";
+import { deviceUpdateInput, enrolInput, tr069ListQuery } from "@/server/services/tr069";
+import { servicesInput } from "@/server/domain/router-agent";
 import { searchQuery } from "@/server/services/search";
 import { campaignInput, sendCampaignInput } from "@/server/services/campaigns";
 import { operatorAlertInput } from "@/server/services/operator-alerts";
@@ -263,6 +266,18 @@ export const operations: Operation[] = [
   { method: "get", path: "/routers/:id", summary: "Router detail (never includes credentials)", tag: "Network", auth: "session", permission: "routers.read" },
   { method: "patch", path: "/routers/:id", summary: "Edit a router; send username+password to rotate credentials", tag: "Network", auth: "session", permission: "routers.write", body: routerUpdateInput },
   { method: "post", path: "/routers/:id/setup-command", summary: "One-time router setup command (30 min, single use; response never stored)", tag: "Network", auth: "session", permission: "routers.write" },
+  { method: "post", path: "/routers/link", summary: "Link a MikroTik, step 1: create the router (no address or credentials yet)", tag: "Network", auth: "session", permission: "routers.write", body: linkRouterInput, responses: { "201": "Created" } },
+  { method: "get", path: "/routers/:id/link", summary: "Link wizard state: agent check-ins, reported ports, saved services, latest change", tag: "Network", auth: "session", permission: "routers.read" },
+  { method: "put", path: "/routers/:id/services", summary: "Link a MikroTik, step 3: hotspot/PPPoE, ports, devices per login, sharing block (applied by the router on its next check-in)", tag: "Network", auth: "session", permission: "routers.write", body: servicesInput },
+  { method: "post", path: "/routers/:id/simulate", summary: "Test mode only: a simulated router checks in and confirms pending changes", tag: "Network", auth: "session", permission: "routers.write", responses: { "403": "Not in test mode" } },
+  { method: "post", path: "/routers/agent/:key", summary: "Router agent check-in (every minute); answers with a RouterOS script to import. The per-router key is the authorization", tag: "Network", auth: "none", responses: { "200": "RouterOS script (text/plain)", "404": "Unknown key" } },
+  { method: "post", path: "/routers/agent/:key/result", summary: "Router confirms or reports failure of a change it imported", tag: "Network", auth: "none", responses: { "200": "Recorded" } },
+  { method: "get", path: "/tr069/devices", summary: "TR-069 devices with check-in state and signal; counts and the ACS address", tag: "Network", auth: "session", permission: "inventory.read", query: tr069ListQuery },
+  { method: "post", path: "/tr069/devices", summary: "Enrol a TR-069 device by serial number", tag: "Network", auth: "session", permission: "inventory.write", body: enrolInput, responses: { "201": "Enrolled", "409": "Already enrolled" } },
+  { method: "patch", path: "/tr069/devices/:id", summary: "Change a TR-069 device label or subscriber", tag: "Network", auth: "session", permission: "inventory.write", body: deviceUpdateInput },
+  { method: "delete", path: "/tr069/devices/:id", summary: "Remove a TR-069 device from Cloudlink", tag: "Network", auth: "session", permission: "inventory.write" },
+  { method: "post", path: "/tr069/sync", summary: "Read the devices from the ACS now (worker)", tag: "Network", auth: "session", permission: "inventory.read", responses: { "202": "Queued" } },
+  { method: "get", path: "/tr069/firmware", summary: "Firmware versions by model", tag: "Network", auth: "session", permission: "inventory.read" },
   { method: "get", path: "/routers/setup/:token", summary: "Router downloads its setup script (.rsc); the single-use token is the authorization", tag: "Network", auth: "none", responses: { "200": "RouterOS script (text/plain)", "404": "Invalid, expired or used" } },
   { method: "post", path: "/routers/:id/archive", summary: "Archive a router (refused while subscriptions are provisioned on it)", tag: "Network", auth: "session", permission: "routers.write" },
   { method: "post", path: "/routers/:id/health-check", summary: "Queue a reachability check (runs in the worker)", tag: "Network", auth: "session", permission: "network.operate", responses: { "202": "Queued" } },

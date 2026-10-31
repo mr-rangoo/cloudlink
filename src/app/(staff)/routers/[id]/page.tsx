@@ -80,7 +80,7 @@ export default async function RouterDetailPage({ params, searchParams }: { param
     <div className="space-y-6">
       <PageHeader
         title={router.name}
-        description={`${router.host}:${router.apiPort} · ${router.useTls ? "API-SSL (TLS)" : "plain API"} · ${router.pppoeAuth === "RADIUS" ? "PPPoE via RADIUS" : "local PPP secrets"}`}
+        description={`${router.host ? `${router.host}:${router.apiPort} · ${router.useTls ? "API-SSL (TLS)" : "plain API"}` : "Cloudlink agent (checks in every minute)"} · ${router.pppoeAuth === "RADIUS" ? "PPPoE via RADIUS" : "local PPP secrets"}`}
         actions={
           <>
             {canOperate ? <HealthCheckButton routerId={router.id} /> : null}
@@ -162,7 +162,7 @@ export default async function RouterDetailPage({ params, searchParams }: { param
                 </CardHeader>
                 <CardContent>
                   <dl className="grid divide-y divide-border text-sm sm:grid-cols-2 sm:gap-x-8 sm:divide-y-0">
-                    {detail("Management address", <span className="font-mono">{`${router.host}:${router.apiPort}`}</span>)}
+                    {detail("Management address", router.host ? <span className="font-mono">{`${router.host}:${router.apiPort}`}</span> : <span className="text-muted-foreground">None. Reached through the Cloudlink agent.</span>)}
                     {detail("Transport", router.useTls ? "TLS (API-SSL)" : "Plain API, private network only")}
                     {detail("PPPoE", router.pppoeEnabled ? (router.pppoeAuth === "RADIUS" ? "Enabled, authenticated by RADIUS" : "Enabled, local secrets") : "Not used")}
                     {detail("Hotspot", router.hotspotEnabled ? `Enabled${router.hotspotDnsName ? ` at ${router.hotspotDnsName}` : ""}` : "Not used")}

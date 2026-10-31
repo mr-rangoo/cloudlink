@@ -10,7 +10,8 @@
  *  4. for RADIUS routers, points PPP authentication and accounting at the RADIUS server;
  *  5. for hotspot routers, adds Cloudlink's host to the walled garden (captive portal over HTTP and HTTPS), installs
  *     Cloudlink's login page (a redirect to the captive portal) and allows plain-password login on the hotspot profiles;
- *  6. deletes the downloaded script file, which contains the password.
+ *  6. names the router and installs the Cloudlink agent (see router-agent.ts), when given;
+ *  7. deletes the downloaded script file, which contains the password.
  * It never opens the API to the internet, never changes routing, and never touches unrelated configuration.
  */
 export const SETUP_FILE_NAME = "cloudlink-setup.rsc";
@@ -33,6 +34,8 @@ export interface SetupScriptInput {
   hotspotHost?: string | null;
   /** Hotspot routers: Cloudlink's login page for this router (redirects to the captive portal). */
   hotspotLoginUrl?: string | null;
+  /** Router name and Cloudlink agent lines (domain/router-agent.ts agentInstallLines). */
+  agentLines?: string[];
   generatedAt: Date;
 }
 
@@ -94,9 +97,10 @@ export function buildSetupScript(input: SetupScriptInput): string {
       );
     }
   }
+  if (input.agentLines?.length) lines.push("", "# 6. Router name and the Cloudlink agent (checks in every minute and applies changes made in Cloudlink)", ...input.agentLines);
   lines.push(
     "",
-    "# 6. Remove this file (it contains the API password)",
+    "# 7. Remove this file (it contains the API password)",
     `:do { /file remove [find name="${SETUP_FILE_NAME}"] } on-error={}`,
     `:log info "Cloudlink setup: done"`,
     "",

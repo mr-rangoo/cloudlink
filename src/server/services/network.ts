@@ -11,6 +11,7 @@ import { networkAdapter, networkAdapterName, type ActiveSession, type DiagnosisC
 import { routerRateLimit, type RateSpec } from "@/lib/plans";
 import { radiusActiveSessions, radiusConfigured, radiusRemoveUser, radiusUpsertUser } from "@/server/integrations/radius";
 import { assertExecutable, openAlert, routerTarget } from "@/server/services/routers";
+import { planServices, PPPOE_BRIDGE, servicesInput } from "@/server/domain/router-agent";
 import { assertPlanAllowedOnRouter, planOpenAt } from "@/server/services/plan-rules";
 import { actorType, actorUserId, lockRow, searchTerm } from "@/server/services/common";
 import { logger } from "@/server/observability/logger";
@@ -502,6 +503,14 @@ export function profileNameOf(pkg: { networkProfile: string | null; name: string
   return pkg.networkProfile || pkg.name;
 }
 
+/** Router address and pool for plan profiles on routers set up with the link wizard's PPPoE server. */
+function pppoeAddressing(router: Router): { localAddress: string; remotePool: string } | null {
+  const parsed = router.servicesConfig ? servicesInput.safeParse(router.servicesConfig) : null;
+  if (!parsed?.success || !parsed.data.pppoe) return null;
+  const plan = planServices(parsed.data).pppoe;
+  return plan ? { localAddress: plan.localAddress, remotePool: PPPOE_BRIDGE } : null;
+}
+
 async function performProfileSync(op: NetworkOperation, router: Router, adapter: NetworkAdapter, attempt: number): Promise<Outcome> {
   const params = (op.params ?? {}) as Record<string, unknown>;
   const pkg = await db.package.findFirst({ where: { id: String(params.packageId ?? ""), organizationId: op.organizationId } });
@@ -513,7 +522,7 @@ async function performProfileSync(op: NetworkOperation, router: Router, adapter:
   if (restricted.length && !restricted.some((r) => r.routerId === router.id)) return { cancelled: "The plan is restricted to other routers" };
   return adapter.upsertProfile(
     await routerTarget(router),
-    { kind, name: profileNameOf(pkg), rateLimit: routerRateLimit(pkg), sharedUsers: kind === "HOTSPOT" ? (pkg.deviceLimit ?? 1) : null, comment: `cloudlink plan ${pkg.id}` },
+    { kind, name: profileNameOf(pkg), rateLimit: routerRateLimit(pkg), sharedUsers: kind === "HOTSPOT" ? (pkg.deviceLimit ?? 1) : null, comment: `cloudlink plan ${pkg.id}`, addressing: kind === "PPPOE" ? pppoeAddressing(router) : null },
     { attempt },
   );
 }
@@ -1065,7 +1074,7 @@ async function routerSessions(router: Router, adapter: NetworkAdapter): Promise<
   const target = await routerTarget(router);
   if (adapter.name === "mock") return { sessions: await adapter.listSessions(target, await simulationHint(router)), source: "mock" };
   if (router.pppoeAuth === "RADIUS" && adapter.name === "routeros" && radiusConfigured()) {
-    const radius = await radiusActiveSessions(router.host);
+    const radius = await radiusActiveSessions(target.host);
     const hotspot = router.hotspotEnabled ? (await adapter.listSessions(target)).filter((s) => s.kind === "HOTSPOT") : [];
     return { sessions: [...radius, ...hotspot], source: "radius_accounting" };
   }
@@ -1074,7 +1083,8 @@ async function routerSessions(router: Router, adapter: NetworkAdapter): Promise<
 
 /** Worker: pull active sessions from every router (or RADIUS accounting) and close sessions no longer present. */
 export async function syncNetworkSessions(organizationId: string) {
-  const routers = await db.router.findMany({ where: { organizationId, archivedAt: null } });
+  // Routers without an API address (agent only) are not read.
+  const routers = await db.router.findMany({ where: { organizationId, archivedAt: null, host: { not: null } } });
   const adapter = networkAdapter();
   let seen = 0;
   let failed = 0;

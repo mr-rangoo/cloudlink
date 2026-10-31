@@ -33,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: "sessions", href: "/sessions", label: "Live sessions", icon: "Wifi", permission: "network.read", group: "Network", available: true, phase: 7, description: "Who is online now, operations and alerts" },
   { slug: "packages", href: "/packages", label: "Plans", icon: "Package", permission: "packages.read", group: "Network", available: true, phase: 2, description: "Internet plans and pricing" },
   { slug: "routers", href: "/routers", label: "Routers", icon: "Router", permission: "routers.read", group: "Network", parent: "devices", available: true, phase: 7, description: "MikroTik routers (NAS)" },
+  { slug: "tr069", href: "/tr069", label: "TR-069", icon: "RadioTower", permission: "inventory.read", group: "Network", parent: "devices", available: true, phase: 19, description: "Customer devices managed over TR-069: check-ins, signal and firmware" },
   { slug: "inventory", href: "/inventory", label: "Equipment", icon: "Boxes", permission: "inventory.read", group: "Network", parent: "devices", available: true, phase: 5, description: "Customer equipment and stock" },
   { slug: "payments", href: "/payments", label: "Payments", icon: "Wallet", permission: "payments.read", group: "Finance", parent: "billing", available: true, phase: 3, description: "Payments ledger" },
   { slug: "invoices", href: "/invoices", label: "Invoices", icon: "FileText", permission: "invoices.read", group: "Finance", parent: "billing", available: true, phase: 3, description: "Invoices and billing schedules" },

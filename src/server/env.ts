@@ -68,6 +68,19 @@ export const envSchema = z
     ROUTEROS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(8000),
     /** Addresses the Cloudlink worker connects to routers from (e.g. its VPN address); written into router setup scripts. */
     ROUTER_MANAGEMENT_SOURCES: z.string().optional().default(""),
+    /** Routers verify Cloudlink's TLS certificate on agent check-ins (default). "false" only for a CA the routers cannot trust. */
+    ROUTER_AGENT_VERIFY_TLS: z.enum(["true", "false"]).default("true"),
+
+    /** TR-069 device status from an ACS: genieacs (NBI), mock (simulated, non-production only), disabled. */
+    TR069_ADAPTER: z.enum(["genieacs", "mock", "disabled"]).default("disabled"),
+    /** The ACS address CPEs are configured with (shown to staff), e.g. https://acs.example.net:7547. */
+    TR069_ACS_URL: z.string().optional().default(""),
+    /** Username CPEs use to log in to the ACS (shown to staff). The password stays on the ACS and the devices. */
+    TR069_ACS_USERNAME: z.string().optional().default(""),
+    /** GenieACS northbound API, reachable from the worker only (e.g. http://genieacs:7557). */
+    TR069_NBI_URL: z.string().optional().default(""),
+    /** Optional parameter path holding the optical receive power in dBm (vendor specific). */
+    TR069_RX_POWER_PARAM: z.string().regex(/^[A-Za-z0-9_.-]*$/, "must be a TR-069 parameter path").optional().default(""),
 
     /** mock | daraja (or live): real gateways chosen per organization (M-Pesa Daraja, Kopo Kopo) | disabled. */
     PAYMENT_ADAPTER: z.enum(["mock", "daraja", "live", "disabled"]).default("mock"),
@@ -109,6 +122,7 @@ export const envSchema = z
         fail("ROUTER_MANAGEMENT_SOURCES", "must be a comma-separated list of IP addresses or CIDR networks");
       }
     }
+    if (env.TR069_ADAPTER === "genieacs" && !/^https?:\/\//.test(env.TR069_NBI_URL)) fail("TR069_NBI_URL", "is required (http or https URL) when TR069_ADAPTER=genieacs");
     if (env.APP_ENV !== "production") return;
     if (env.NETWORK_ADAPTER === "routeros" && !env.MIKROTIK_ALLOWED_NETWORKS.trim())
       fail("MIKROTIK_ALLOWED_NETWORKS", "is required in production when NETWORK_ADAPTER=routeros");
@@ -118,6 +132,7 @@ export const envSchema = z
       fail("MIKROTIK_CONNECTION_MODE", "must not be mock when NETWORK_ADAPTER=routeros");
     if (env.MESSAGING_ADAPTER === "mock") fail("MESSAGING_ADAPTER", "mock messaging adapter is not allowed in production");
     if (env.ASSISTANT_ADAPTER === "mock") fail("ASSISTANT_ADAPTER", "mock assistant is not allowed in production");
+    if (env.TR069_ADAPTER === "mock") fail("TR069_ADAPTER", "mock TR-069 adapter is not allowed in production");
     if (env.ASSISTANT_ADAPTER === "anthropic" && !env.ANTHROPIC_API_KEY) fail("ANTHROPIC_API_KEY", "is required when ASSISTANT_ADAPTER=anthropic");
     if (env.ASSISTANT_BASE_URL) fail("ASSISTANT_BASE_URL", "is a test-only override and must be empty in production");
     if (env.ENABLE_DEMO_SEED) fail("ENABLE_DEMO_SEED", "demo seed must be disabled in production");
